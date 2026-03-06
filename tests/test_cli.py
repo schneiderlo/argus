@@ -32,7 +32,7 @@ class CliTests(unittest.TestCase):
         subcommands = parser._subparsers._group_actions[0].choices
         self.assertEqual(
             set(subcommands),
-            {"run", "benchmark", "feedback", "status", "inspect"},
+            {"run", "benchmark", "feedback", "status", "inspect", "observe"},
         )
 
     def test_build_provider_supports_codex_gemini_and_opencode(self) -> None:

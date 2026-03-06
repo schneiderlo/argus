@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Argus · Command Center</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Brutally minimal grayscale palette */
+            --bg-base: #F9F9F9;
+            --surface-color: #FFFFFF;
+            --ink-primary: #1A1A1A;
+            --ink-secondary: #5E5E5E;
+            --ink-tertiary: #A1A1A1;
+            --border-subtle: #E5E5E5;
+            --border-heavy: #D4D4D4;
+
+            /* Contextual Status Colors - Muted & Intentional */
+            --color-winner-bg: #ECFDF5;
+            --color-winner-border: #10B981;
+            
+            --color-admitted-bg: #EFF6FF;
+            --color-admitted-border: #3B82F6;
+            
+            --color-pending-bg: #FEFCE8;
+            --color-pending-border: #EAB308;
+            
+            --color-rejected-bg: #FEF2F2;
+            --color-rejected-border: #EF4444;
+            
+            --color-archived-bg: #FAF5FF;
+            --color-archived-border: #A855F7;
+            
+            --color-pruned-bg: #F3F4F6;
+            --color-pruned-border: #9CA3AF;
+
+            --font-ui: 'Inter', -apple-system, sans-serif;
+            --font-mono: 'Geist Mono', monospace;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-ui);
+            background-color: var(--bg-base);
+            color: var(--ink-primary);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            background-image: 
+                linear-gradient(var(--border-subtle) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        #top-bar {
+            height: 56px;
+            background: var(--surface-color);
+            border-bottom: 1px solid var(--border-heavy);
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            z-index: 20;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+            flex-shrink: 0;
+        }
+
+        .system-title {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: var(--ink-primary);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: uppercase;
+        }
+
+        .system-title::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: var(--ink-primary);
+            border-radius: 2px;
+        }
+
+        #run-status {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            margin-left: 32px;
+            border-left: 1px solid var(--border-subtle);
+            padding-left: 24px;
+            height: 32px;
+        }
+
+        #main-content {
+            display: flex;
+            flex-grow: 1;
+            height: calc(100vh - 56px);
+            overflow: hidden;
+        }
+
+        #network-container {
+            flex-grow: 1;
+            height: 100%;
+        }
+
+        #sidebar {
+            width: 440px;
+            height: 100%;
+            background: var(--surface-color);
+            border-left: 1px solid var(--border-heavy);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+            box-shadow: -4px 0 24px rgba(0,0,0,0.03);
+            flex-shrink: 0;
+        }
+
+        #resizer {
+            width: 5px;
+            background-color: var(--border-subtle);
+            cursor: col-resize;
+            flex-shrink: 0;
+            z-index: 15;
+            transition: background-color 0.2s ease;
+        }
+
+        #resizer:hover, #resizer.active {
+            background-color: var(--ink-tertiary);
+        }
+
+        .sidebar-content {
+            padding: 32px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+
+        /* Refined Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-heavy); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--ink-tertiary); }
+
+        .system-header {
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .system-title {
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            color: var(--ink-primary);
+            margin: 0 0 16px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .system-title::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background-color: var(--ink-primary);
+            border-radius: 2px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid currentColor;
+        }
+
+        .run-metrics {
+            display: flex;
+            gap: 24px;
+        }
+
+        .metric-block {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .metric-label {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--ink-secondary);
+            text-transform: uppercase;
+        }
+
+        .metric-value {
+            font-size: 14px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Progress Bar */
+        .budget-track {
+            width: 100%;
+            height: 4px;
+            background: var(--border-subtle);
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .budget-fill {
+            height: 100%;
+            background: var(--ink-primary);
+            transition: width 0.3s ease;
+        }
+
+        .node-header {
+            margin-top: 40px;
+            margin-bottom: 24px;
+        }
+
+        .node-action {
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin: 0 0 4px 0;
+            color: var(--ink-primary);
+        }
+
+        .node-id {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--ink-secondary);
+        }
+
+        .section-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--ink-primary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-label::after {
+            content: '';
+            flex-grow: 1;
+            height: 1px;
+            background: var(--border-subtle);
+        }
+
+        .data-card {
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+        }
+
+        .thesis-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--ink-primary);
+            margin: 0;
+        }
+
+        .mechanism-text {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.5;
+            color: var(--ink-secondary);
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px dashed var(--border-heavy);
+        }
+
+        .score-matrix {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1px;
+            background: var(--border-subtle);
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+
+        .score-cell {
+            background: var(--surface-color);
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .score-cell-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--ink-secondary);
+            text-transform: uppercase;
+        }
+
+        .score-cell-value {
+            font-size: 16px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .critique-card {
+            background: var(--color-rejected-bg);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #991B1B;
+            margin-bottom: 24px;
+        }
+
+        .action-button {
+            width: 100%;
+            background: var(--surface-color);
+            border: 1px solid var(--border-heavy);
+            color: var(--ink-primary);
+            font-family: var(--font-ui);
+            font-size: 13px;
+            font-weight: 500;
+            padding: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .action-button.destructive {
+            border-color: rgba(239, 68, 68, 0.3);
+            color: var(--color-rejected-border);
+        }
+
+        .action-button.destructive:hover:not(:disabled) {
+            background: var(--color-rejected-bg);
+            border-color: var(--color-rejected-border);
+        }
+
+        .action-button:disabled {
+            background: var(--bg-base);
+            color: var(--ink-tertiary);
+            border-color: var(--border-subtle);
+            cursor: not-allowed;
+        }
+
+        .empty-state {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--ink-tertiary);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .empty-state svg {
+            width: 24px;
+            height: 24px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Provider Tag specifically */
+        .provider-tag {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--ink-secondary);
+            background: var(--bg-base);
+            border: 1px solid var(--border-subtle);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="top-bar">
+        <h1 class="system-title">ARGUS SEARCH RUNTIME</h1>
+        <div id="run-status">
+            <!-- Injected by JS -->
+        </div>
+    </div>
+    
+    <div id="main-content">
+        <div id="network-container"></div>
+        <div id="resizer"></div>
+        <div id="sidebar">
+            <div class="sidebar-content">
+                <div id="node-panel">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        Awaiting node selection
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        const container = document.getElementById('network-container');
+        const runStatusEl = document.getElementById('run-status');
+        const nodePanelEl = document.getElementById('node-panel');
+
+        const resizer = document.getElementById('resizer');
+        const sidebar = document.getElementById('sidebar');
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizer.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            container.style.pointerEvents = 'none';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            let newWidth = window.innerWidth - e.clientX;
+            if (newWidth < 300) newWidth = 300;
+            if (newWidth > window.innerWidth - 300) newWidth = window.innerWidth - 300;
+            sidebar.style.width = `${newWidth}px`;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                resizer.classList.remove('active');
+                document.body.style.cursor = '';
+                container.style.pointerEvents = '';
+            }
+        });
+
+        let nodes = new vis.DataSet([]);
+        let edges = new vis.DataSet([]);
+        let network = null;
+        let currentState = null;
+        let selectedNodeId = null;
+
+        const data = { nodes: nodes, edges: edges };
+        
+        const styleMap = {
+            winner:   { bg: '#ECFDF5', border: '#10B981', text: '#065F46' },
+            admitted: { bg: '#EFF6FF', border: '#3B82F6', text: '#1E40AF' },
+            pending:  { bg: '#FEFCE8', border: '#EAB308', text: '#854D0E' },
+            rejected: { bg: '#FEF2F2', border: '#EF4444', text: '#991B1B' },
+            failed:   { bg: '#FFF7ED', border: '#F97316', text: '#9A3412' },
+            archived: { bg: '#FAF5FF', border: '#A855F7', text: '#6B21A8' },
+            pruned:   { bg: '#F3F4F6', border: '#9CA3AF', text: '#4B5563' },
+            default:  { bg: '#FFFFFF', border: '#E5E5E5', text: '#1A1A1A' }
+        };
+
+        const options = {
+            layout: {
+                hierarchical: {
+                    direction: 'LR',
+                    sortMethod: 'hubsize',
+                    nodeSpacing: 120,
+                    levelSeparation: 320
+                }
+            },
+            physics: false,
+            nodes: {
+                shape: 'box',
+                margin: { top: 12, bottom: 12, left: 16, right: 16 },
+                borderWidth: 1,
+                shapeProperties: { borderRadius: 6 },
+                font: { 
+                    multi: 'html',
+                    face: "'Geist Mono', monospace",
+                    size: 12,
+                    color: '#1A1A1A',
+                    align: 'center',
+                    bold: {
+                        color: '#1A1A1A',
+                        size: 12,
+                        vadjust: 0
+                    }
+                },
+                shadow: {
+                    enabled: true,
+                    color: 'rgba(0,0,0,0.04)',
+                    size: 8,
+                    x: 0,
+                    y: 4
+                }
+            },
+            edges: {
+                arrows: { to: { enabled: true, scaleFactor: 0.8 } },
+                color: {
+                    color: '#D4D4D4',
+                    highlight: '#1A1A1A',
+                    hover: '#1A1A1A'
+                },
+                width: 1.5,
+                smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 }
+            },
+            interaction: {
+                hover: true,
+                tooltipDelay: 200,
+                zoomView: true
+            }
+        };
+
+        network = new vis.Network(container, data, options);
+
+        network.on("selectNode", function (params) {
+            if (params.nodes.length > 0) {
+                selectedNodeId = params.nodes[0];
+                updateSidebar();
+            }
+        });
+
+        network.on("deselectNode", function () {
+            selectedNodeId = null;
+            updateSidebar();
+        });
+
+        function getStyle(status) {
+            return styleMap[status] || styleMap.default;
+        }
+
+        async function fetchState() {
+            try {
+                const res = await fetch('/api/state');
+                if (!res.ok) return;
+                const json = await res.json();
+                if (json.error) return;
+                currentState = json;
+                
+                const isRunning = json.manifest.status === 'running';
+                const statusTheme = isRunning ? styleMap.pending : styleMap.archived;
+                const budgetPercentage = Math.min(100, (json.budget_spent / json.manifest.budget) * 100);
+
+                runStatusEl.innerHTML = `
+                    <span class="status-badge" style="color: ${statusTheme.border}; background: ${statusTheme.bg};">
+                        ${json.manifest.status}
+                    </span>
+
+                    <div style="display: flex; flex-direction: column; width: 140px;">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                            <span class="metric-label">Token Budget</span>
+                            <span class="metric-value">${json.budget_spent} / ${json.manifest.budget}</span>
+                        </div>
+                        <div class="budget-track" style="margin-top: 4px;">
+                            <div class="budget-fill" style="width: ${budgetPercentage}%;"></div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; align-items: baseline; gap: 8px;">
+                        <span class="metric-label">Steps</span>
+                        <span class="metric-value">${json.step_count}</span>
+                    </div>
+                `;
+                const visNodes = [];
+                const visEdges = [];
+
+                // 1. First, build the edges array and parent mappings
+                const childToParents = {};
+                for (const nodeId in json.nodes) {
+                    const node = json.nodes[nodeId];
+                    if (node.parent_ids && node.parent_ids.length > 0) {
+                        childToParents[nodeId] = node.parent_ids;
+                        for (const parentId of node.parent_ids) {
+                            visEdges.push({
+                                id: `${parentId}-${nodeId}`,
+                                from: parentId,
+                                to: nodeId,
+                                color: { opacity: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? 0.3 : 1.0 },
+                                dashes: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? [4, 4] : false
+                            });
+                        }
+                    } else {
+                        childToParents[nodeId] = [];
+                    }
+                }
+
+                // 2. Compute depth levels explicitly to force same-generation nodes to align
+                const nodeLevels = {};
+                function getLevel(id) {
+                    if (nodeLevels[id] !== undefined) return nodeLevels[id];
+                    const parents = childToParents[id] || [];
+                    if (parents.length === 0) {
+                        nodeLevels[id] = 0;
+                        return 0;
+                    }
+                    let maxParentLevel = -1;
+                    for (const pid of parents) {
+                        if (nodeLevels[pid] === undefined) {
+                            nodeLevels[pid] = 0; 
+                            nodeLevels[pid] = getLevel(pid);
+                        }
+                        if (nodeLevels[pid] > maxParentLevel) {
+                            maxParentLevel = nodeLevels[pid];
+                        }
+                    }
+                    nodeLevels[id] = maxParentLevel + 1;
+                    return nodeLevels[id];
+                }
+
+                // 3. Build the nodes array and assign explicit levels
+                for (const nodeId in json.nodes) {
+                    const node = json.nodes[nodeId];
+                    const status = node.lifecycle_status;
+                    const style = getStyle(status);
+
+                    let labelText = `<b>${node.action_type.toUpperCase()}</b>\n${nodeId}`;
+
+                    if (node.score && node.score.total_score !== undefined) {
+                        labelText += `\n★ ${node.score.total_score.toFixed(2)}`;
+                    }
+
+                    let nodeConfig = {
+                        id: nodeId,
+                        level: getLevel(nodeId),
+                        label: labelText,
+                        color: {
+                            background: style.bg,
+                            border: style.border,
+                            highlight: { background: style.bg, border: '#1A1A1A' },
+                            hover: { background: style.bg, border: '#1A1A1A' }
+                        },
+                        font: { multi: 'html', color: style.text }
+                    };
+
+                    if (status === 'pruned' || status === 'rejected') {
+                        nodeConfig.shapeProperties = { borderDashes: [4, 4] };
+                    }
+
+                    visNodes.push(nodeConfig);
+                }
+
+                nodes.update(visNodes);
+                edges.update(visEdges);                
+                updateSidebar();
+
+            } catch (err) {
+                console.error("Error fetching state:", err);
+            }
+        }
+
+        async function pruneNode(nodeId) {
+            try {
+                const res = await fetch('/api/prune', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ node_id: nodeId })
+                });
+                if (res.ok) {
+                    fetchState(); 
+                }
+            } catch (e) {
+                console.error("Failed to prune:", e);
+            }
+        }
+
+        function updateSidebar() {
+            if (!selectedNodeId || !currentState || !currentState.nodes[selectedNodeId]) {
+                nodePanelEl.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        Awaiting node selection
+                    </div>`;
+                return;
+            }
+
+            const node = currentState.nodes[selectedNodeId];
+            const nodeStyle = getStyle(node.lifecycle_status);
+            
+            let html = `
+                <div class="node-header">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                        <h2 class="node-action">${node.action_type.replace('_', ' ')}</h2>
+                        <span class="status-badge" style="color: ${nodeStyle.border}; background: ${nodeStyle.bg};">${node.lifecycle_status}</span>
+                    </div>
+                    <div class="node-id">${node.node_id}</div>
+                    <div class="provider-tag">${node.provider_name}</div>
+                </div>
+            `;
+            
+            if (node.candidate) {
+                html += `
+                    <div class="section-label">Candidate Concept</div>
+                    <div class="data-card">
+                        <p class="thesis-text">${node.candidate.thesis}</p>
+                        <div class="mechanism-text">${node.candidate.mechanism}</div>
+                    </div>
+                `;
+            }
+
+            if (node.score) {
+                html += `
+                    <div class="section-label">Evaluation Matrix</div>
+                    <div class="score-matrix">
+                        <div class="score-cell">
+                            <span class="score-cell-label">Total Score</span>
+                            <span class="score-cell-value">${node.score.total_score.toFixed(2)}</span>
+                        </div>
+                        <div class="score-cell">
+                            <span class="score-cell-label">Confidence</span>
+                            <span class="score-cell-value">${(node.score.confidence_estimate * 100).toFixed(0)}%</span>
+                        </div>
+                        <div class="score-cell">
+                            <span class="score-cell-label">Usefulness</span>
+                            <span class="score-cell-value">${node.score.usefulness.toFixed(2)}</span>
+                        </div>
+                        <div class="score-cell">
+                            <span class="score-cell-label">Distinctiveness</span>
+                            <span class="score-cell-value">${node.score.distinctiveness.toFixed(2)}</span>
+                        </div>
+                    </div>
+                `;
+
+                if (!node.score.hard_constraint_pass && node.score.hard_constraint_reasons && node.score.hard_constraint_reasons.length > 0) {
+                    html += `
+                        <div class="section-label" style="color: #EF4444; margin-top: 16px;">Hard Constraints Failed</div>
+                        <div class="critique-card">
+                            <ul style="margin: 0; padding-left: 16px;">
+                                ${node.score.hard_constraint_reasons.map(r => `<li>${r}</li>`).join('')}
+                            </ul>
+                        </div>
+                    `;
+                }
+            }
+
+            if (node.critique) {
+                html += `
+                    <div class="section-label" style="color: #EF4444; margin-top: 16px;">Critique</div>
+                    <div class="critique-card">
+                `;
+                
+                if (node.critique.summary) {
+                    html += `<div><strong>Summary:</strong> ${node.critique.summary}</div>`;
+                }
+                if (node.critique.kill_shots && node.critique.kill_shots.length > 0) {
+                    html += `<div style="margin-top: 8px;"><strong>Kill Shots:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 16px;">`;
+                    html += node.critique.kill_shots.map(k => `<li>${k}</li>`).join('');
+                    html += `</ul>`;
+                }
+                if (node.critique.sharp_edges && node.critique.sharp_edges.length > 0) {
+                    html += `<div style="margin-top: 8px;"><strong>Sharp Edges:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 16px;">`;
+                    html += node.critique.sharp_edges.map(e => `<li>${e}</li>`).join('');
+                    html += `</ul>`;
+                }
+                if (node.critique.hidden_dependencies && node.critique.hidden_dependencies.length > 0) {
+                    html += `<div style="margin-top: 8px;"><strong>Hidden Dependencies:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 16px;">`;
+                    html += node.critique.hidden_dependencies.map(d => `<li>${d}</li>`).join('');
+                    html += `</ul>`;
+                }
+                
+                html += `</div>`;
+            }
+
+            const canPrune = !['pruned', 'rejected', 'failed'].includes(node.lifecycle_status);
+            if (canPrune) {
+                html += `<button class="action-button destructive" onclick="pruneNode('${node.node_id}')">Terminate Branch</button>`;
+            } else {
+                html += `<button class="action-button" disabled>Branch Terminated</button>`;
+            }
+
+            nodePanelEl.innerHTML = html;
+        }
+
+        setInterval(fetchState, 500);
+        fetchState();
+    </script>
+</body>
+</html>

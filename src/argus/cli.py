@@ -191,6 +191,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.set_defaults(handler=_handle_inspect)
 
+    observe_parser = subparsers.add_parser(
+        "observe",
+        help="Start a real-time observation server for an Argus run.",
+    )
+    observe_parser.add_argument(
+        "run_id",
+        nargs="?",
+        default="latest",
+        help="Optional persisted Argus run id. Defaults to the latest run.",
+    )
+    observe_parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to run the observation server on.",
+    )
+    observe_parser.set_defaults(handler=_handle_observe)
+
     return parser
 
 
@@ -333,6 +351,12 @@ def _handle_status(args: argparse.Namespace, config: ArgusConfig) -> int:
                 color=_supports_color_output(),
             )
         )
+    return 0
+
+
+def _handle_observe(args: argparse.Namespace, config: ArgusConfig) -> int:
+    from argus.observe import start_observer_server
+    start_observer_server(config, args.run_id, args.port)
     return 0
 
 
