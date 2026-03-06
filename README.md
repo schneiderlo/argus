@@ -33,6 +33,12 @@ Inspect the scaffolded CLI:
 uv run argus --help
 ```
 
+Check the latest run status:
+
+```bash
+uv run argus status
+```
+
 Run a single Argus search:
 
 ```bash

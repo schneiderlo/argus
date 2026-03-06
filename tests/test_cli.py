@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from datetime import datetime, timezone
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -28,7 +29,10 @@ class CliTests(unittest.TestCase):
     def test_parser_exposes_expected_subcommands(self) -> None:
         parser = build_parser()
         subcommands = parser._subparsers._group_actions[0].choices
-        self.assertEqual(set(subcommands), {"run", "benchmark", "feedback", "inspect"})
+        self.assertEqual(
+            set(subcommands),
+            {"run", "benchmark", "feedback", "status", "inspect"},
+        )
 
     def test_build_provider_supports_codex_gemini_and_opencode(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -247,6 +251,96 @@ class CliTests(unittest.TestCase):
                 for entry in routing_stats.entries
             )
         )
+
+    def test_status_command_defaults_to_latest_run_and_reports_progress(self) -> None:
+        with TemporaryRepoRoot() as root:
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            older_manifest = store.create_run(
+                problem_spec=ProblemSpec(
+                    request="Older run.",
+                    constraints=[],
+                    success_criteria=["Finish."],
+                    context={},
+                ),
+                provider_name="codex",
+                budget=8,
+                run_id="run-older",
+            )
+            store.save_snapshot(
+                older_manifest.run_id,
+                state=_feedback_ready_state(),
+                status=RunStatus.COMPLETED,
+            )
+            latest_manifest = store.create_run(
+                problem_spec=ProblemSpec(
+                    request="Current run.",
+                    constraints=["Stay local-first."],
+                    success_criteria=["Show current progress."],
+                    context={},
+                ),
+                provider_name="codex",
+                budget=12,
+                run_id="run-latest",
+                created_at=datetime(2026, 3, 6, 2, 35, 59, tzinfo=timezone.utc),
+            )
+            latest_state = _feedback_ready_state()
+            store.save_snapshot(
+                latest_manifest.run_id,
+                state=latest_state,
+                status=RunStatus.RUNNING,
+                updated_at=datetime(2026, 3, 6, 2, 44, 46, tzinfo=timezone.utc),
+            )
+            invocation_dir = (
+                root
+                / "artifacts"
+                / "provider_invocations"
+                / "20260306T024446367393Z-deepen"
+            )
+            invocation_dir.mkdir(parents=True)
+
+            exit_code, stdout, stderr = _run_cli(
+                ["--root", str(root), "status"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("run_id=run-latest", stdout)
+        self.assertIn("status=running", stdout)
+        self.assertIn("budget=2/12", stdout)
+        self.assertIn("current_action=deepen", stdout)
+        self.assertIn("active_provider_invocations=1", stdout)
+
+    def test_status_command_supports_json_output_for_explicit_run(self) -> None:
+        with TemporaryRepoRoot() as root:
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            manifest = store.create_run(
+                problem_spec=ProblemSpec(
+                    request="Inspect a completed run.",
+                    constraints=[],
+                    success_criteria=["Return status."],
+                    context={},
+                ),
+                provider_name="codex",
+                budget=12,
+                run_id="run-json-status",
+            )
+            store.save_snapshot(
+                manifest.run_id,
+                state=_feedback_ready_state(),
+                status=RunStatus.COMPLETED,
+            )
+
+            exit_code, stdout, stderr = _run_cli(
+                ["--root", str(root), "status", manifest.run_id, "--json"]
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(payload["run_id"], "run-json-status")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["provider_name"], "codex")
+        self.assertEqual(payload["budget_spent"], 2)
 
 
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:

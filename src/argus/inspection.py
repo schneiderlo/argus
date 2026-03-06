@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import re
+import subprocess
 
 from argus.config import ArgusConfig
 from argus.errors import ArgusUserError
-from argus.storage import RunManifest
+from argus.storage import FileSystemStateStore, PersistedRun, RunManifest, RunStatus
 
 _RECOGNIZED_AGENT_RUN_FILES = {
     "codex-events.jsonl",
@@ -47,6 +50,67 @@ class InspectionSummary:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderInvocationSummary:
+    invocation_id: str
+    action_name: str
+    state: str
+    started_at: str
+    pid: int | None = None
+    elapsed: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RunStatusSummary:
+    run_id: str
+    status: str
+    provider_name: str
+    created_at: str
+    updated_at: str
+    request: str
+    budget: int
+    budget_spent: int
+    step_count: int
+    node_count: int
+    archive_count: int
+    frontier_count: int
+    pruned_count: int
+    winner_count: int
+    current_action: str | None
+    active_provider_invocation_count: int
+    active_provider_invocations: list[ProviderInvocationSummary]
+    recent_provider_invocations: list[ProviderInvocationSummary]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "run_id": self.run_id,
+            "status": self.status,
+            "provider_name": self.provider_name,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "request": self.request,
+            "budget": self.budget,
+            "budget_spent": self.budget_spent,
+            "step_count": self.step_count,
+            "node_count": self.node_count,
+            "archive_count": self.archive_count,
+            "frontier_count": self.frontier_count,
+            "pruned_count": self.pruned_count,
+            "winner_count": self.winner_count,
+            "current_action": self.current_action,
+            "active_provider_invocation_count": self.active_provider_invocation_count,
+            "active_provider_invocations": [
+                invocation.to_dict() for invocation in self.active_provider_invocations
+            ],
+            "recent_provider_invocations": [
+                invocation.to_dict() for invocation in self.recent_provider_invocations
+            ],
+        }
 
 
 def resolve_inspection_target(
@@ -131,6 +195,62 @@ def inspect_artifact_path(target: Path) -> InspectionSummary:
     )
 
 
+def build_run_status_summary(
+    config: ArgusConfig,
+    *,
+    run_id: str | None = None,
+) -> RunStatusSummary:
+    store = FileSystemStateStore(config.runs_dir)
+    persisted_run = _resolve_status_run(store, run_id=run_id)
+    manifest = persisted_run.manifest
+    state = persisted_run.state
+    active_processes = _active_provider_processes(config.provider_invocations_dir)
+    recent_invocations = _recent_provider_invocations(
+        config.provider_invocations_dir,
+        run=persisted_run,
+        active_processes=active_processes,
+        limit=8,
+    )
+    active_invocations = [
+        invocation for invocation in recent_invocations if invocation.state == "running"
+    ]
+    metadata = manifest.metadata
+    current_action = None
+    if active_invocations:
+        action_names = list(dict.fromkeys(item.action_name for item in active_invocations))
+        current_action = ", ".join(action_names)
+    elif isinstance(metadata.get("failed_action"), str):
+        current_action = str(metadata["failed_action"])
+
+    budget_spent = 0 if state is None else state.budget_spent
+    step_count = 0 if state is None else state.step_count
+    node_count = 0 if state is None else len(state.nodes)
+    archive_count = 0 if state is None else len(state.archive_ids)
+    frontier_count = 0 if state is None else len(state.frontier_ids)
+    pruned_count = 0 if state is None else len(state.pruned_ids)
+    winner_count = 0 if state is None else len(state.winner_ids)
+    return RunStatusSummary(
+        run_id=manifest.run_id,
+        status=manifest.status.value,
+        provider_name=manifest.provider_name,
+        created_at=_format_datetime(manifest.created_at),
+        updated_at=_format_datetime(manifest.updated_at),
+        request=persisted_run.problem_spec.request,
+        budget=manifest.budget,
+        budget_spent=budget_spent,
+        step_count=step_count,
+        node_count=node_count,
+        archive_count=archive_count,
+        frontier_count=frontier_count,
+        pruned_count=pruned_count,
+        winner_count=winner_count,
+        current_action=current_action,
+        active_provider_invocation_count=len(active_invocations),
+        active_provider_invocations=active_invocations,
+        recent_provider_invocations=recent_invocations,
+    )
+
+
 def render_inspection_report(summary: InspectionSummary) -> str:
     lines = [
         f"target={summary.target}",
@@ -156,6 +276,50 @@ def render_inspection_report(summary: InspectionSummary) -> str:
     return "\n".join(lines)
 
 
+def render_run_status_report(summary: RunStatusSummary) -> str:
+    lines = [
+        f"run_id={summary.run_id}",
+        f"status={summary.status}",
+        f"provider={summary.provider_name}",
+        f"created_at={summary.created_at}",
+        f"updated_at={summary.updated_at}",
+        f"request={summary.request}",
+        f"budget={summary.budget_spent}/{summary.budget}",
+        f"steps={summary.step_count}",
+        f"nodes={summary.node_count}",
+        f"archive={summary.archive_count}",
+        f"frontier={summary.frontier_count}",
+        f"pruned={summary.pruned_count}",
+        f"winners={summary.winner_count}",
+    ]
+    if summary.current_action is not None:
+        lines.append(f"current_action={summary.current_action}")
+    lines.append(
+        f"active_provider_invocations={summary.active_provider_invocation_count}"
+    )
+    if summary.active_provider_invocations:
+        lines.append("active_invocations:")
+        for invocation in summary.active_provider_invocations:
+            pid_text = "" if invocation.pid is None else f" pid={invocation.pid}"
+            elapsed_text = (
+                "" if invocation.elapsed is None else f" elapsed={invocation.elapsed}"
+            )
+            lines.append(
+                f"  {invocation.action_name} state={invocation.state}{pid_text}{elapsed_text}"
+            )
+    if summary.recent_provider_invocations:
+        lines.append("recent_invocations:")
+        for invocation in summary.recent_provider_invocations:
+            pid_text = "" if invocation.pid is None else f" pid={invocation.pid}"
+            elapsed_text = (
+                "" if invocation.elapsed is None else f" elapsed={invocation.elapsed}"
+            )
+            lines.append(
+                f"  {invocation.started_at} {invocation.action_name} state={invocation.state}{pid_text}{elapsed_text}"
+            )
+    return "\n".join(lines)
+
+
 def _latest_directory(root: Path) -> Path | None:
     if not root.is_dir():
         return None
@@ -165,6 +329,153 @@ def _latest_directory(root: Path) -> Path | None:
         return None
 
     return max(candidates, key=lambda path: path.stat().st_mtime_ns)
+
+
+def _resolve_status_run(
+    store: FileSystemStateStore,
+    *,
+    run_id: str | None,
+) -> PersistedRun:
+    if run_id is not None:
+        return store.load_run(run_id)
+    manifests = store.list_runs()
+    if not manifests:
+        raise ArgusUserError("No Argus runs found under artifacts/runs/.")
+    running = [manifest for manifest in manifests if manifest.status is RunStatus.RUNNING]
+    candidates = running or manifests
+    selected = max(
+        candidates,
+        key=lambda manifest: (manifest.updated_at, manifest.created_at, manifest.run_id),
+    )
+    return store.load_run(selected.run_id)
+
+
+def _active_provider_processes(
+    invocations_root: Path,
+) -> dict[str, ProviderInvocationSummary]:
+    if not invocations_root.exists():
+        return {}
+    try:
+        completed = subprocess.run(
+            ["ps", "-eo", "pid,etime,command"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return {}
+    if completed.returncode != 0:
+        return {}
+
+    pattern = re.compile(
+        re.escape(str(invocations_root)) + r"/([^/\s]+)/workspace"
+    )
+    active: dict[str, ProviderInvocationSummary] = {}
+    for raw_line in completed.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^(\d+)\s+(\S+)\s+(.+)$", line)
+        if match is None:
+            continue
+        pid_text, elapsed, command = match.groups()
+        path_match = pattern.search(command)
+        if path_match is None:
+            continue
+        invocation_id = path_match.group(1)
+        started_at = _format_datetime(_parse_invocation_started_at(invocation_id))
+        action_name = _invocation_action_name(invocation_id)
+        active[invocation_id] = ProviderInvocationSummary(
+            invocation_id=invocation_id,
+            action_name=action_name,
+            state="running",
+            started_at=started_at,
+            pid=int(pid_text),
+            elapsed=elapsed,
+        )
+    return active
+
+
+def _recent_provider_invocations(
+    invocations_root: Path,
+    *,
+    run: PersistedRun,
+    active_processes: dict[str, ProviderInvocationSummary],
+    limit: int,
+) -> list[ProviderInvocationSummary]:
+    if not invocations_root.is_dir():
+        return []
+    not_before = run.manifest.created_at - timedelta(seconds=1)
+    not_after = None if run.manifest.status is RunStatus.RUNNING else run.manifest.updated_at + timedelta(seconds=2)
+    collected: list[tuple[datetime, ProviderInvocationSummary]] = []
+    for invocation_dir in invocations_root.iterdir():
+        if not invocation_dir.is_dir():
+            continue
+        invocation_id = invocation_dir.name
+        started_at = _parse_invocation_started_at(invocation_id)
+        if started_at is None or started_at < not_before:
+            continue
+        if not_after is not None and started_at > not_after:
+            continue
+        if invocation_id in active_processes:
+            collected.append((started_at, active_processes[invocation_id]))
+            continue
+        metadata_path = invocation_dir / "metadata.json"
+        state = "running"
+        action_name = _invocation_action_name(invocation_id)
+        if metadata_path.is_file():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                metadata = {}
+            raw_state = metadata.get("status")
+            if isinstance(raw_state, str) and raw_state.strip():
+                state = raw_state.strip()
+            raw_action_name = metadata.get("action_name")
+            if isinstance(raw_action_name, str) and raw_action_name.strip():
+                action_name = raw_action_name.strip()
+        elif (invocation_dir / "failure.json").is_file():
+            state = "failed"
+        collected.append(
+            (
+                started_at,
+                ProviderInvocationSummary(
+                    invocation_id=invocation_id,
+                    action_name=action_name,
+                    state=state,
+                    started_at=_format_datetime(started_at),
+                ),
+            )
+        )
+    return [
+        summary
+        for _, summary in sorted(collected, key=lambda item: item[0], reverse=True)[:limit]
+    ]
+
+
+def _parse_invocation_started_at(invocation_id: str) -> datetime | None:
+    match = re.match(r"^(\d{8}T\d{6}\d{6}Z)-", invocation_id)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%dT%H%M%S%fZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def _invocation_action_name(invocation_id: str) -> str:
+    match = re.match(r"^\d{8}T\d{6}\d{6}Z-(.+)$", invocation_id)
+    if match is None:
+        return invocation_id
+    return match.group(1).replace("-", "_")
+
+
+def _format_datetime(value: datetime | None) -> str:
+    if value is None:
+        return "unknown"
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_metadata_file(path: Path) -> dict[str, str]:

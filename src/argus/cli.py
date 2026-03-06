@@ -11,8 +11,10 @@ from argus.benchmarks import BenchmarkHarness, render_benchmark_report
 from argus.config import ArgusConfig
 from argus.errors import ArgusError, ArgusUserError
 from argus.inspection import (
+    build_run_status_summary,
     inspect_artifact_path,
     render_inspection_report,
+    render_run_status_report,
     resolve_inspection_target,
 )
 from argus.models import LearningNote, LearningNoteType, OutcomeFeedback, OutcomeFeedbackStatus
@@ -147,6 +149,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Additional reusable summary note. Repeatable.",
     )
     feedback_parser.set_defaults(handler=_handle_feedback)
+
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show progress for the latest or a selected Argus run.",
+    )
+    status_parser.add_argument(
+        "run_id",
+        nargs="?",
+        default=None,
+        help="Optional persisted Argus run id. Defaults to the latest run.",
+    )
+    status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of plain text.",
+    )
+    status_parser.set_defaults(handler=_handle_status)
 
     inspect_parser = subparsers.add_parser(
         "inspect",
@@ -299,6 +318,15 @@ def _handle_inspect(args: argparse.Namespace, config: ArgusConfig) -> int:
         print(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
     else:
         print(render_inspection_report(summary))
+    return 0
+
+
+def _handle_status(args: argparse.Namespace, config: ArgusConfig) -> int:
+    summary = build_run_status_summary(config, run_id=args.run_id)
+    if args.json:
+        print(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
+    else:
+        print(render_run_status_report(summary))
     return 0
 
 

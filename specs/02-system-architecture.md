@@ -38,6 +38,7 @@ The CLI entrypoint must be named `argus`. Initial subcommands should include:
 - `argus run` to execute a search for a single request
 - `argus benchmark` to execute stored benchmark cases
 - `argus feedback` to ingest shipped experiment outcomes for persisted run nodes
+- `argus status` to report the latest or selected run's progress and current activity
 - `argus inspect` to inspect persisted run artifacts
 
 ### Models
