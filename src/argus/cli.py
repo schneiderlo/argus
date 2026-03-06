@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -326,7 +327,12 @@ def _handle_status(args: argparse.Namespace, config: ArgusConfig) -> int:
     if args.json:
         print(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
     else:
-        print(render_run_status_report(summary))
+        print(
+            render_run_status_report(
+                summary,
+                color=_supports_color_output(),
+            )
+        )
     return 0
 
 
@@ -438,3 +444,9 @@ def _allocate_feedback_id(
         candidate = f"{base}-{index:02d}"
         index += 1
     return candidate
+
+
+def _supports_color_output() -> bool:
+    if os.getenv("NO_COLOR"):
+        return False
+    return sys.stdout.isatty()

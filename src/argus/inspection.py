@@ -276,46 +276,81 @@ def render_inspection_report(summary: InspectionSummary) -> str:
     return "\n".join(lines)
 
 
-def render_run_status_report(summary: RunStatusSummary) -> str:
+def render_run_status_report(summary: RunStatusSummary, *, color: bool = False) -> str:
+    title = "Argus Run Status"
+    if color:
+        title = _style(title, "bold", color=color)
+    status_text = summary.status
+    current_action_text = summary.current_action
+    if color:
+        status_text = _style(
+            summary.status,
+            _status_color(summary.status),
+            color=color,
+        )
+        if summary.current_action is not None:
+            current_action_text = _style(summary.current_action, "cyan", color=color)
+
     lines = [
+        title,
         f"run_id={summary.run_id}",
-        f"status={summary.status}",
+        f"status={status_text}",
         f"provider={summary.provider_name}",
         f"created_at={summary.created_at}",
         f"updated_at={summary.updated_at}",
-        f"request={summary.request}",
-        f"budget={summary.budget_spent}/{summary.budget}",
-        f"steps={summary.step_count}",
-        f"nodes={summary.node_count}",
-        f"archive={summary.archive_count}",
-        f"frontier={summary.frontier_count}",
-        f"pruned={summary.pruned_count}",
-        f"winners={summary.winner_count}",
+        "",
+        "request:",
+        f"  {summary.request}",
+        "",
+        "progress:",
+        f"  budget={summary.budget_spent}/{summary.budget}",
+        f"  steps={summary.step_count}",
+        f"  nodes={summary.node_count}",
+        f"  archive={summary.archive_count}",
+        f"  frontier={summary.frontier_count}",
+        f"  pruned={summary.pruned_count}",
+        f"  winners={summary.winner_count}",
     ]
-    if summary.current_action is not None:
-        lines.append(f"current_action={summary.current_action}")
+    if current_action_text is not None:
+        lines.extend(["", f"current_action={current_action_text}"])
     lines.append(
         f"active_provider_invocations={summary.active_provider_invocation_count}"
     )
     if summary.active_provider_invocations:
+        lines.append("")
         lines.append("active_invocations:")
         for invocation in summary.active_provider_invocations:
             pid_text = "" if invocation.pid is None else f" pid={invocation.pid}"
             elapsed_text = (
                 "" if invocation.elapsed is None else f" elapsed={invocation.elapsed}"
             )
+            state_text = invocation.state
+            if color:
+                state_text = _style(
+                    invocation.state,
+                    _status_color(invocation.state),
+                    color=color,
+                )
             lines.append(
-                f"  {invocation.action_name} state={invocation.state}{pid_text}{elapsed_text}"
+                f"  - {invocation.action_name}  state={state_text}{pid_text}{elapsed_text}"
             )
     if summary.recent_provider_invocations:
+        lines.append("")
         lines.append("recent_invocations:")
         for invocation in summary.recent_provider_invocations:
             pid_text = "" if invocation.pid is None else f" pid={invocation.pid}"
             elapsed_text = (
                 "" if invocation.elapsed is None else f" elapsed={invocation.elapsed}"
             )
+            state_text = invocation.state
+            if color:
+                state_text = _style(
+                    invocation.state,
+                    _status_color(invocation.state),
+                    color=color,
+                )
             lines.append(
-                f"  {invocation.started_at} {invocation.action_name} state={invocation.state}{pid_text}{elapsed_text}"
+                f"  - {invocation.started_at}  {invocation.action_name}  state={state_text}{pid_text}{elapsed_text}"
             )
     return "\n".join(lines)
 
@@ -476,6 +511,34 @@ def _format_datetime(value: datetime | None) -> str:
     if value is None:
         return "unknown"
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _status_color(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"completed", "ok"}:
+        return "green"
+    if normalized in {"running"}:
+        return "yellow"
+    if normalized in {"failed"}:
+        return "red"
+    return "cyan"
+
+
+def _style(text: str, token: str, *, color: bool) -> str:
+    if not color:
+        return text
+    codes = {
+        "bold": "1",
+        "red": "31",
+        "green": "32",
+        "yellow": "33",
+        "blue": "34",
+        "cyan": "36",
+    }
+    code = codes.get(token)
+    if code is None:
+        return text
+    return f"\033[{code}m{text}\033[0m"
 
 
 def _parse_metadata_file(path: Path) -> dict[str, str]:

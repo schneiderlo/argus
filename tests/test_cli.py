@@ -12,6 +12,7 @@ from unittest.mock import patch
 from argus.cli import _build_provider, build_parser, main
 from argus.config import ArgusConfig
 from argus.errors import ArgusUserError
+from argus.inspection import ProviderInvocationSummary, RunStatusSummary, render_run_status_report
 from argus.models import (
     ActionType,
     Candidate,
@@ -341,6 +342,44 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["provider_name"], "codex")
         self.assertEqual(payload["budget_spent"], 2)
+
+    def test_status_report_supports_colorized_rendering(self) -> None:
+        report = render_run_status_report(
+            RunStatusSummary(
+                run_id="run-color",
+                status="running",
+                provider_name="codex",
+                created_at="2026-03-06T19:35:59Z",
+                updated_at="2026-03-06T19:44:46Z",
+                request="Build a wasm language.",
+                budget=12,
+                budget_spent=7,
+                step_count=8,
+                node_count=10,
+                archive_count=6,
+                frontier_count=6,
+                pruned_count=1,
+                winner_count=0,
+                current_action="deepen",
+                active_provider_invocation_count=1,
+                active_provider_invocations=[
+                    ProviderInvocationSummary(
+                        invocation_id="20260306T194446367393Z-deepen",
+                        action_name="deepen",
+                        state="running",
+                        started_at="2026-03-06T19:44:46Z",
+                        pid=1234,
+                        elapsed="00:31",
+                    )
+                ],
+                recent_provider_invocations=[],
+            ),
+            color=True,
+        )
+
+        self.assertIn("Argus Run Status", report)
+        self.assertIn("\x1b[", report)
+        self.assertIn("current_action=", report)
 
 
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:
