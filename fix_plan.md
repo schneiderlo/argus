@@ -27,7 +27,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Implement a filesystem-backed state store for runs, nodes, learnings, scores, critiques, and final recommendations.
 - [x] Implement a Codex provider adapter that wraps `codex exec`, validates structured outputs, captures logs, and never lets the provider write directly to repository state outside the orchestrated workflow.
 - [x] Implement the provider-backed evaluator and semantic novelty judge.
-- [x] Implement the first working search loop with these actions: `frame_problem`, `generate_seed`, `mutate`, `combine`, `stress_test`, `deepen`, `rank`, and `compress_learning`.
+- [x] Implement the first working search loop with these actions: `frame_problem`, `generate_seed`, `migrate`, `mutate`, `combine`, `stress_test`, `deepen`, `rank`, and `compress_learning`.
 - [x] Implement final answer compilation with `best_bet`, `conservative_option`, `high_upside_option`, `rejected_but_insightful`, and `next_experiments`.
 - [x] Add tests covering the CLI, provider contract, state store, evaluator, novelty filter, and search control flow.
 
@@ -70,4 +70,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Concurrent CLI provider invocations now allocate artifact directories atomically in `src/argus/providers/cli_base.py`, so parallel `run_action` calls keep isolated prompt/schema/log artifacts instead of racing on shared invocation ids.
 - `SearchPolicy.island_policies` now enables deterministic multi-island search. Each island persists its own archive/frontier/pruned bookkeeping through `SearchState.islands`, provider actions receive explicit island context, and the final recommendation summary labels which island produced each surviving bet while global novelty admission still prevents cross-island duplicates from racing into state.
 - `argus feedback` now ingests shipped experiment outcomes against persisted run/node ids, writes per-run and aggregate outcome-feedback ledgers, and merges outcome-backed learning notes into `artifacts/runs/learning-memory.json` with provenance that future evaluator prompts can treat as stronger evidence than search-only priors.
-- The adaptive frontier loop now includes explicit archive parent sampling and revisit beyond the live frontier, but it still does not implement island migration, outcome-backed policy updates, or a broader evaluator-driven finalist tournament. Those remain the main gaps between the current runtime and the archive conversation’s later-stage search behavior.
+- The adaptive frontier loop now includes explicit archive parent sampling, provider-mediated island migration, and revisit beyond the live frontier, but it still does not implement outcome-backed policy updates or a broader evaluator-driven finalist tournament. Those remain the main gaps between the current runtime and the archive conversation’s later-stage search behavior.

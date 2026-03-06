@@ -365,6 +365,52 @@ class SearchFixtureProvider:
                 "open_questions": ["Can the hybrid stay simple enough for self-serve adoption?"],
             }
 
+        if "benchmark calibration" in thesis:
+            score = _score_payload(
+                hard_constraint_pass=True,
+                hard_constraint_reasons=[],
+                distinctiveness=0.87,
+                usefulness=0.84,
+                specificity=0.83,
+                plausibility=0.72,
+                implementation_tractability=0.69,
+                upside=0.91,
+                adversarial_robustness=0.68,
+                evidence_quality=0.76,
+                total_score=6.3,
+                confidence_estimate=0.77,
+            )
+            return {
+                "score": score,
+                "summary": "The migrated variant preserves upside while grounding it in a stronger workflow wedge.",
+                "strengths": ["Carries over the archive moat into a higher-upside framing."],
+                "weaknesses": ["Still needs careful trust sequencing."],
+                "open_questions": ["Will the benchmark layer stay optional long enough to avoid early friction?"],
+            }
+
+        if "archived decision evidence" in thesis:
+            score = _score_payload(
+                hard_constraint_pass=True,
+                hard_constraint_reasons=[],
+                distinctiveness=0.74,
+                usefulness=0.86,
+                specificity=0.87,
+                plausibility=0.88,
+                implementation_tractability=0.89,
+                upside=0.66,
+                adversarial_robustness=0.83,
+                evidence_quality=0.8,
+                total_score=6.25,
+                confidence_estimate=0.86,
+            )
+            return {
+                "score": score,
+                "summary": "The migrated conservative variant uses archived evidence to reinforce the rollout without overcomplicating it.",
+                "strengths": ["Very tractable.", "Preserves a durable audit trail."],
+                "weaknesses": ["Upside is still lower than the bolder archive variants."],
+                "open_questions": ["How much archived context can operators absorb before the flow feels heavy?"],
+            }
+
         if "workflow-native decision archive" in thesis:
             score = _score_payload(
                 hard_constraint_pass=True,
@@ -619,6 +665,60 @@ class SearchFixtureProvider:
                 )
             ],
             batch_summary="Combined the most credible moat with the highest-upside extension.",
+        )
+
+    def _handle_migrate(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> Candidate:
+        source_candidate = Candidate.from_dict(input_payload["source_candidate"])
+        destination_island = dict(input_payload["destination_island"])
+        destination_island_id = str(destination_island["island_id"])
+
+        if destination_island_id == "upside":
+            return Candidate(
+                thesis="Workflow-native decision archive with benchmark calibration",
+                mechanism=(
+                    "Start from the retained workflow archive, then add selective peer benchmark "
+                    "calibration only after the private archive proves recurring value."
+                ),
+                assumptions=source_candidate.assumptions
+                + ["Teams will tolerate a benchmark layer once the private archive already pays off."],
+                strengths=source_candidate.strengths + ["Carries a stronger upside narrative."],
+                failure_modes=source_candidate.failure_modes + ["Could reintroduce trust complexity too early."],
+                unknowns=["Which benchmark signal is valuable enough to justify the extra layer?"],
+                implementation_shape="Private archive first, benchmark calibration second.",
+                evidence=source_candidate.evidence,
+            )
+
+        if destination_island_id == "conservative":
+            return Candidate(
+                thesis="Operational checklist assistant backed by archived decision evidence",
+                mechanism=(
+                    "Use the source archive insight to ground an auditable checklist assistant "
+                    "that can point back to prior decisions and rationale during rollout."
+                ),
+                assumptions=source_candidate.assumptions,
+                strengths=source_candidate.strengths + ["Safer rollout with clearer justification."],
+                failure_modes=source_candidate.failure_modes,
+                unknowns=["How much archived context belongs in the checklist flow?"], 
+                implementation_shape="Checklist wedge first, archived evidence inline as proof.",
+                evidence=source_candidate.evidence,
+            )
+
+        return Candidate(
+            thesis="Workflow-native decision archive with controlled rollout proof",
+            mechanism=(
+                "Carry the source insight into a balanced destination by preserving the archive "
+                "moat while making the rollout proof and operating ritual more explicit."
+            ),
+            assumptions=source_candidate.assumptions,
+            strengths=source_candidate.strengths + ["Better fit to a balanced island prior."],
+            failure_modes=source_candidate.failure_modes,
+            unknowns=["Which first ritual best proves the migrated idea in the destination island?"],
+            implementation_shape="Single ritual rollout with explicit proof milestones.",
+            evidence=source_candidate.evidence,
         )
 
     def _handle_compress_learning(

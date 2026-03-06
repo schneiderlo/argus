@@ -76,6 +76,12 @@ When multi-island search is enabled, the archive must still behave like one dete
 - the run state also persists explicit per-island archive/frontier/pruned views so the operator can audit how each island evolved
 - novelty checks still guard the run-level archive, not only one island, so cross-island duplicates do not silently accumulate
 
-## Future Direction
+## Island Migration
 
-Later versions should allow selective migration of strong insights between islands without losing the audit trail for which island first produced or adopted a node.
+Multi-island runs may selectively migrate strong insights between islands, but migration must stay explicit and auditable:
+
+- the destination-island node must preserve provenance about the source island and source node that inspired it
+- migration should still go through the normal novelty and evaluation path instead of bypassing archive admission
+- the operator should be able to inspect a run and distinguish a locally evolved node from a migrated adoption
+
+The current runtime may implement migration as a provider-mediated rewrite into the destination island rather than as a raw node copy, as long as the provenance remains explicit and the resulting candidate is still judged like any other admission.

@@ -303,6 +303,45 @@ class CodexProviderTests(unittest.TestCase):
             prompt_text,
         )
 
+    def test_run_action_materializes_action_specific_migration_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.MIGRATE,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "source_island": {"island_id": "balanced", "generation_focus": "Favor well-rounded ideas."},
+                    "destination_island": {
+                        "island_id": "upside",
+                        "generation_focus": "Favor high-leverage opportunities.",
+                    },
+                    "source_node_id": "node-0006",
+                    "source_candidate": _candidate_payload(),
+                    "migration_policy": {"goal": "Adapt the source insight to the destination island."},
+                },
+                output_schema=_candidate_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: cross-island migration worker for Argus.", prompt_text)
+        self.assertIn(
+            "carry the strongest causal insight from the source candidate into the destination island's optimization bias",
+            prompt_text,
+        )
+        self.assertIn("Do not paraphrase the source candidate.", prompt_text)
+
     def test_run_action_pairwise_prompt_mentions_outcome_feedback_priors(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(

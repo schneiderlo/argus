@@ -166,6 +166,7 @@ class SearchPolicy:
     deepen_limit: int = 3
     mutate_limit: int = 1
     combine_limit: int = 1
+    migration_cooldown: int = 3
     frontier_limit: int = 6
     rejected_limit: int = 3
     max_learning_notes: int = 4
@@ -183,6 +184,7 @@ class SearchPolicy:
             "deepen_limit",
             "mutate_limit",
             "combine_limit",
+            "migration_cooldown",
             "frontier_limit",
             "rejected_limit",
             "max_learning_notes",
@@ -214,6 +216,7 @@ class SearchPolicy:
             "deepen_limit": self.deepen_limit,
             "mutate_limit": self.mutate_limit,
             "combine_limit": self.combine_limit,
+            "migration_cooldown": self.migration_cooldown,
             "frontier_limit": self.frontier_limit,
             "rejected_limit": self.rejected_limit,
             "max_learning_notes": self.max_learning_notes,
@@ -248,6 +251,7 @@ class _CandidateAdmissionRequest:
     parent_ids: tuple[str, ...]
     batch_summary: str
     source_provider_name: str
+    metadata_patch: dict[str, JSONValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +272,13 @@ class _IslandNodeSelection:
 class _ScheduledAction:
     action_type: ActionType
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class _MigrationSelection:
+    source_island_id: str
+    destination_island_id: str
+    source_node: Node
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,6 +567,8 @@ class SearchRuntime:
                     self._mutate_survivors(session, budget, routing_tracker)
                 elif scheduled.action_type is ActionType.COMBINE:
                     self._combine_survivors(session, budget, routing_tracker)
+                elif scheduled.action_type is ActionType.MIGRATE:
+                    self._migrate_between_islands(session, budget, routing_tracker)
                 elif scheduled.action_type is ActionType.COMPRESS_LEARNING:
                     self._compress_learning(session, budget, routing_tracker)
                     last_compression_budget = session.budget_spent
@@ -1047,6 +1060,91 @@ class SearchRuntime:
             )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
+    def _migrate_between_islands(
+        self,
+        session: "_MutableSession",
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return
+
+        selection = self._select_migration_candidate(session)
+        if selection is None:
+            return
+
+        source_node = selection.source_node
+        source_policy = session.island_policy(selection.source_island_id)
+        destination_policy = session.island_policy(selection.destination_island_id)
+        input_payload: dict[str, JSONValue] = {
+            "source_island": source_policy.to_prompt_dict(),
+            "destination_island": destination_policy.to_prompt_dict(),
+            "source_node_id": source_node.node_id,
+            "source_candidate": source_node.candidate.to_dict(),
+            "source_score": None if source_node.score is None else source_node.score.to_dict(),
+            "source_critique": None
+            if source_node.critique is None
+            else source_node.critique.to_dict(),
+            "learning_notes": [note.to_dict() for note in session.learning_notes],
+            "migration_policy": {
+                "goal": (
+                    "Carry the strongest underlying insight into the destination island without "
+                    "copying the source candidate verbatim."
+                ),
+                "requirements": [
+                    "Adapt the mechanism to the destination island's optimization bias.",
+                    "Preserve the source insight only if it still makes causal sense in the destination island.",
+                    "Return one materially distinct candidate that can survive novelty checks.",
+                ],
+            },
+        }
+        if session.reusable_learning_notes:
+            input_payload["reusable_learning_notes"] = [
+                note.to_prompt_dict() for note in session.reusable_learning_notes
+            ]
+
+        response = self._run_provider_action(
+            routing_tracker,
+            action_name=ActionType.MIGRATE,
+            problem_spec=session.problem_spec,
+            input_payload=input_payload,
+            output_schema=candidate_schema(),
+        )
+        session.consume_budget()
+        session.record_migration(
+            source_island_id=selection.source_island_id,
+            destination_island_id=selection.destination_island_id,
+            source_node_id=source_node.node_id,
+        )
+        self._admit_candidate_batch(
+            session,
+            island_id=selection.destination_island_id,
+            action_type=ActionType.MIGRATE,
+            routing_tracker=routing_tracker,
+            requests=[
+                _CandidateAdmissionRequest(
+                    candidate=response.payload,
+                    parent_ids=(session.root_id,),
+                    batch_summary=(
+                        f"Migrated and adapted {source_node.node_id} from "
+                        f"{source_policy.label} into {destination_policy.label}."
+                    ),
+                    source_provider_name=response.provider_name,
+                    metadata_patch={
+                        "migration": {
+                            "source_island_id": selection.source_island_id,
+                            "source_island_label": source_policy.label,
+                            "source_node_id": source_node.node_id,
+                            "destination_island_id": selection.destination_island_id,
+                            "destination_island_label": destination_policy.label,
+                        }
+                    },
+                )
+            ],
+        )
+        session.refresh_frontier(limit=self._policy.frontier_limit)
+
     def _choose_next_search_action(
         self,
         session: "_MutableSession",
@@ -1079,6 +1177,7 @@ class SearchRuntime:
         deepen_candidates_available = self._has_stage_candidates(session, ActionType.DEEPEN)
         mutate_candidates_available = self._has_stage_candidates(session, ActionType.MUTATE)
         combine_candidates_available = self._has_combine_candidates(session)
+        migration_candidate_available = self._select_migration_candidate(session) is not None
 
         if (
             not self._has_useful_critique_coverage(session)
@@ -1110,10 +1209,19 @@ class SearchRuntime:
                 reason="Critiqued nodes have repairable weaknesses worth iterating on.",
             )
 
-        if combine_candidates_available:
+        if combine_candidates_available and (
+            not self._has_executed_action(session, ActionType.COMBINE)
+            or not migration_candidate_available
+        ):
             return _ScheduledAction(
                 action_type=ActionType.COMBINE,
                 reason="Frontier contains complementary survivors worth hybridizing.",
+            )
+
+        if migration_candidate_available:
+            return _ScheduledAction(
+                action_type=ActionType.MIGRATE,
+                reason="A plateaued island can import and adapt a stronger foreign stepping stone.",
             )
 
         if self._should_run_learning_compression(
@@ -1444,6 +1552,7 @@ class SearchRuntime:
             parent_ids=parent_ids,
             batch_summary=batch_summary,
             source_provider_name=self._provider.name,
+            metadata_patch=None,
             novelty=prepared.novelty,
             assessment=prepared.assessment,
             novelty_provider_names=prepared.novelty_provider_names,
@@ -1506,6 +1615,7 @@ class SearchRuntime:
                 parent_ids=request.parent_ids,
                 batch_summary=request.batch_summary,
                 source_provider_name=request.source_provider_name,
+                metadata_patch=request.metadata_patch,
                 novelty=novelty,
                 assessment=prepared_candidate.assessment,
                 novelty_provider_names=novelty_provider_names,
@@ -1555,6 +1665,7 @@ class SearchRuntime:
         parent_ids: Sequence[str],
         batch_summary: str,
         source_provider_name: str,
+        metadata_patch: Mapping[str, JSONValue] | None,
         novelty: NoveltyAssessment,
         assessment: EvaluationAssessment,
         novelty_provider_names: Sequence[str],
@@ -1575,6 +1686,8 @@ class SearchRuntime:
                 evaluation_provider_names=evaluation_provider_names,
             ),
         }
+        if metadata_patch:
+            metadata.update(dict(metadata_patch))
         if not novelty.is_novel:
             lifecycle_status = NodeLifecycleStatus.REJECTED
         elif not assessment.score.hard_constraint_pass:
@@ -1871,6 +1984,91 @@ class SearchRuntime:
             reverse=True,
         )[:limit]
 
+    def _select_migration_candidate(
+        self,
+        session: "_MutableSession",
+    ) -> _MigrationSelection | None:
+        if len(session.island_ids) < 2:
+            return None
+
+        ranked_nodes_by_island = {
+            island_id: self._ranked_island_archive_nodes(session, island_id)
+            for island_id in session.island_ids
+        }
+        best_by_island = {
+            island_id: nodes[0]
+            for island_id, nodes in ranked_nodes_by_island.items()
+            if nodes
+        }
+        if len(best_by_island) < 2:
+            return None
+
+        destination_candidates = sorted(
+            best_by_island.items(),
+            key=lambda item: (
+                0.0 if item[1].score is None else item[1].score.total_score,
+                session.island_order(item[0]),
+            ),
+        )
+        source_candidates = sorted(
+            best_by_island.items(),
+            key=lambda item: (
+                0.0 if item[1].score is None else item[1].score.total_score,
+                -session.island_order(item[0]),
+            ),
+            reverse=True,
+        )
+
+        for destination_island_id, destination_node in destination_candidates:
+            destination_island = session.islands[destination_island_id]
+            if (
+                session.step_count - destination_island.last_admitted_step
+                < self._policy.migration_cooldown
+            ):
+                continue
+            if (
+                session.step_count - destination_island.last_migration_step
+                < self._policy.migration_cooldown
+            ):
+                continue
+
+            destination_score = (
+                0.0 if destination_node.score is None else destination_node.score.total_score
+            )
+            for source_island_id, source_node in source_candidates:
+                if source_island_id == destination_island_id:
+                    continue
+                if (source_island_id, source_node.node_id) in destination_island.imported_source_keys:
+                    continue
+                source_score = 0.0 if source_node.score is None else source_node.score.total_score
+                if source_score < _MIGRATION_SOURCE_SCORE_FLOOR:
+                    continue
+                if source_score < destination_score + _MIGRATION_ADVANTAGE_FLOOR:
+                    continue
+                return _MigrationSelection(
+                    source_island_id=source_island_id,
+                    destination_island_id=destination_island_id,
+                    source_node=source_node,
+                )
+        return None
+
+    def _ranked_island_archive_nodes(
+        self,
+        session: "_MutableSession",
+        island_id: str,
+    ) -> list[Node]:
+        candidates = [
+            session.nodes[node_id]
+            for node_id in session.islands[island_id].archive_ids
+            if node_id in session.nodes
+            and node_id != session.root_id
+            and session.nodes[node_id].island_id == island_id
+            and _is_rankable(session.nodes[node_id])
+        ]
+        if not candidates:
+            return []
+        return _rank_nodes_for_island(candidates, session.island_policy(island_id))
+
     def _persist_running_snapshot(
         self,
         run_id: str,
@@ -2010,6 +2208,11 @@ class SearchRuntime:
                 *high_upside_decisions,
             ]
         )
+        migrations = [
+            node
+            for node in state.nodes.values()
+            if node.action_type is ActionType.MIGRATE and _was_admitted(node, state)
+        ]
         summary_markdown = _render_summary_markdown(
             problem_spec=state.problem_spec,
             islands=state.islands,
@@ -2017,6 +2220,7 @@ class SearchRuntime:
             conservative=conservative,
             high_upside=high_upside,
             rejected=rejected,
+            migrations=migrations,
             learning_notes=state.learning_notes,
             next_experiments=next_experiments,
             assumptions=assumptions,
@@ -2135,6 +2339,9 @@ class _MutableIslandState:
     archive_ids: list[str]
     frontier_ids: list[str]
     pruned_ids: list[str]
+    last_admitted_step: int = 0
+    last_migration_step: int = 0
+    imported_source_keys: set[tuple[str, str]] = field(default_factory=set)
 
 
 class _MutableSession:
@@ -2160,6 +2367,8 @@ class _MutableSession:
                 archive_ids=[root_node.node_id],
                 frontier_ids=[root_node.node_id],
                 pruned_ids=[],
+                last_admitted_step=0,
+                last_migration_step=0,
             )
             for policy in island_policies
         }
@@ -2209,12 +2418,26 @@ class _MutableSession:
     def archive(self, node_id: str, *, island_id: str | None) -> None:
         _append_unique(self.archive_ids, node_id)
         if island_id is not None:
-            _append_unique(self.islands[island_id].archive_ids, node_id)
+            island = self.islands[island_id]
+            _append_unique(island.archive_ids, node_id)
+            island.last_admitted_step = self.step_count
 
     def mark_pruned(self, node_id: str, *, island_id: str | None) -> None:
         _append_unique(self.pruned_ids, node_id)
         if island_id is not None:
             _append_unique(self.islands[island_id].pruned_ids, node_id)
+
+    def record_migration(
+        self,
+        *,
+        source_island_id: str,
+        destination_island_id: str,
+        source_node_id: str,
+    ) -> None:
+        self.islands[source_island_id].last_migration_step = self.step_count
+        destination_island = self.islands[destination_island_id]
+        destination_island.last_migration_step = self.step_count
+        destination_island.imported_source_keys.add((source_island_id, source_node_id))
 
     def set_learning_notes(self, notes: Sequence[LearningNote]) -> None:
         self.learning_notes = list(notes)
@@ -2647,6 +2870,26 @@ def _provider_routing_metadata(
     return routing
 
 
+def _node_migration_metadata(node: Node) -> dict[str, str] | None:
+    raw_value = node.metadata.get("migration")
+    if not isinstance(raw_value, dict):
+        return None
+    expected_keys = {
+        "source_island_id",
+        "source_island_label",
+        "source_node_id",
+        "destination_island_id",
+        "destination_island_label",
+    }
+    values: dict[str, str] = {}
+    for key in expected_keys:
+        raw_item = raw_value.get(key)
+        if not isinstance(raw_item, str) or not raw_item.strip():
+            return None
+        values[key] = raw_item.strip()
+    return values
+
+
 def _node_routing_keys(node: Node) -> tuple[tuple[str, str], ...]:
     keys: list[tuple[str, str]] = [(node.provider_name, node.action_type.value)]
     provider_routing = node.metadata.get("provider_routing")
@@ -2684,6 +2927,8 @@ def _evaluation_metadata(assessment: object) -> dict[str, JSONValue]:
 _STRONG_SCORE_THRESHOLD = 6.0
 _LOW_FRONTIER_NOVELTY_THRESHOLD = 0.45
 _DEEPEN_SPECIFICITY_FLOOR = 0.86
+_MIGRATION_SOURCE_SCORE_FLOOR = 6.0
+_MIGRATION_ADVANTAGE_FLOOR = 0.4
 
 
 def _is_useful_critique(critique: object) -> bool:
@@ -2829,6 +3074,7 @@ def _render_summary_markdown(
     conservative: Node,
     high_upside: Node,
     rejected: Sequence[Node],
+    migrations: Sequence[Node],
     learning_notes: Sequence[LearningNote],
     next_experiments: Sequence[str],
     assumptions: Sequence[str],
@@ -2888,6 +3134,23 @@ def _render_summary_markdown(
     else:
         lines.append("- None.")
     lines.append("")
+
+    if migrations:
+        lines.append("## Island Migration")
+        for node in migrations:
+            migration = _node_migration_metadata(node)
+            if migration is None:
+                lines.append(
+                    f"- `{node.node_id}` ({_node_island_label(node, islands)}): {node.candidate.thesis}"
+                )
+                continue
+            lines.append(
+                f"- `{node.node_id}`: {migration['source_island_label']} "
+                f"(`{migration['source_island_id']}`) -> {migration['destination_island_label']} "
+                f"(`{migration['destination_island_id']}`) from `{migration['source_node_id']}` "
+                f"as {node.candidate.thesis}"
+            )
+        lines.append("")
 
     if selection_checks:
         lines.append("## Pairwise Selection Checks")

@@ -17,6 +17,7 @@ type JSONValue = JSONPrimitive | list["JSONValue"] | dict[str, "JSONValue"]
 class ActionType(StrEnum):
     FRAME_PROBLEM = "frame_problem"
     GENERATE_SEED = "generate_seed"
+    MIGRATE = "migrate"
     MUTATE = "mutate"
     COMBINE = "combine"
     STRESS_TEST = "stress_test"

@@ -477,6 +477,70 @@ class SearchRuntimeTests(unittest.TestCase):
             {"balanced", "conservative", "upside"},
         )
 
+    def test_runtime_migrates_candidates_between_islands_without_cross_island_parents(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                seed_candidates_by_island={
+                    "balanced": [_workflow_archive_candidate()],
+                    "conservative": [_operational_assistant_candidate()],
+                    "upside": [_benchmark_market_candidate()],
+                },
+            )
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=3,
+                    stress_test_limit=1,
+                    deepen_limit=1,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    migration_cooldown=3,
+                    frontier_limit=3,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                    compression_interval=6,
+                    island_policies=(
+                        balanced_island_policy(),
+                        conservative_island_policy(),
+                        upside_island_policy(),
+                    ),
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=10,
+                run_id="run-search-island-migration",
+            )
+
+        migration_calls = [call for call in provider.calls if call["action_name"] == "migrate"]
+        migrated_nodes = [
+            node
+            for node in result.state.nodes.values()
+            if node.action_type is ActionType.MIGRATE and node.node_id in result.state.archive_ids
+        ]
+
+        self.assertEqual(len(migration_calls), 1)
+        self.assertEqual(len(migrated_nodes), 1)
+        migrated = migrated_nodes[0]
+        self.assertEqual(migrated.island_id, "upside")
+        self.assertEqual(migrated.parent_ids, [result.state.root_id])
+        self.assertEqual(migrated.metadata["migration"]["source_island_id"], "balanced")
+        self.assertEqual(migrated.metadata["migration"]["destination_island_id"], "upside")
+        self.assertEqual(
+            migration_calls[0]["input_payload"]["source_island"]["island_id"],
+            "balanced",
+        )
+        self.assertEqual(
+            migration_calls[0]["input_payload"]["destination_island"]["island_id"],
+            "upside",
+        )
+        self.assertIn("## Island Migration", result.summary_markdown)
+
     def test_runtime_routes_actions_through_provider_pool_using_persisted_stats(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

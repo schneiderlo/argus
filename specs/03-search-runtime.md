@@ -101,6 +101,7 @@ The first version must support these actions:
 
 - `frame_problem`
 - `generate_seed`
+- `migrate`
 - `mutate`
 - `combine`
 - `stress_test`
@@ -126,6 +127,7 @@ The first working policy should still be intentionally simple, but it should alr
    deepen under-specified survivors,
    mutate critiqued but repairable branches,
    combine compatible survivors,
+   migrate strong source-island ideas into plateaued destination islands when cross-island transfer is justified,
    revisit archived stepping stones when stage capacity is wider than the live frontier,
    or compress learning periodically
 6. repeat until the run budget or stop condition is reached
@@ -186,6 +188,7 @@ Later search policies may run multiple search islands with different optimizatio
 - maintain explicit per-island archive, frontier, and pruned bookkeeping for audit
 - let each island evolve mostly from its own admitted survivors rather than collapsing into one shared frontier
 - keep cross-island novelty admission deterministic so two islands cannot race the same near-duplicate into state
+- keep migration explicit and auditable so the operator can see which source island and source node inspired a destination-island adoption
 - allow the final recommendation to draw winners from different islands while still compiling from persisted state rather than a final ad hoc provider answer
 
 The first multi-island version does not need free-form island creation. A fixed small set of typed optimization priors is acceptable as long as the state and selection logic remain explicit and testable.

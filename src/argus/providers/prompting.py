@@ -81,6 +81,8 @@ def _action_specific_instructions(
         return _assess_novelty_instructions()
     if normalized_action == "rank":
         return _pairwise_rank_instructions(input_payload)
+    if normalized_action == "migrate":
+        return _migrate_candidate_instructions()
     return _default_action_instructions(action_name, input_payload)
 
 
@@ -149,6 +151,18 @@ def _pairwise_rank_instructions(input_payload: Mapping[str, JSONValue]) -> list[
             "Reusable priors: when reusable_learning_notes are present, use them as prior evidence about patterns that succeeded or failed before. Notes tagged with evidence_sources containing outcome_feedback reflect shipped outcomes and should carry more weight than search-only learnings, but keep the winner grounded in the current problem and objective."
         )
     return instructions
+
+
+def _migrate_candidate_instructions() -> list[str]:
+    return [
+        "Role: cross-island migration worker for Argus.",
+        "Goal: carry the strongest causal insight from the source candidate into the destination island's optimization bias without copying the source candidate verbatim.",
+        "Preserve what actually matters from the source mechanism, but rewrite the candidate so it genuinely fits the destination island's generation_focus and tradeoff profile.",
+        "Do not paraphrase the source candidate. Return a materially new candidate with a distinct thesis, mechanism framing, or rollout shape.",
+        "Keep the result concrete, auditable, and viable enough to survive downstream novelty and evaluation checks.",
+        "If the source idea does not transfer cleanly, adapt only the portable insight instead of dragging over the whole plan.",
+        "Output one candidate, not a batch, and keep assumptions, failure modes, unknowns, and implementation shape explicit.",
+    ]
 
 
 def _default_action_instructions(
