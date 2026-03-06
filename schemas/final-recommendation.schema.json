@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://argus.local/schemas/final-recommendation.schema.json",
+  "title": "FinalRecommendation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "best_bet_node_id",
+    "conservative_node_id",
+    "high_upside_node_id",
+    "rejected_but_insightful_ids",
+    "summary_markdown",
+    "next_experiments"
+  ],
+  "properties": {
+    "best_bet_node_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conservative_node_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "high_upside_node_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rejected_but_insightful_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "summary_markdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "next_experiments": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
+

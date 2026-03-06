@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://argus.local/schemas/critique.schema.json",
+  "title": "Critique",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "hidden_dependencies",
+    "kill_shots",
+    "sharp_edges",
+    "summary"
+  ],
+  "properties": {
+    "hidden_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "kill_shots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "sharp_edges": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
+

@@ -1,0 +1,6 @@
+artifacts/agent_runs/
+artifacts/verify/latest.txt
+artifacts/verify/latest-success.txt
+artifacts/latest-run.txt
+tmp/
+
