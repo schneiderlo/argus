@@ -464,6 +464,38 @@ class FileSystemStateStore:
             manifests.append(RunManifest.from_dict(self._read_json_required(manifest_path)))
         return manifests
 
+    def update_manifest_status(
+        self,
+        run_id: str,
+        *,
+        status: RunStatus,
+        updated_at: datetime | None = None,
+        metadata_patch: Mapping[str, JSONValue] | None = None,
+        error: str | None = None,
+    ) -> RunManifest:
+        normalized_run_id = _normalize_path_segment(run_id, "run_id")
+        manifest, run_dir = self._load_manifest(normalized_run_id)
+        merged_metadata = dict(manifest.metadata)
+        if metadata_patch is not None:
+            merged_metadata.update(metadata_patch)
+
+        normalized_error = _normalize_optional_string(error, "error")
+        normalized_status = _normalize_enum(status, RunStatus, "status")
+        if normalized_status is RunStatus.FAILED and normalized_error is None:
+            raise ArgusValidationError("error must be set when status is failed.")
+        if normalized_status is not RunStatus.FAILED:
+            normalized_error = None
+
+        refreshed_manifest = replace(
+            manifest,
+            status=normalized_status,
+            updated_at=_normalize_datetime(updated_at or datetime.now(timezone.utc), "updated_at"),
+            metadata=merged_metadata,
+            error=normalized_error,
+        )
+        self._write_manifest(run_dir, refreshed_manifest)
+        return refreshed_manifest
+
     def _allocate_run_id(self, run_id: str | None, timestamp: datetime) -> str:
         if run_id is not None:
             return _normalize_path_segment(run_id, "run_id")

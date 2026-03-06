@@ -7,12 +7,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from argus.config import ArgusConfig
-from argus.errors import ArgusNotImplementedError, ArgusUserError
+from argus.errors import ArgusError, ArgusNotImplementedError, ArgusUserError
 from argus.inspection import (
     inspect_artifact_path,
     render_inspection_report,
     resolve_inspection_target,
 )
+from argus.providers import CodexProvider, Provider
+from argus.search import SearchRuntime
+from argus.storage import FileSystemStateStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,9 +101,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ArgusNotImplementedError as exc:
         print(f"not implemented: {exc}", file=sys.stderr)
         return 1
+    except ArgusError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
-def _handle_run(args: argparse.Namespace, _: ArgusConfig) -> int:
+def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     if args.budget <= 0:
         raise ArgusUserError("--budget must be a positive integer.")
 
@@ -108,10 +114,23 @@ def _handle_run(args: argparse.Namespace, _: ArgusConfig) -> int:
     if not request:
         raise ArgusUserError("request must not be empty.")
 
-    raise ArgusNotImplementedError(
-        "Search execution is scaffolded but not wired yet. Remaining work items are "
-        "the search runtime and final answer compilation."
+    provider = _build_provider(config, args.provider)
+    runtime = SearchRuntime(
+        provider=provider,
+        state_store=FileSystemStateStore(config.runs_dir),
     )
+    result = runtime.run(
+        request=request,
+        budget=args.budget,
+    )
+    print(result.summary_markdown.rstrip())
+    print()
+    print(f"run_id={result.manifest.run_id}")
+    print(f"run_path={result.run_path}")
+    print(f"best_bet={result.final_recommendation.best_bet_node_id}")
+    print(f"conservative={result.final_recommendation.conservative_node_id}")
+    print(f"high_upside={result.final_recommendation.high_upside_node_id}")
+    return 0
 
 
 def _handle_benchmark(_: argparse.Namespace, __: ArgusConfig) -> int:
@@ -133,3 +152,12 @@ def _handle_inspect(args: argparse.Namespace, config: ArgusConfig) -> int:
     else:
         print(render_inspection_report(summary))
     return 0
+
+
+def _build_provider(config: ArgusConfig, provider_name: str) -> Provider:
+    normalized_provider = provider_name.strip().lower()
+    if normalized_provider != "codex":
+        raise ArgusUserError(
+            f"Unknown provider {provider_name!r}. Supported providers: codex."
+        )
+    return CodexProvider(artifacts_root=config.provider_invocations_dir)

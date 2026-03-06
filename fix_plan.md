@@ -24,9 +24,9 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Implement a filesystem-backed state store for runs, nodes, learnings, scores, critiques, and final recommendations.
 - [x] Implement a Codex provider adapter that wraps `codex exec`, validates structured outputs, captures logs, and never lets the provider write directly to repository state outside the orchestrated workflow.
 - [x] Implement the provider-backed evaluator and semantic novelty judge.
-- [ ] Implement the first working search loop with these actions: `frame_problem`, `generate_seed`, `mutate`, `combine`, `stress_test`, `deepen`, `rank`, and `compress_learning`.
-- [ ] Implement final answer compilation with `best_bet`, `conservative_option`, `high_upside_option`, `rejected_but_insightful`, and `next_experiments`.
-- [ ] Add tests covering the CLI, provider contract, state store, evaluator, novelty filter, and search control flow.
+- [x] Implement the first working search loop with these actions: `frame_problem`, `generate_seed`, `mutate`, `combine`, `stress_test`, `deepen`, `rank`, and `compress_learning`.
+- [x] Implement final answer compilation with `best_bet`, `conservative_option`, `high_upside_option`, `rejected_but_insightful`, and `next_experiments`.
+- [x] Add tests covering the CLI, provider contract, state store, evaluator, novelty filter, and search control flow.
 
 ## Next Priority
 
@@ -51,4 +51,5 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - The Codex provider adapter now lives in `src/argus/providers/` and runs `codex exec` against an isolated read-only workspace while materializing prompt, schema, stdout, stderr, metadata, and failure artifacts under `artifacts/provider_invocations/` when wired into the runtime.
 - `argus inspect` recognizes persisted Argus run directories as well as Ralph-loop artifact directories.
 - The evaluator and novelty layer in `src/argus/eval/` now use provider-backed structured judgment rather than lexical heuristics.
-- `argus run` and `argus benchmark` still fail explicitly until the search runtime, final compilation, and benchmark harness are implemented.
+- The first working search runtime now lives in `src/argus/search/`; `argus run` frames the problem, generates and filters seeds, stress-tests and deepens survivors, compresses learnings, and persists a compiled final recommendation under `artifacts/runs/<run_id>/`.
+- `argus benchmark` still fails explicitly until the benchmark fixtures and harness are implemented.

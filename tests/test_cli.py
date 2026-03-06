@@ -6,10 +6,12 @@ import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from argus.cli import build_parser, main
 from argus.models import ProblemSpec
 from argus.storage import FileSystemStateStore
+from tests.search_fixtures import SearchFixtureProvider
 
 
 class CliTests(unittest.TestCase):
@@ -18,16 +20,30 @@ class CliTests(unittest.TestCase):
         subcommands = parser._subparsers._group_actions[0].choices
         self.assertEqual(set(subcommands), {"run", "benchmark", "inspect"})
 
-    def test_run_command_fails_explicitly_until_runtime_exists(self) -> None:
-        exit_code, _, stderr = _run_cli(["run", "Find the best retention strategy."])
+    def test_run_command_executes_search_and_persists_artifacts(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--budget",
+                        "9",
+                    ]
+                )
 
-        self.assertEqual(exit_code, 1)
-        self.assertIn(
-            "Search execution is scaffolded but not wired yet.",
-            stderr,
-        )
-        self.assertNotIn("deterministic evaluator", stderr)
-        self.assertNotIn("provider adapter", stderr)
+            runs = sorted((root / "artifacts" / "runs").iterdir())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("Argus Recommendation", stdout)
+            self.assertIn("run_id=", stdout)
+            self.assertIn("best_bet=", stdout)
+            self.assertEqual(len(runs), 1)
+            self.assertTrue((runs[0] / "final-recommendation.json").is_file())
+            self.assertTrue((runs[0] / "summary.md").is_file())
 
     def test_inspect_latest_agent_run_reads_pointer_and_metadata(self) -> None:
         with TemporaryRepoRoot() as root:

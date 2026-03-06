@@ -28,6 +28,12 @@ Inspect the scaffolded CLI:
 uv run argus --help
 ```
 
+Run a single Argus search:
+
+```bash
+uv run argus run "Find the best retention strategy for a workflow-heavy product."
+```
+
 Run one Ralph-loop iteration:
 
 ```bash
@@ -76,9 +82,10 @@ Current implementation status:
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors and novelty judgments instead of relying on hand-written lexical heuristics.
-- `argus run` and `argus benchmark` still fail explicitly until the remaining runtime items are implemented.
+- `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
+- `argus benchmark` still fails explicitly until the remaining benchmark items are implemented.
 
-The remaining work is the actual Argus runtime: search control flow, final compilation, and benchmarks.
+The remaining work is benchmark coverage and harnessing: stored benchmark fixtures, replayable benchmark runs, and provider-routing statistics.
 
 Process guardrails:
 
