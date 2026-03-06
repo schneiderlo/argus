@@ -45,6 +45,9 @@ from argus.search.contracts import (
 )
 from argus.storage import FileSystemStateStore, RunManifest, RunStatus
 
+_EVALUATE_CANDIDATE_ACTION = "evaluate_candidate"
+_ASSESS_NOVELTY_ACTION = "assess_novelty"
+
 
 @dataclass(frozen=True, slots=True)
 class SearchIslandPolicy:
@@ -248,6 +251,8 @@ class _CandidateAdmissionRequest:
 class _PreparedCandidateAdmission:
     novelty: NoveltyAssessment
     assessment: EvaluationAssessment
+    novelty_provider_names: tuple[str, ...]
+    evaluation_provider_names: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -489,10 +494,19 @@ class SearchRuntime:
                 reusable_learning_context.entries,
             )
             frame = frame_response.payload
+            current_action = _EVALUATE_CANDIDATE_ACTION
+            frame_assessment, frame_evaluation_provider_name = self._evaluate_candidate(
+                problem_spec=frame.problem_spec,
+                candidate=frame.framing_candidate,
+                novelty_score=1.0,
+                reusable_learning_notes=reusable_learning_context.entries,
+                routing_tracker=routing_tracker,
+            )
             root_node = self._build_framing_node(
                 frame,
                 provider_name=frame_response.provider_name,
-                reusable_learning_notes=reusable_learning_context.entries,
+                assessment=frame_assessment,
+                evaluation_provider_names=(frame_evaluation_provider_name,),
             )
             session = _MutableSession(
                 problem_spec=frame.problem_spec,
@@ -659,14 +673,9 @@ class SearchRuntime:
         frame: ProblemFrame,
         *,
         provider_name: str,
-        reusable_learning_notes: Sequence[ReusableLearningNote],
+        assessment: EvaluationAssessment,
+        evaluation_provider_names: Sequence[str],
     ) -> Node:
-        assessment = self._evaluator_for_provider(provider_name).evaluate(
-            frame.problem_spec,
-            frame.framing_candidate,
-            novelty_score=1.0,
-            reusable_learning_notes=reusable_learning_notes,
-        )
         return Node(
             node_id="node-0001",
             parent_ids=[],
@@ -680,6 +689,9 @@ class SearchRuntime:
             metadata={
                 "framing_notes": list(frame.framing_notes),
                 "evaluation": _evaluation_metadata(assessment),
+                "provider_routing": _provider_routing_metadata(
+                    evaluation_provider_names=evaluation_provider_names,
+                ),
             },
             created_at=_utcnow(),
         )
@@ -744,6 +756,7 @@ class SearchRuntime:
                 session,
                 island_id=island_id,
                 action_type=ActionType.GENERATE_SEED,
+                routing_tracker=routing_tracker,
                 requests=[
                     _CandidateAdmissionRequest(
                         candidate=candidate,
@@ -882,6 +895,7 @@ class SearchRuntime:
                 session,
                 island_id=selection.island_id,
                 action_type=ActionType.DEEPEN,
+                routing_tracker=routing_tracker,
                 requests=[admission_request],
             )
         session.refresh_frontier(limit=self._policy.frontier_limit)
@@ -934,6 +948,7 @@ class SearchRuntime:
                 session,
                 island_id=selection.island_id,
                 action_type=ActionType.MUTATE,
+                routing_tracker=routing_tracker,
                 requests=[
                     _CandidateAdmissionRequest(
                         candidate=candidate,
@@ -996,6 +1011,7 @@ class SearchRuntime:
                 session,
                 island_id=island_id,
                 action_type=ActionType.COMBINE,
+                routing_tracker=routing_tracker,
                 requests=[
                     _CandidateAdmissionRequest(
                         candidate=candidate,
@@ -1111,6 +1127,62 @@ class SearchRuntime:
             ),
         )
 
+    def _assess_novelty(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidate: Candidate,
+        archive_nodes: Sequence[Node],
+        routing_tracker: "_RoutingTracker",
+    ) -> tuple[NoveltyAssessment, str]:
+        provider = self._provider_for_action(_ASSESS_NOVELTY_ACTION)
+        routing_tracker.record_invocation(
+            action_name=_ASSESS_NOVELTY_ACTION,
+            provider_name=provider.name,
+        )
+        try:
+            novelty = self._novelty_filter_for_provider(provider.name).assess(
+                problem_spec=problem_spec,
+                candidate=candidate,
+                archive_nodes=archive_nodes,
+            )
+        except Exception:
+            routing_tracker.record_provider_failure(
+                action_name=_ASSESS_NOVELTY_ACTION,
+                provider_name=provider.name,
+            )
+            raise
+        return novelty, provider.name
+
+    def _evaluate_candidate(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidate: Candidate,
+        novelty_score: float | None,
+        reusable_learning_notes: Sequence[ReusableLearningNote],
+        routing_tracker: "_RoutingTracker",
+    ) -> tuple[EvaluationAssessment, str]:
+        provider = self._provider_for_action(_EVALUATE_CANDIDATE_ACTION)
+        routing_tracker.record_invocation(
+            action_name=_EVALUATE_CANDIDATE_ACTION,
+            provider_name=provider.name,
+        )
+        try:
+            assessment = self._evaluator_for_provider(provider.name).evaluate(
+                problem_spec,
+                candidate,
+                novelty_score=novelty_score,
+                reusable_learning_notes=reusable_learning_notes,
+            )
+        except Exception:
+            routing_tracker.record_provider_failure(
+                action_name=_EVALUATE_CANDIDATE_ACTION,
+                provider_name=provider.name,
+            )
+            raise
+        return assessment, provider.name
+
     def _run_bounded_tasks(
         self,
         items: Sequence[T],
@@ -1152,12 +1224,14 @@ class SearchRuntime:
         candidate: Candidate,
         parent_ids: Sequence[str],
         batch_summary: str,
+        routing_tracker: "_RoutingTracker",
     ) -> Node:
         prepared = self._prepare_candidate_admission(
             problem_spec=session.problem_spec,
             candidate=candidate,
             archive_nodes=[session.nodes[node_id] for node_id in session.archive_ids],
             reusable_learning_notes=session.reusable_learning_notes,
+            routing_tracker=routing_tracker,
         )
         return self._commit_candidate_admission(
             session,
@@ -1166,8 +1240,11 @@ class SearchRuntime:
             candidate=candidate,
             parent_ids=parent_ids,
             batch_summary=batch_summary,
+            source_provider_name=self._provider.name,
             novelty=prepared.novelty,
             assessment=prepared.assessment,
+            novelty_provider_names=prepared.novelty_provider_names,
+            evaluation_provider_names=prepared.evaluation_provider_names,
         )
 
     def _admit_candidate_batch(
@@ -1176,6 +1253,7 @@ class SearchRuntime:
         *,
         island_id: str | None,
         action_type: ActionType,
+        routing_tracker: "_RoutingTracker",
         requests: Sequence[_CandidateAdmissionRequest],
     ) -> list[Node]:
         if not requests:
@@ -1189,22 +1267,33 @@ class SearchRuntime:
                 candidate=request.candidate,
                 archive_nodes=archive_snapshot,
                 reusable_learning_notes=session.reusable_learning_notes,
+                routing_tracker=routing_tracker,
             ),
         )
         admitted_batch_nodes: list[Node] = []
         committed: list[Node] = []
         for request, prepared_candidate in zip(requests, prepared):
             novelty = prepared_candidate.novelty
+            novelty_provider_names = list(prepared_candidate.novelty_provider_names)
             if novelty.is_novel and admitted_batch_nodes:
                 # Concurrent archive checks use a fixed snapshot; final batch admission
                 # stays serial so same-batch near-duplicates cannot both land.
+                intra_batch_novelty, intra_batch_provider_name = self._assess_novelty(
+                    problem_spec=session.problem_spec,
+                    candidate=request.candidate,
+                    archive_nodes=admitted_batch_nodes,
+                    routing_tracker=routing_tracker,
+                )
                 novelty = _merge_novelty_assessments(
                     archive_novelty=novelty,
-                    intra_batch_novelty=self._novelty_filter_for_provider(self._provider.name).assess(
-                        problem_spec=session.problem_spec,
-                        candidate=request.candidate,
-                        archive_nodes=admitted_batch_nodes,
-                    ),
+                    intra_batch_novelty=intra_batch_novelty,
+                )
+                novelty_provider_names = _collect_unique_strings(
+                    [
+                        *novelty_provider_names,
+                        intra_batch_provider_name,
+                    ],
+                    limit=4,
                 )
             node = self._commit_candidate_admission(
                 session,
@@ -1216,6 +1305,8 @@ class SearchRuntime:
                 source_provider_name=request.source_provider_name,
                 novelty=novelty,
                 assessment=prepared_candidate.assessment,
+                novelty_provider_names=novelty_provider_names,
+                evaluation_provider_names=prepared_candidate.evaluation_provider_names,
             )
             committed.append(node)
             if node.node_id in session.archive_ids:
@@ -1229,21 +1320,26 @@ class SearchRuntime:
         candidate: Candidate,
         archive_nodes: Sequence[Node],
         reusable_learning_notes: Sequence[ReusableLearningNote],
+        routing_tracker: "_RoutingTracker",
     ) -> _PreparedCandidateAdmission:
-        novelty = self._novelty_filter_for_provider(self._provider.name).assess(
+        novelty, novelty_provider_name = self._assess_novelty(
             problem_spec=problem_spec,
             candidate=candidate,
             archive_nodes=archive_nodes,
+            routing_tracker=routing_tracker,
         )
-        assessment = self._evaluator_for_provider(self._provider.name).evaluate(
-            problem_spec,
-            candidate,
+        assessment, evaluation_provider_name = self._evaluate_candidate(
+            problem_spec=problem_spec,
+            candidate=candidate,
             novelty_score=novelty.novelty_score,
             reusable_learning_notes=reusable_learning_notes,
+            routing_tracker=routing_tracker,
         )
         return _PreparedCandidateAdmission(
             novelty=novelty,
             assessment=assessment,
+            novelty_provider_names=(novelty_provider_name,),
+            evaluation_provider_names=(evaluation_provider_name,),
         )
 
     def _commit_candidate_admission(
@@ -1258,6 +1354,8 @@ class SearchRuntime:
         source_provider_name: str,
         novelty: NoveltyAssessment,
         assessment: EvaluationAssessment,
+        novelty_provider_names: Sequence[str],
+        evaluation_provider_names: Sequence[str],
     ) -> Node:
         node_id = session.allocate_node_id()
         if parent_ids:
@@ -1269,6 +1367,10 @@ class SearchRuntime:
             "batch_summary": batch_summary,
             "novelty": novelty.to_dict(),
             "evaluation": _evaluation_metadata(assessment),
+            "provider_routing": _provider_routing_metadata(
+                novelty_provider_names=novelty_provider_names,
+                evaluation_provider_names=evaluation_provider_names,
+            ),
         }
         if not novelty.is_novel:
             lifecycle_status = NodeLifecycleStatus.REJECTED
@@ -1957,29 +2059,32 @@ class _RoutingTracker:
             winner_contributors = _winner_contributor_ids(state)
             stress_test_survivors = _stress_test_survivor_ids(state, winner_contributors)
             for node in state.nodes.values():
-                key = (node.provider_name, node.action_type.value)
-                accumulator = accumulators[key]
-                accumulator.candidate_count += 1
-                if node.score is not None:
-                    accumulator.scored_node_count += 1
-                    accumulator.accumulated_score += node.score.total_score
-                    if node.score.hard_constraint_pass and node.score.total_score >= _STRONG_SCORE_THRESHOLD:
-                        accumulator.strong_score_count += 1
-                if _was_admitted(node, state):
-                    accumulator.admitted_count += 1
-                elif node.lifecycle_status is NodeLifecycleStatus.REJECTED:
-                    accumulator.rejected_count += 1
-                elif (
-                    node.lifecycle_status is NodeLifecycleStatus.FAILED
-                    or (node.score is not None and not node.score.hard_constraint_pass)
-                ):
-                    accumulator.hard_fail_count += 1
-                if node.node_id in stress_test_survivors:
-                    accumulator.stress_test_survivor_count += 1
-                if node.node_id in state.winner_ids:
-                    accumulator.winner_count += 1
-                if node.node_id in winner_contributors:
-                    accumulator.winner_contribution_count += 1
+                for key in _node_routing_keys(node):
+                    accumulator = accumulators[key]
+                    accumulator.candidate_count += 1
+                    if node.score is not None:
+                        accumulator.scored_node_count += 1
+                        accumulator.accumulated_score += node.score.total_score
+                        if (
+                            node.score.hard_constraint_pass
+                            and node.score.total_score >= _STRONG_SCORE_THRESHOLD
+                        ):
+                            accumulator.strong_score_count += 1
+                    if _was_admitted(node, state):
+                        accumulator.admitted_count += 1
+                    elif node.lifecycle_status is NodeLifecycleStatus.REJECTED:
+                        accumulator.rejected_count += 1
+                    elif (
+                        node.lifecycle_status is NodeLifecycleStatus.FAILED
+                        or (node.score is not None and not node.score.hard_constraint_pass)
+                    ):
+                        accumulator.hard_fail_count += 1
+                    if node.node_id in stress_test_survivors:
+                        accumulator.stress_test_survivor_count += 1
+                    if node.node_id in state.winner_ids:
+                        accumulator.winner_count += 1
+                    if node.node_id in winner_contributors:
+                        accumulator.winner_contribution_count += 1
 
         entries = [
             ProviderRoutingStatsEntry(
@@ -2016,7 +2121,7 @@ class _RoutingTracker:
         keys.update(self._learning_note_counts)
         if state is not None:
             for node in state.nodes.values():
-                keys.add((node.provider_name, node.action_type.value))
+                keys.update(_node_routing_keys(node))
         return keys
 
     def _key(
@@ -2133,6 +2238,44 @@ def _merge_novelty_assessments(
             limit=6,
         ),
     )
+
+
+def _provider_routing_metadata(
+    *,
+    novelty_provider_names: Sequence[str] = (),
+    evaluation_provider_names: Sequence[str] = (),
+) -> dict[str, JSONValue]:
+    routing: dict[str, JSONValue] = {}
+    if novelty_provider_names:
+        routing[_ASSESS_NOVELTY_ACTION] = _collect_unique_strings(
+            list(novelty_provider_names),
+            limit=4,
+        )
+    if evaluation_provider_names:
+        routing[_EVALUATE_CANDIDATE_ACTION] = _collect_unique_strings(
+            list(evaluation_provider_names),
+            limit=4,
+        )
+    return routing
+
+
+def _node_routing_keys(node: Node) -> tuple[tuple[str, str], ...]:
+    keys: list[tuple[str, str]] = [(node.provider_name, node.action_type.value)]
+    provider_routing = node.metadata.get("provider_routing")
+    if isinstance(provider_routing, dict):
+        for raw_action_name, raw_provider_names in provider_routing.items():
+            if not isinstance(raw_action_name, str) or not isinstance(raw_provider_names, list):
+                continue
+            action_name = raw_action_name.strip()
+            if not action_name:
+                continue
+            for raw_provider_name in raw_provider_names:
+                if not isinstance(raw_provider_name, str):
+                    continue
+                provider_name = raw_provider_name.strip()
+                if provider_name:
+                    keys.append((provider_name, action_name))
+    return tuple(dict.fromkeys(keys))
 
 
 def _evaluation_metadata(assessment: object) -> dict[str, JSONValue]:

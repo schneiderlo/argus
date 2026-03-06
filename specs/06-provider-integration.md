@@ -38,7 +38,7 @@ The orchestrator also owns the full action-specific prompt design. A provider ad
 
 Provider implementations should also support a bounded-concurrency execution model so the runtime can dispatch independent work in parallel without building a separate orchestration path per provider. This can be implemented with async APIs, worker pools, or another explicit concurrency mechanism, but it must preserve the same artifact capture, schema validation, timeout handling, and failure serialization guarantees as the synchronous path.
 
-When the operator configures more than one provider for a run, the orchestrator should treat that as a provider pool rather than as a fixed one-provider run. In that mode the orchestrator may choose the provider per action using persisted provider-routing statistics and action-level reward signals, while still keeping one explicit fallback provider for actions with no strong historical signal.
+When the operator configures more than one provider for a run, the orchestrator should treat that as a provider pool rather than as a fixed one-provider run. In that mode the orchestrator may choose the provider per action using persisted provider-routing statistics and action-level reward signals, while still keeping one explicit fallback provider for actions with no strong historical signal. This routing should apply not just to generation and critique actions, but also to provider-backed novelty checks, candidate evaluation, and pairwise ranking, with the runtime persisting enough attribution metadata to fold downstream node outcomes back into the routing ledger for those judge actions.
 
 ## Initial Provider Scope
 

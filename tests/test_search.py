@@ -100,6 +100,13 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(entries["stress_test"].critique_count, 2)
         self.assertEqual(entries["stress_test"].useful_critique_count, 2)
         self.assertEqual(entries["deepen"].winner_count, 1)
+        self.assertEqual(entries["evaluate_candidate"].candidate_count, len(result.state.nodes))
+        self.assertEqual(entries["evaluate_candidate"].invocation_count, len(result.state.nodes))
+        self.assertEqual(entries["assess_novelty"].candidate_count, len(result.state.nodes) - 1)
+        self.assertGreaterEqual(
+            entries["assess_novelty"].invocation_count,
+            entries["assess_novelty"].candidate_count,
+        )
         self.assertEqual(entries["compress_learning"].learning_note_count, 2)
 
     def test_runtime_marks_manifest_failed_when_frame_problem_raises(self) -> None:
@@ -428,6 +435,52 @@ class SearchRuntimeTests(unittest.TestCase):
                         ),
                         ProviderRoutingStatsEntry(
                             provider_name="opencode",
+                            action_name="evaluate_candidate",
+                            run_count=2,
+                            invocation_count=4,
+                            provider_failure_count=0,
+                            candidate_count=8,
+                            scored_node_count=8,
+                            admitted_count=6,
+                            rejected_count=1,
+                            hard_fail_count=1,
+                            strong_score_count=4,
+                            stress_test_survivor_count=3,
+                            winner_count=1,
+                            winner_contribution_count=2,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=25.2,
+                            total_reward=10.5,
+                            last_run_id="run-routing-opencode-eval",
+                            last_updated_at=datetime(2026, 3, 6, 15, 30, 30, tzinfo=timezone.utc),
+                        ),
+                        ProviderRoutingStatsEntry(
+                            provider_name="gemini",
+                            action_name="assess_novelty",
+                            run_count=2,
+                            invocation_count=4,
+                            provider_failure_count=0,
+                            candidate_count=8,
+                            scored_node_count=8,
+                            admitted_count=6,
+                            rejected_count=1,
+                            hard_fail_count=1,
+                            strong_score_count=4,
+                            stress_test_survivor_count=3,
+                            winner_count=1,
+                            winner_contribution_count=2,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=25.2,
+                            total_reward=10.5,
+                            last_run_id="run-routing-gemini-novelty",
+                            last_updated_at=datetime(2026, 3, 6, 15, 30, 45, tzinfo=timezone.utc),
+                        ),
+                        ProviderRoutingStatsEntry(
+                            provider_name="opencode",
                             action_name="rank",
                             run_count=2,
                             invocation_count=3,
@@ -493,6 +546,15 @@ class SearchRuntimeTests(unittest.TestCase):
                 any(call["action_name"] == "generate_seed" for call in codex_provider.calls)
             )
             self.assertTrue(
+                any(call["action_name"] == "assess_novelty" for call in gemini_provider.calls)
+            )
+            self.assertFalse(
+                any(call["action_name"] == "assess_novelty" for call in codex_provider.calls)
+            )
+            self.assertTrue(
+                any(call["action_name"] == "evaluate_candidate" for call in opencode_provider.calls)
+            )
+            self.assertTrue(
                 any(call["action_name"] == "rank" for call in opencode_provider.calls)
             )
             self.assertTrue(
@@ -502,12 +564,37 @@ class SearchRuntimeTests(unittest.TestCase):
                     if node.action_type is ActionType.GENERATE_SEED
                 )
             )
+            root_routing = result.state.nodes[result.state.root_id].metadata["provider_routing"]
+            self.assertEqual(root_routing["evaluate_candidate"], ["opencode"])
+            for node in result.state.nodes.values():
+                if node.node_id == result.state.root_id:
+                    continue
+                provider_routing = node.metadata["provider_routing"]
+                self.assertEqual(provider_routing["assess_novelty"], ["gemini"])
+                self.assertEqual(provider_routing["evaluate_candidate"], ["opencode"])
+            eval_entry = next(
+                entry
+                for entry in store.load_provider_routing_stats().entries
+                if entry.provider_name == "opencode"
+                and entry.action_name == "evaluate_candidate"
+            )
+            self.assertGreaterEqual(eval_entry.invocation_count, len(result.state.nodes))
             rank_entry = next(
                 entry
                 for entry in store.load_provider_routing_stats().entries
                 if entry.provider_name == "opencode" and entry.action_name == "rank"
             )
             self.assertGreaterEqual(rank_entry.invocation_count, 1)
+            novelty_entry = next(
+                entry
+                for entry in store.load_provider_routing_stats().entries
+                if entry.provider_name == "gemini"
+                and entry.action_name == "assess_novelty"
+            )
+            self.assertGreaterEqual(
+                novelty_entry.invocation_count,
+                len(result.state.nodes) - 1,
+            )
 
 
 def _max_overlap(
