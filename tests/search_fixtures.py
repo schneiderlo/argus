@@ -359,6 +359,109 @@ class SearchFixtureProvider:
             "open_questions": ["Which concrete branch should receive the most search budget?"],
         }
 
+    def _handle_rank(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        objective_name = str(input_payload["objective"]["name"])
+        left_payload = dict(input_payload["left"])
+        right_payload = dict(input_payload["right"])
+        left_candidate = Candidate.from_dict(left_payload["candidate"])
+        right_candidate = Candidate.from_dict(right_payload["candidate"])
+        left_thesis = left_candidate.thesis
+        right_thesis = right_candidate.thesis
+
+        if objective_name == "best_overall":
+            if "instrumented rollout" in left_thesis.lower():
+                return _pairwise_payload(
+                    winner="left",
+                    summary=(
+                        "The instrumented rollout bet wins because it keeps the workflow-native moat "
+                        "while proving behavior change with a tighter rollout plan."
+                    ),
+                    decisive_advantages=["Clearer rollout proof without giving up strategic substance."],
+                    decisive_risks=["It still depends on disciplined operator follow-through."],
+                    confidence=0.82,
+                )
+            if "instrumented rollout" in right_thesis.lower():
+                return _pairwise_payload(
+                    winner="right",
+                    summary=(
+                        "The instrumented rollout bet wins because it keeps the workflow-native moat "
+                        "while proving behavior change with a tighter rollout plan."
+                    ),
+                    decisive_advantages=["Clearer rollout proof without giving up strategic substance."],
+                    decisive_risks=["It still depends on disciplined operator follow-through."],
+                    confidence=0.82,
+                )
+
+        if objective_name == "conservative_option":
+            if left_thesis == "Operational checklist assistant":
+                return _pairwise_payload(
+                    winner="left",
+                    summary=(
+                        "The original checklist assistant is the safer option because it narrows the "
+                        "surface area and keeps the rollout simpler than the deeper variants."
+                    ),
+                    decisive_advantages=["Lowest operational complexity among the viable options."],
+                    decisive_risks=["Its moat ceiling is lower than the archive-centered bets."],
+                    confidence=0.8,
+                )
+            if right_thesis == "Operational checklist assistant":
+                return _pairwise_payload(
+                    winner="right",
+                    summary=(
+                        "The original checklist assistant is the safer option because it narrows the "
+                        "surface area and keeps the rollout simpler than the deeper variants."
+                    ),
+                    decisive_advantages=["Lowest operational complexity among the viable options."],
+                    decisive_risks=["Its moat ceiling is lower than the archive-centered bets."],
+                    confidence=0.8,
+                )
+
+        if objective_name == "high_upside_option":
+            if left_thesis == "Peer benchmark marketplace":
+                return _pairwise_payload(
+                    winner="left",
+                    summary=(
+                        "The standalone benchmark marketplace remains the highest-upside bet because it "
+                        "offers the strongest network-effect ceiling if trust can be earned."
+                    ),
+                    decisive_advantages=["Largest upside if benchmark sharing works."],
+                    decisive_risks=["Trust and supply are still the gating risks."],
+                    confidence=0.76,
+                )
+            if right_thesis == "Peer benchmark marketplace":
+                return _pairwise_payload(
+                    winner="right",
+                    summary=(
+                        "The standalone benchmark marketplace remains the highest-upside bet because it "
+                        "offers the strongest network-effect ceiling if trust can be earned."
+                    ),
+                    decisive_advantages=["Largest upside if benchmark sharing works."],
+                    decisive_risks=["Trust and supply are still the gating risks."],
+                    confidence=0.76,
+                )
+
+        left_score = float(left_payload["score"]["total_score"])
+        right_score = float(right_payload["score"]["total_score"])
+        if left_score >= right_score:
+            return _pairwise_payload(
+                winner="left",
+                summary="The left candidate wins on the stronger overall score-backed case.",
+                decisive_advantages=["Better aggregate evaluation support."],
+                decisive_risks=["The score gap may still narrow under real-world testing."],
+                confidence=0.7,
+            )
+        return _pairwise_payload(
+            winner="right",
+            summary="The right candidate wins on the stronger overall score-backed case.",
+            decisive_advantages=["Better aggregate evaluation support."],
+            decisive_risks=["The score gap may still narrow under real-world testing."],
+            confidence=0.7,
+        )
+
     def _handle_stress_test(
         self,
         _: ProblemSpec,
@@ -578,4 +681,21 @@ def _score_payload(
         "evidence_quality": evidence_quality,
         "total_score": total_score,
         "confidence_estimate": confidence_estimate,
+    }
+
+
+def _pairwise_payload(
+    *,
+    winner: str,
+    summary: str,
+    decisive_advantages: list[str],
+    decisive_risks: list[str],
+    confidence: float,
+) -> dict[str, object]:
+    return {
+        "winner": winner,
+        "summary": summary,
+        "decisive_advantages": decisive_advantages,
+        "decisive_risks": decisive_risks,
+        "confidence": confidence,
     }

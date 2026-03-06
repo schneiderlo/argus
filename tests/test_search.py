@@ -57,10 +57,12 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertIn("mutate", action_names)
         self.assertIn("combine", action_names)
         self.assertIn("compress_learning", action_names)
+        self.assertGreaterEqual(action_names.count("rank"), 3)
         self.assertGreaterEqual(action_names.count("evaluate_candidate"), 6)
         self.assertGreaterEqual(action_names.count("assess_novelty"), 3)
         self.assertIsNotNone(loaded.routing_summary)
         self.assertEqual(loaded.routing_summary, aggregate_routing)
+        self.assertIn("Pairwise Selection Checks", result.summary_markdown)
 
         entries = {
             entry.action_name: entry
@@ -73,6 +75,7 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(entries["generate_seed"].hard_fail_count, 1)
         self.assertEqual(entries["generate_seed"].stress_test_survivor_count, 2)
         self.assertEqual(entries["generate_seed"].winner_contribution_count, 3)
+        self.assertEqual(entries["rank"].invocation_count, 3)
         self.assertEqual(entries["stress_test"].critique_count, 2)
         self.assertEqual(entries["stress_test"].useful_critique_count, 2)
         self.assertEqual(entries["deepen"].winner_count, 1)

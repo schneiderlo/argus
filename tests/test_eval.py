@@ -11,6 +11,7 @@ from argus.eval import (
     AgenticNoveltyFilter,
     EvaluationAssessment,
     NoveltyAssessment,
+    PairwiseRankingAssessment,
     rank_nodes,
 )
 from argus.models import (
@@ -64,6 +65,32 @@ class AgenticEvaluatorTests(unittest.TestCase):
     def test_rank_nodes_requires_scores(self) -> None:
         with self.assertRaises(ArgusValidationError):
             rank_nodes([_node("node-999", score=None, novelty_score=0.6)])
+
+    def test_agentic_evaluator_compares_nodes_with_provider_backed_pairwise_rank(self) -> None:
+        assessment = PairwiseRankingAssessment(
+            winner="right",
+            summary="The right candidate is more execution-ready without losing the core upside.",
+            decisive_advantages=["Cleaner rollout path."],
+            decisive_risks=["Could leave some upside on the table."],
+            confidence=0.79,
+        )
+        with TemporaryDirectory() as directory:
+            provider = FakeProvider(Path(directory), {"rank": assessment})
+            evaluator = AgenticEvaluator(provider=provider)
+
+            result = evaluator.compare_nodes(
+                _problem_spec(),
+                _node("node-001", total_score=6.2, confidence=0.8, novelty_score=0.61),
+                _node("node-002", total_score=6.1, confidence=0.84, novelty_score=0.55),
+                objective="best_overall",
+                objective_description="Choose the stronger overall recommendation.",
+            )
+
+        self.assertEqual(result, assessment)
+        self.assertEqual(provider.calls[0]["action_name"], "rank")
+        self.assertEqual(provider.calls[0]["input_payload"]["objective"]["name"], "best_overall")
+        self.assertEqual(provider.calls[0]["input_payload"]["left"]["node_id"], "node-001")
+        self.assertEqual(provider.calls[0]["input_payload"]["right"]["node_id"], "node-002")
 
 
 class AgenticNoveltyFilterTests(unittest.TestCase):
@@ -135,6 +162,18 @@ class SchemaValidationTests(unittest.TestCase):
                     "is_novel": True,
                     "summary": "   ",
                     "duplicate_signals": [],
+                }
+            )
+
+    def test_pairwise_ranking_assessment_rejects_invalid_winner(self) -> None:
+        with self.assertRaises(ArgusValidationError):
+            PairwiseRankingAssessment.from_dict(
+                {
+                    "winner": "tie",
+                    "summary": "invalid",
+                    "decisive_advantages": [],
+                    "decisive_risks": [],
+                    "confidence": 0.5,
                 }
             )
 

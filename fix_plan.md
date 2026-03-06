@@ -33,14 +33,14 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Create benchmark fixtures for at least five representative problem types: product strategy, growth, UX, technical architecture, and monetization.
 - [x] Add a benchmark harness that can run Argus against stored prompts and record structured outputs.
 - [x] Add provider-routing statistics so the system can learn which provider performs best for each action.
-- [ ] Add learning compression persistence so reusable patterns survive across runs.
-- [ ] Add pairwise ranking support to complement the provider-backed score vectors.
+- [x] Add pairwise ranking support to complement the provider-backed score vectors.
 
 ## Later
 
 - [ ] Add Gemini CLI and OpenCode provider adapters behind the same interface, while keeping Codex as the default and best-supported provider.
 - [ ] Add multi-island search so different optimization priors can evolve semi-independently.
 - [ ] Add outcome-feedback ingestion so shipped experiment results can influence future evaluation.
+- [ ] Add learning compression persistence so reusable patterns survive across runs.
 
 ## Notes
 
@@ -54,3 +54,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - The first working search runtime now lives in `src/argus/search/`; `argus run` frames the problem, generates and filters seeds, stress-tests and deepens survivors, compresses learnings, and persists a compiled final recommendation under `artifacts/runs/<run_id>/`.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` records replayable benchmark sessions under `artifacts/benchmarks/<session_id>/` with per-case snapshots plus manifest-level output digests for change detection.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the aggregate cross-run ledger now lives at `artifacts/runs/provider-routing-stats.json`.
+- The evaluator now supports provider-backed pairwise `rank` comparisons, and the runtime uses them to refine best-bet, conservative, and high-upside selection from the archived finalists instead of relying only on deterministic score ordering.

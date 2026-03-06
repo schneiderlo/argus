@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from argus.errors import ArgusValidationError
-from argus.eval import AgenticEvaluator, AgenticNoveltyFilter, rank_nodes
+from argus.eval import (
+    AgenticEvaluator,
+    AgenticNoveltyFilter,
+    PairwiseRankingAssessment,
+    rank_nodes,
+)
 from argus.models import (
     ActionType,
     Candidate,
@@ -79,6 +84,15 @@ class SearchRunResult:
     state: SearchState
     final_recommendation: FinalRecommendation
     summary_markdown: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PairwiseDecisionRecord:
+    selection_label: str
+    left_node_id: str
+    right_node_id: str
+    winner_node_id: str
+    assessment: PairwiseRankingAssessment
 
 
 class SearchRuntime:
@@ -207,7 +221,10 @@ class SearchRuntime:
 
             current_action = ActionType.RANK.value
             session.record_internal_step()
-            recommendation = self._compile_final_recommendation(session.snapshot())
+            recommendation = self._compile_final_recommendation(
+                session.snapshot(),
+                routing_tracker,
+            )
             session.apply_winners(
                 [
                     recommendation.best_bet_node_id,
@@ -691,16 +708,47 @@ class SearchRuntime:
             metadata_patch=metadata_patch,
         )
 
-    def _compile_final_recommendation(self, state: SearchState) -> FinalRecommendation:
+    def _compile_final_recommendation(
+        self,
+        state: SearchState,
+        routing_tracker: "_RoutingTracker",
+    ) -> FinalRecommendation:
         candidates = _finalist_nodes(state)
         if not candidates:
             raise ArgusValidationError("Cannot compile a final recommendation without any viable nodes.")
 
-        best = rank_nodes(candidates)[0]
-        conservative = _select_distinct_candidate(
+        best, best_decisions = self._select_pairwise_candidate(
+            state.problem_spec,
             candidates,
-            excluded_ids={best.node_id},
-            key=lambda node: (
+            selection_label="Best bet",
+            objective_name="best_overall",
+            objective_description=(
+                "Choose the strongest overall recommendation. Balance usefulness, "
+                "specificity, plausibility, implementation tractability, upside, "
+                "and adversarial robustness against the refined problem frame."
+            ),
+            routing_tracker=routing_tracker,
+        )
+        if best is None:
+            raise ArgusValidationError("Pairwise best-bet selection returned no candidate.")
+
+        conservative_candidates = [
+            node
+            for node in candidates
+            if node.node_id != best.node_id
+        ]
+        conservative, conservative_decisions = self._select_pairwise_candidate(
+            state.problem_spec,
+            conservative_candidates,
+            selection_label="Conservative option",
+            objective_name="conservative_option",
+            objective_description=(
+                "Choose the safer, more implementation-ready option that still "
+                "meaningfully solves the problem. Prefer operational clarity, "
+                "tractability, plausibility, and robustness over raw upside."
+            ),
+            routing_tracker=routing_tracker,
+            pre_rank_key=lambda node: (
                 node.score.implementation_tractability,
                 node.score.plausibility,
                 node.score.adversarial_robustness,
@@ -711,10 +759,23 @@ class SearchRuntime:
         if conservative is None:
             conservative = best
 
-        high_upside = _select_distinct_candidate(
-            candidates,
-            excluded_ids={best.node_id, conservative.node_id},
-            key=lambda node: (
+        high_upside_candidates = [
+            node
+            for node in candidates
+            if node.node_id not in {best.node_id, conservative.node_id}
+        ]
+        high_upside, high_upside_decisions = self._select_pairwise_candidate(
+            state.problem_spec,
+            high_upside_candidates,
+            selection_label="High-upside option",
+            objective_name="high_upside_option",
+            objective_description=(
+                "Choose the highest-upside option that still has a defensible mechanism. "
+                "Reward justified upside and distinctiveness, but do not ignore "
+                "implementation risk or realism."
+            ),
+            routing_tracker=routing_tracker,
+            pre_rank_key=lambda node: (
                 node.score.upside,
                 node.novelty_score,
                 node.score.distinctiveness,
@@ -753,6 +814,13 @@ class SearchRuntime:
             ],
             limit=5,
         )
+        selection_checks = _pairwise_selection_notes(
+            [
+                *best_decisions,
+                *conservative_decisions,
+                *high_upside_decisions,
+            ]
+        )
         summary_markdown = _render_summary_markdown(
             problem_spec=state.problem_spec,
             best=best,
@@ -764,6 +832,7 @@ class SearchRuntime:
             assumptions=assumptions,
             failure_modes=failure_modes,
             reversal_conditions=reversal_conditions,
+            selection_checks=selection_checks,
         )
         return FinalRecommendation(
             best_bet_node_id=best.node_id,
@@ -776,6 +845,78 @@ class SearchRuntime:
             failure_modes=failure_modes,
             reversal_conditions=reversal_conditions,
         )
+
+    def _select_pairwise_candidate(
+        self,
+        problem_spec: ProblemSpec,
+        nodes: Sequence[Node],
+        *,
+        selection_label: str,
+        objective_name: str,
+        objective_description: str,
+        routing_tracker: "_RoutingTracker",
+        pre_rank_key=None,
+    ) -> tuple[Node | None, list[_PairwiseDecisionRecord]]:
+        candidates = list(nodes)
+        if not candidates:
+            return None, []
+        ordered = (
+            rank_nodes(candidates)
+            if pre_rank_key is None
+            else sorted(candidates, key=pre_rank_key, reverse=True)
+        )
+        if len(ordered) == 1:
+            return ordered[0], []
+
+        left = ordered[0]
+        right = ordered[1]
+        assessment = self._compare_nodes_pairwise(
+            problem_spec,
+            left,
+            right,
+            objective_name=objective_name,
+            objective_description=objective_description,
+            routing_tracker=routing_tracker,
+        )
+        winner = left if assessment.winner == "left" else right
+        return winner, [
+            _PairwiseDecisionRecord(
+                selection_label=selection_label,
+                left_node_id=left.node_id,
+                right_node_id=right.node_id,
+                winner_node_id=winner.node_id,
+                assessment=assessment,
+            )
+        ]
+
+    def _compare_nodes_pairwise(
+        self,
+        problem_spec: ProblemSpec,
+        left: Node,
+        right: Node,
+        *,
+        objective_name: str,
+        objective_description: str,
+        routing_tracker: "_RoutingTracker",
+    ) -> PairwiseRankingAssessment:
+        routing_tracker.record_invocation(
+            action_name=ActionType.RANK.value,
+            provider_name=self._provider.name,
+        )
+        try:
+            return self._evaluator.compare_nodes(
+                problem_spec,
+                left,
+                right,
+                objective=objective_name,
+                objective_description=objective_description,
+            )
+        except Exception:
+            routing_tracker.record_provider_failure(
+                action_name=ActionType.RANK.value,
+                provider_name=self._provider.name,
+            )
+            raise
 
 
 class _MutableSession:
@@ -1189,18 +1330,6 @@ def _finalist_nodes(state: SearchState) -> list[Node]:
     return rank_nodes(fallback) if fallback else []
 
 
-def _select_distinct_candidate(
-    nodes: Sequence[Node],
-    *,
-    excluded_ids: set[str],
-    key,
-) -> Node | None:
-    candidates = [node for node in nodes if node.node_id not in excluded_ids]
-    if not candidates:
-        return None
-    return max(candidates, key=key)
-
-
 def _select_rejected_nodes(state: SearchState, *, limit: int) -> list[Node]:
     rejected = [
         state.nodes[node_id]
@@ -1270,6 +1399,7 @@ def _render_summary_markdown(
     assumptions: Sequence[str],
     failure_modes: Sequence[str],
     reversal_conditions: Sequence[str],
+    selection_checks: Sequence[str],
 ) -> str:
     lines = [
         "# Argus Recommendation",
@@ -1311,6 +1441,12 @@ def _render_summary_markdown(
         lines.append("- None.")
     lines.append("")
 
+    if selection_checks:
+        lines.append("## Pairwise Selection Checks")
+        for check in selection_checks:
+            lines.append(f"- {check}")
+        lines.append("")
+
     lines.append("## Assumptions")
     for assumption in assumptions:
         lines.append(f"- {assumption}")
@@ -1344,6 +1480,26 @@ def _render_summary_markdown(
         lines.append("")
 
     return "\n".join(lines).strip() + "\n"
+
+
+def _pairwise_selection_notes(records: Sequence[_PairwiseDecisionRecord]) -> list[str]:
+    notes: list[str] = []
+    for record in records:
+        loser_node_id = (
+            record.right_node_id
+            if record.winner_node_id == record.left_node_id
+            else record.left_node_id
+        )
+        fragments = [
+            f"{record.selection_label}: `{record.winner_node_id}` beat `{loser_node_id}`.",
+            record.assessment.summary,
+        ]
+        if record.assessment.decisive_advantages:
+            fragments.append(f"Key edge: {record.assessment.decisive_advantages[0]}")
+        if record.assessment.decisive_risks:
+            fragments.append(f"Main risk: {record.assessment.decisive_risks[0]}")
+        notes.append(" ".join(fragments))
+    return notes
 
 
 def _normalize_non_empty_string(value: object, field_name: str) -> str:

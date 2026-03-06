@@ -56,6 +56,68 @@ class EvaluationAssessment:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PairwiseRankingAssessment:
+    winner: str
+    summary: str
+    decisive_advantages: list[str] = field(default_factory=list)
+    decisive_risks: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.winner not in {"left", "right"}:
+            raise ArgusValidationError(
+                "winner must be either 'left' or 'right', "
+                f"got {self.winner!r}."
+            )
+        object.__setattr__(self, "summary", _normalize_non_empty_string(self.summary, "summary"))
+        object.__setattr__(
+            self,
+            "decisive_advantages",
+            _normalize_string_list(self.decisive_advantages, "decisive_advantages"),
+        )
+        object.__setattr__(
+            self,
+            "decisive_risks",
+            _normalize_string_list(self.decisive_risks, "decisive_risks"),
+        )
+        object.__setattr__(
+            self,
+            "confidence",
+            _normalize_probability(self.confidence, "confidence"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "winner": self.winner,
+            "summary": self.summary,
+            "decisive_advantages": list(self.decisive_advantages),
+            "decisive_risks": list(self.decisive_risks),
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "PairwiseRankingAssessment":
+        data = _validate_payload_keys(
+            payload,
+            field_name="PairwiseRankingAssessment",
+            required={
+                "winner",
+                "summary",
+                "decisive_advantages",
+                "decisive_risks",
+                "confidence",
+            },
+        )
+        return cls(
+            winner=data["winner"],
+            summary=data["summary"],
+            decisive_advantages=data["decisive_advantages"],
+            decisive_risks=data["decisive_risks"],
+            confidence=data["confidence"],
+        )
+
+
 class AgenticEvaluator:
     """Evaluate candidates via the provider layer using a structured rubric."""
 
@@ -122,6 +184,65 @@ class AgenticEvaluator:
         )
         return response.payload
 
+    def compare_nodes(
+        self,
+        problem_spec: ProblemSpec,
+        left: Node,
+        right: Node,
+        *,
+        objective: str,
+        objective_description: str,
+    ) -> PairwiseRankingAssessment:
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
+        if not isinstance(left, Node):
+            raise ArgusValidationError(
+                f"left must be a Node instance, got {type(left).__name__}."
+            )
+        if not isinstance(right, Node):
+            raise ArgusValidationError(
+                f"right must be a Node instance, got {type(right).__name__}."
+            )
+        if left.node_id == right.node_id:
+            raise ArgusValidationError("left and right must be different nodes.")
+        if left.score is None:
+            raise ArgusValidationError(f"Node {left.node_id!r} has no score to compare.")
+        if right.score is None:
+            raise ArgusValidationError(f"Node {right.node_id!r} has no score to compare.")
+
+        normalized_objective = _normalize_non_empty_string(objective, "objective")
+        normalized_description = _normalize_non_empty_string(
+            objective_description,
+            "objective_description",
+        )
+        response = self._provider.run_action(
+            action_name="rank",
+            problem_spec=problem_spec,
+            input_payload={
+                "objective": {
+                    "name": normalized_objective,
+                    "description": normalized_description,
+                },
+                "left": _comparison_node_payload(left),
+                "right": _comparison_node_payload(right),
+                "comparison_policy": {
+                    "decision_rule": (
+                        "Choose the candidate that better satisfies the stated objective based "
+                        "on mechanism quality, score evidence, critique evidence, and realism."
+                    ),
+                    "anti_style_rule": (
+                        "Do not reward phrasing polish, buzzwords, or generic optimism unless "
+                        "they reflect a materially stronger plan."
+                    ),
+                },
+            },
+            output_schema=pairwise_ranking_assessment_schema(),
+        )
+        return response.payload
+
 
 def rank_nodes(nodes: Iterable[Node]) -> list[Node]:
     """Sort scored nodes for expansion or winner selection."""
@@ -145,6 +266,35 @@ def evaluation_assessment_schema() -> StructuredOutputSchema[EvaluationAssessmen
             },
         },
         validator=EvaluationAssessment.from_dict,
+    )
+
+
+def pairwise_ranking_assessment_schema() -> StructuredOutputSchema[PairwiseRankingAssessment]:
+    probability_field = {"type": "number", "minimum": 0.0, "maximum": 1.0}
+    return StructuredOutputSchema(
+        name="pairwise_ranking_assessment",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "winner",
+                "summary",
+                "decisive_advantages",
+                "decisive_risks",
+                "confidence",
+            ],
+            "properties": {
+                "winner": {
+                    "type": "string",
+                    "enum": ["left", "right"],
+                },
+                "summary": {"type": "string", "minLength": 1},
+                "decisive_advantages": _string_array_schema(),
+                "decisive_risks": _string_array_schema(),
+                "confidence": probability_field,
+            },
+        },
+        validator=PairwiseRankingAssessment.from_dict,
     )
 
 
@@ -204,6 +354,20 @@ def _string_array_schema() -> dict[str, JSONValue]:
         "type": "array",
         "items": {"type": "string", "minLength": 1},
     }
+
+
+def _comparison_node_payload(node: Node) -> dict[str, JSONValue]:
+    if node.score is None:
+        raise ArgusValidationError(f"Node {node.node_id!r} has no score to compare.")
+    payload: dict[str, JSONValue] = {
+        "node_id": node.node_id,
+        "candidate": node.candidate.to_dict(),
+        "score": node.score.to_dict(),
+        "novelty_score": node.novelty_score,
+    }
+    if node.critique is not None:
+        payload["critique"] = node.critique.to_dict()
+    return payload
 
 
 def _normalize_non_empty_string(value: object, field_name: str) -> str:
