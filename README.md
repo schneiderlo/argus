@@ -1,16 +1,21 @@
-# Argus Ralph Loop
+# Argus
 
-This repository contains a Codex-first Ralph loop for building **Argus**, a decision-and-invention engine. The goal is not to preserve the archived conversation as context. The goal is to let a fresh agent implement the system from the repository itself.
+This repository contains **Argus**, a decision-and-invention engine that treats brainstorming as structured search instead of a single chat response.
+
+The Ralph loop in this repo is a development workflow for iterating on the project with Codex. It is useful for building and maintaining Argus, but it is not the product itself and not the main runtime path for normal Argus use.
+
+The goal is not to preserve the archived conversation as context. The goal is to let a fresh agent implement and operate the system from the repository itself.
 
 The repository therefore includes:
 
+- an installable `argus` CLI under `src/argus/`
 - a self-contained specification library under `specs/`
 - a repo-local `AGENTS.md` with implementation rules
-- a live `PROMPT.md` that drives the Codex loop
+- a live `PROMPT.md` that drives the optional Codex development loop
 - a prioritized `fix_plan.md`
-- shell scripts for running the loop and deterministic verification
+- shell scripts for deterministic verification and the optional Ralph loop
 - JSON schemas for the core structured artifacts the system must eventually emit
-- a Python package scaffold under `src/argus/` with an installable `argus` CLI
+- benchmark fixtures and persisted artifact directories
 
 ## Quick Start
 
@@ -64,16 +69,20 @@ uv run argus feedback run-20260306T020456Z --node node-0007 --outcome validated 
   --winning-pattern "Teams accept setup work when the audit trail saves recurring review time."
 ```
 
-Run one Ralph-loop iteration:
-
-```bash
-RALPH_MAX_ITERS=1 ./scripts/ralph-loop.sh
-```
-
 Run the deterministic verification gate directly:
 
 ```bash
 ./scripts/verify.sh
+```
+
+## Development Loop
+
+The Ralph loop is a repo-maintenance path for using Codex to improve the project itself. It is not required for ordinary `argus run`, `argus benchmark`, or `argus feedback` usage.
+
+Run one Ralph-loop iteration:
+
+```bash
+RALPH_MAX_ITERS=1 ./scripts/ralph-loop.sh
 ```
 
 Run the Ralph loop until verification passes and the open items in `fix_plan.md` are gone:
@@ -90,7 +99,7 @@ Optional environment variables:
 - `RALPH_STOP_ON_PASS`: `1` to stop when verification passes and `fix_plan.md` has no unchecked items
 - `CODEX_JSON`: `1` to capture JSONL event output, `0` for plain text
 
-## Loop Shape
+## Ralph Loop Shape
 
 Each iteration does the following:
 
