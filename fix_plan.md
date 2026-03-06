@@ -19,7 +19,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Highest Priority
 
-- [ ] Bootstrap the Python project with `uv`: create `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
+- [x] Bootstrap the Python project with `uv`: create `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
 - [ ] Implement the core typed domain models described in `specs/03-search-runtime.md` and `specs/04-evaluator-and-ranking.md`.
 - [ ] Implement a filesystem-backed state store for runs, nodes, learnings, scores, critiques, and final recommendations.
 - [ ] Implement a Codex provider adapter that wraps `codex exec`, validates structured outputs, captures logs, and never lets the provider write directly to repository state outside the orchestrated workflow.
@@ -46,3 +46,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 - Do not delete this file when work is complete. Turn it into a maintained project plan.
 - If you discover a mismatch between the specs and implementation reality, record it here and then resolve it explicitly.
+- The scaffold now includes a real `argus` CLI with `run`, `benchmark`, and working `inspect` subcommands. `run` and `benchmark` still fail explicitly until the runtime, provider, and benchmark systems are implemented.

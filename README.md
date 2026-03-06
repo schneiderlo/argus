@@ -10,16 +10,37 @@ The repository therefore includes:
 - a prioritized `fix_plan.md`
 - shell scripts for running the loop and deterministic verification
 - JSON schemas for the core structured artifacts the system must eventually emit
+- a Python package scaffold under `src/argus/` with an installable `argus` CLI
 
 ## Quick Start
 
-Run one iteration:
+Prepare the local Python environment:
+
+```bash
+uv sync --group dev
+```
+
+The repository targets Python 3.12 through `uv`. Do not rely on the system `python3` for normal development or verification.
+
+Inspect the scaffolded CLI:
+
+```bash
+uv run argus --help
+```
+
+Run one Ralph-loop iteration:
 
 ```bash
 RALPH_MAX_ITERS=1 ./scripts/ralph-loop.sh
 ```
 
-Run until verification passes and the open items in `fix_plan.md` are gone:
+Run the deterministic verification gate directly:
+
+```bash
+./scripts/verify.sh
+```
+
+Run the Ralph loop until verification passes and the open items in `fix_plan.md` are gone:
 
 ```bash
 ./scripts/ralph-loop.sh
@@ -40,11 +61,24 @@ Each iteration does the following:
 1. Runs `codex exec` against `PROMPT.md`.
 2. Stores the agent transcript artifacts under `artifacts/agent_runs/`.
 3. Runs `./scripts/verify.sh` to generate deterministic backpressure.
-4. Copies the latest verification log to `artifacts/verify/latest.txt`.
-5. Repeats until the operator stops it or the repository reaches a verified state.
+4. Fails the iteration if verification passes but the repository is still dirty.
+5. Copies the latest verification log to `artifacts/verify/latest.txt`.
+6. Repeats until the operator stops it or the repository reaches a verified state.
 
 ## Current State
 
-The repository intentionally starts as a spec-and-loop package, not as a finished application. `./scripts/verify.sh` currently fails until the Python application described in `specs/` is implemented. That failure is part of the loop: it tells Codex what remains missing.
+The repository now contains the Python project scaffold described in `specs/02-system-architecture.md`: `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
 
-When the Python project scaffold is created, use `uv` as the package manager and environment runner.
+Current CLI behavior:
+
+- `argus inspect` works today for persisted Ralph-loop artifact directories and metadata files.
+- `argus run` and `argus benchmark` fail explicitly until the remaining fix-plan items are implemented.
+
+The remaining work is the actual Argus runtime: typed domain models, filesystem-backed state, provider integration, evaluation, novelty filtering, search control flow, final compilation, and benchmarks.
+
+Process guardrails:
+
+- `./scripts/verify.sh` uses `uv run --python 3.12 ...` to avoid silently validating against the wrong interpreter.
+- `uv.lock` is expected to stay committed and in sync with `pyproject.toml`; verification should fail rather than rewriting the lockfile during a normal loop iteration.
+- Python cache directories and bytecode files are ignored so loop runs do not dirty the tree with generated junk.
+- A successful iteration is expected to end in a clean, committed repository state.

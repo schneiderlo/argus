@@ -16,6 +16,10 @@ has_open_items() {
   rg -q '^- \[ \]' "$ROOT_DIR/fix_plan.md"
 }
 
+has_dirty_worktree() {
+  [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]
+}
+
 write_metadata() {
   local metadata_file="$1"
   local iteration="$2"
@@ -67,6 +71,15 @@ while :; do
   verify_exit=$?
   set -e
 
+  if [[ "$verify_exit" -eq 0 ]] && has_dirty_worktree; then
+    {
+      printf '\n'
+      echo "Process failure: verification passed but the git worktree is still dirty."
+      echo "Commit or otherwise clean the completed increment before the iteration can count as successful."
+    } | tee -a "$run_dir/verify.txt"
+    verify_exit=1
+  fi
+
   cp "$run_dir/verify.txt" "$VERIFY_DIR/latest.txt"
   if [[ "$verify_exit" -eq 0 ]]; then
     cp "$run_dir/verify.txt" "$VERIFY_DIR/latest-success.txt"
@@ -85,4 +98,3 @@ while :; do
   iteration=$((iteration + 1))
   sleep "$SLEEP_SECONDS"
 done
-

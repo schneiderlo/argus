@@ -26,8 +26,10 @@ Read in this order:
 4. Do not implement placeholder, fake, or toy logic when the specs call for real behavior.
 5. Every meaningful behavior change must include tests or, if testing is blocked, a precise note in `fix_plan.md` explaining the missing coverage.
 6. Run `./scripts/verify.sh` before ending your turn. Treat the output as hard backpressure.
-7. Keep docs in sync with reality. If the implementation changes the operator workflow or system architecture, update the relevant files in `specs/`, `README.md`, and `PROMPT.md`.
-8. Favor a clean Python implementation with typed models and deterministic file-based state over cleverness.
+7. When verification passes, leave the repository in a clean state. Stage and commit the completed increment with a meaningful commit message instead of leaving a green but dirty tree behind.
+8. Keep docs in sync with reality. If the implementation changes the operator workflow or system architecture, update the relevant files in `specs/`, `README.md`, and `PROMPT.md`.
+9. Favor a clean Python implementation with typed models and deterministic file-based state over cleverness.
+10. If you change Python dependencies or project metadata, update `uv.lock` in the same increment and commit it.
 
 ## Coding Direction
 
@@ -49,3 +51,5 @@ The loop is intentionally simple:
 - `./scripts/verify.sh` is the deterministic gate.
 
 The operator will tune `PROMPT.md` and `fix_plan.md` over time. Respect both files as mutable control surfaces.
+
+`./scripts/verify.sh` is expected to run through `uv` on Python 3.12. Passing verification with a dirty worktree is treated as process failure, not success.

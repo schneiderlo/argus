@@ -44,17 +44,20 @@ if [[ ! -d tests ]]; then
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required for verification" >&2
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required for verification" >&2
   exit 1
 fi
 
-python3 -m compileall src tests
-python3 -m pytest
-
-if command -v ruff >/dev/null 2>&1; then
-  ruff check .
+if [[ ! -f uv.lock ]]; then
+  echo "uv.lock is required for verification. Run 'uv lock' or 'uv sync --group dev' and commit the lockfile." >&2
+  exit 1
 fi
 
-echo "Verification complete."
+uv sync --locked --group dev --python 3.12
+uv run --locked --no-sync --python 3.12 python -V
+uv run --locked --no-sync --python 3.12 python -m compileall src tests
+uv run --locked --no-sync --python 3.12 python -m unittest discover -s tests -t .
+uv run --locked --no-sync --python 3.12 ruff check .
 
+echo "Verification complete."

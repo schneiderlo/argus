@@ -3,4 +3,8 @@ artifacts/verify/latest.txt
 artifacts/verify/latest-success.txt
 artifacts/latest-run.txt
 tmp/
-
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc

@@ -19,8 +19,11 @@ Execution rules:
 5. Keep `fix_plan.md` current. Add newly discovered gaps. Mark completed items. Remove stale items.
 6. Add or update tests for the behavior you changed.
 7. Run `./scripts/verify.sh` before ending your turn.
-8. If verification still fails, use that output to drive the next increment and document the remaining gap in `fix_plan.md`.
-9. If you change the operator workflow, update `README.md`, `AGENTS.md`, and this prompt if needed.
+8. Use `uv` for Python commands and tooling. The repository targets Python 3.12, not the host interpreter by default.
+9. If verification passes, stage and commit the completed increment with a meaningful commit message so the repository does not remain green-but-dirty.
+10. If you change Python dependencies or project metadata, update `uv.lock` in the same increment.
+11. If verification still fails, use that output to drive the next increment and document the remaining gap in `fix_plan.md`.
+12. If you change the operator workflow, update `README.md`, `AGENTS.md`, and this prompt if needed.
 
 Product target:
 
@@ -38,4 +41,3 @@ Quality bar:
 - Real tests
 - No silent failure paths
 - No archive-conversation dependency
-
