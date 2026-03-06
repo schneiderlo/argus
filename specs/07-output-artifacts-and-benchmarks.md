@@ -47,7 +47,7 @@ The benchmark harness must:
 - record run metadata
 - make regressions visible
 
-The first harness can be basic, but it must exist.
+The first harness can be basic, but it must exist. A concrete first implementation may persist each session under `artifacts/benchmarks/<session_id>/` with a manifest plus per-case snapshots of the copied fixture, final recommendation, summary markdown, and a stable output digest for comparison against the previous session.
 
 ## Ralph Loop Artifacts
 
@@ -59,4 +59,3 @@ The Ralph loop itself must store iteration artifacts under `artifacts/agent_runs
 - metadata
 
 These are implementation artifacts, not end-user artifacts, but they are required for operator audit.
-

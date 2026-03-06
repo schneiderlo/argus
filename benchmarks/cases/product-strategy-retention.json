@@ -1,0 +1,34 @@
+{
+  "budget": 12,
+  "case_id": "product-strategy-retention",
+  "evaluation_notes": [
+    "Bias toward durable workflow moats instead of ornamental engagement mechanics.",
+    "The strongest answer should expose tradeoffs between fast activation and long-term retention."
+  ],
+  "expected_qualities": [
+    "Differentiates at least one safe path from at least one bolder path.",
+    "Preserves explicit assumptions and failure modes in the recommendation package."
+  ],
+  "family": "product_strategy",
+  "problem_spec": {
+    "constraints": [
+      "Stay self-serve for teams under 50 seats.",
+      "Keep every recommendation auditable from stored artifacts."
+    ],
+    "context": {
+      "company_stage": "series_a",
+      "product_type": "workflow-heavy B2B SaaS"
+    },
+    "request": "Find the best retention strategy for a workflow-heavy B2B product that wants a stronger moat without becoming enterprise-only.",
+    "success_criteria": [
+      "Increase repeated weekly use by team leads.",
+      "Create a retention mechanism that gets stronger as real work accumulates."
+    ]
+  },
+  "tags": [
+    "b2b",
+    "retention",
+    "workflow"
+  ],
+  "title": "Retention moat for a workflow-heavy product"
+}

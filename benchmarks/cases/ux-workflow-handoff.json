@@ -1,0 +1,38 @@
+{
+  "budget": 12,
+  "case_id": "ux-workflow-handoff",
+  "evaluation_notes": [
+    "Look for solutions that reduce coordination drag across roles instead of adding decorative UI polish.",
+    "A good answer should treat the workflow as a system, not just as isolated screens."
+  ],
+  "expected_qualities": [
+    "Explains how the UX proposal changes team behavior across a multi-step handoff.",
+    "Identifies failure modes around adoption, overload, or accidental complexity."
+  ],
+  "family": "ux",
+  "problem_spec": {
+    "constraints": [
+      "Keep the product usable on desktop and tablet.",
+      "Do not require a full navigation rewrite in the first release."
+    ],
+    "context": {
+      "actors": [
+        "requester",
+        "reviewer",
+        "operator"
+      ],
+      "workflow": "multi-step approval"
+    },
+    "request": "Propose the best UX direction for a workflow where requests move between requester, reviewer, and operator, but handoffs currently feel opaque and error-prone.",
+    "success_criteria": [
+      "Reduce uncertainty during handoff-heavy tasks.",
+      "Make the next required action obvious without flattening the workflow into a chat feed."
+    ]
+  },
+  "tags": [
+    "ux",
+    "workflow",
+    "handoff"
+  ],
+  "title": "Workflow handoff redesign"
+}

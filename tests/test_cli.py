@@ -45,6 +45,42 @@ class CliTests(unittest.TestCase):
             self.assertTrue((runs[0] / "final-recommendation.json").is_file())
             self.assertTrue((runs[0] / "summary.md").is_file())
 
+    def test_benchmark_command_executes_selected_case_and_persists_session(self) -> None:
+        with TemporaryRepoRoot() as root:
+            _write_benchmark_case_fixture(
+                root / "benchmarks" / "cases" / "product-strategy-retention.json"
+            )
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "benchmark",
+                        "--case",
+                        "product-strategy-retention",
+                    ]
+                )
+
+            sessions = sorted(
+                path for path in (root / "artifacts" / "benchmarks").iterdir() if path.is_dir()
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr, "")
+            self.assertIn("benchmark_session=", stdout)
+            self.assertIn("completed_cases=1", stdout)
+            self.assertIn("product-strategy-retention: completed", stdout)
+            self.assertEqual(len(sessions), 1)
+            self.assertTrue((sessions[0] / "manifest.json").is_file())
+            self.assertTrue(
+                (
+                    sessions[0]
+                    / "cases"
+                    / "product-strategy-retention"
+                    / "result.json"
+                ).is_file()
+            )
+
     def test_inspect_latest_agent_run_reads_pointer_and_metadata(self) -> None:
         with TemporaryRepoRoot() as root:
             run_dir = root / "artifacts" / "agent_runs" / "20260306T020456Z-iter-0001"
@@ -142,3 +178,33 @@ class TemporaryRepoRoot:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self._directory.cleanup()
+
+
+def _write_benchmark_case_fixture(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "case_id": "product-strategy-retention",
+        "title": "Fixture benchmark case",
+        "family": "product_strategy",
+        "problem_spec": {
+            "request": "Find the best retention strategy for a workflow-heavy product.",
+            "constraints": [
+                "Stay self-serve.",
+                "Keep every decision auditable.",
+            ],
+            "success_criteria": [
+                "Increase repeated use.",
+                "Leave behind clear artifacts.",
+            ],
+            "context": {"segment": "product"},
+        },
+        "budget": 9,
+        "evaluation_notes": [
+            "Prefer durable workflow habits over decorative engagement loops.",
+        ],
+        "expected_qualities": [
+            "Produce differentiated bets with explicit tradeoffs.",
+        ],
+        "tags": ["fixture", "retention"],
+    }
+    (path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

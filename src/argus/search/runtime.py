@@ -108,14 +108,40 @@ class SearchRuntime:
         run_id: str | None = None,
     ) -> SearchRunResult:
         normalized_request = _normalize_non_empty_string(request, "request")
+        return self.run_problem(
+            problem_spec=ProblemSpec(
+                request=normalized_request,
+                constraints=[],
+                success_criteria=[],
+                context={},
+            ),
+            budget=budget,
+            run_id=run_id,
+        )
+
+    def run_problem(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        budget: int,
+        run_id: str | None = None,
+    ) -> SearchRunResult:
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
         if not isinstance(budget, int) or budget <= 0:
             raise ArgusValidationError("budget must be a positive integer.")
 
         initial_problem_spec = ProblemSpec(
-            request=normalized_request,
-            constraints=[],
-            success_criteria=[],
-            context={"requested_provider": self._provider.name},
+            request=problem_spec.request,
+            constraints=list(problem_spec.constraints),
+            success_criteria=list(problem_spec.success_criteria),
+            context={
+                **problem_spec.context,
+                "requested_provider": self._provider.name,
+            },
         )
         manifest = self._state_store.create_run(
             problem_spec=initial_problem_spec,

@@ -1,0 +1,34 @@
+{
+  "budget": 14,
+  "case_id": "technical-architecture-local-first",
+  "evaluation_notes": [
+    "Favor architectures that are operationally realistic for a small team and explicit about sync and conflict tradeoffs.",
+    "The strongest answer should separate the first implementation milestone from later scalability options."
+  ],
+  "expected_qualities": [
+    "Produces a clear best-bet architecture plus a more conservative fallback.",
+    "Surfaces failure modes around state consistency, reproducibility, and local execution limits."
+  ],
+  "family": "technical_architecture",
+  "problem_spec": {
+    "constraints": [
+      "The first release must run locally on developer laptops.",
+      "State must stay replayable and inspectable with normal filesystem tools."
+    ],
+    "context": {
+      "language": "python",
+      "team_size": "small"
+    },
+    "request": "Design the best architecture for a local-first decision engine that orchestrates model calls, persists search state to disk, and needs a clean path to later sync across machines.",
+    "success_criteria": [
+      "Keep the first milestone simple enough to ship in weeks.",
+      "Preserve a credible path to collaboration and replay later."
+    ]
+  },
+  "tags": [
+    "architecture",
+    "local-first",
+    "state"
+  ],
+  "title": "Local-first architecture for Argus-like systems"
+}

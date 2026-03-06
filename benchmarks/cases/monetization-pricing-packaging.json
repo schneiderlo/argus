@@ -1,0 +1,34 @@
+{
+  "budget": 12,
+  "case_id": "monetization-pricing-packaging",
+  "evaluation_notes": [
+    "Prefer monetization ideas that strengthen the product's core value loop instead of creating arbitrary paywalls.",
+    "A good answer should distinguish between pricing mechanics and packaging strategy."
+  ],
+  "expected_qualities": [
+    "Offers a best monetization bet plus at least one conservative and one higher-upside alternative.",
+    "Calls out reversal conditions if the pricing model harms activation or trust."
+  ],
+  "family": "monetization",
+  "problem_spec": {
+    "constraints": [
+      "Maintain a credible self-serve entry point.",
+      "Do not depend on enterprise procurement for the next 12 months."
+    ],
+    "context": {
+      "current_model": "flat monthly subscription",
+      "market": "prosumer-to-team"
+    },
+    "request": "Recommend the best monetization strategy for a prosumer product moving upmarket into teams without killing the simplicity that made it spread initially.",
+    "success_criteria": [
+      "Increase revenue per active team.",
+      "Preserve organic adoption and avoid pricing confusion."
+    ]
+  },
+  "tags": [
+    "monetization",
+    "pricing",
+    "packaging"
+  ],
+  "title": "Pricing and packaging for a prosumer-to-team product"
+}

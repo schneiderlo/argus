@@ -6,8 +6,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from argus.benchmarks import BenchmarkHarness, render_benchmark_report
 from argus.config import ArgusConfig
-from argus.errors import ArgusError, ArgusNotImplementedError, ArgusUserError
+from argus.errors import ArgusError, ArgusUserError
 from argus.inspection import (
     inspect_artifact_path,
     render_inspection_report,
@@ -58,7 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--case",
         dest="case_name",
         default=None,
-        help="Optional benchmark case identifier to run once the harness exists.",
+        help="Optional benchmark case identifier to run. Defaults to all stored cases.",
+    )
+    benchmark_parser.add_argument(
+        "--provider",
+        default="codex",
+        help="Provider name to route benchmark actions through. Defaults to codex.",
     )
     benchmark_parser.set_defaults(handler=_handle_benchmark)
 
@@ -98,9 +104,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ArgusUserError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except ArgusNotImplementedError as exc:
-        print(f"not implemented: {exc}", file=sys.stderr)
-        return 1
     except ArgusError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -133,11 +136,18 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     return 0
 
 
-def _handle_benchmark(_: argparse.Namespace, __: ArgusConfig) -> int:
-    raise ArgusNotImplementedError(
-        "Benchmark execution is scaffolded but not wired yet. Implement the benchmark "
-        "fixtures and harness before this command can run cases."
+def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
+    provider = _build_provider(config, args.provider)
+    harness = BenchmarkHarness(
+        provider=provider,
+        state_store=FileSystemStateStore(config.runs_dir),
+        cases_dir=config.benchmark_cases_dir,
+        output_root=config.benchmark_runs_dir,
+        latest_pointer=config.latest_benchmark_run_pointer,
     )
+    result = harness.run(case_name=args.case_name)
+    print(render_benchmark_report(result))
+    return 0 if result.manifest.failed_count == 0 else 1
 
 
 def _handle_inspect(args: argparse.Namespace, config: ArgusConfig) -> int:

@@ -34,6 +34,13 @@ Run a single Argus search:
 uv run argus run "Find the best retention strategy for a workflow-heavy product."
 ```
 
+Run the stored benchmark suite, or a single case:
+
+```bash
+uv run argus benchmark
+uv run argus benchmark --case technical-architecture-local-first
+```
+
 Run one Ralph-loop iteration:
 
 ```bash
@@ -83,9 +90,9 @@ Current implementation status:
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors and novelty judgments instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
-- `argus benchmark` still fails explicitly until the remaining benchmark items are implemented.
+- Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The remaining work is benchmark coverage and harnessing: stored benchmark fixtures, replayable benchmark runs, and provider-routing statistics.
+The remaining work is provider-routing statistics, persisted cross-run learning compression, and pairwise ranking support.
 
 Process guardrails:
 
