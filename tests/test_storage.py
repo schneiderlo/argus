@@ -319,6 +319,7 @@ class FileSystemStateStoreTests(unittest.TestCase):
                 feedback
             )
             loaded = store.load_run(manifest.run_id)
+            aggregate_routing = store.load_provider_routing_stats()
             run_dir = store.root_dir / manifest.run_id
             run_feedback_exists = (run_dir / "outcome-feedback.json").is_file()
             aggregate_feedback_exists = (
@@ -335,6 +336,20 @@ class FileSystemStateStoreTests(unittest.TestCase):
         self.assertEqual(
             merged_memory.entries[0].evidence_sources,
             [LearningEvidenceSource.OUTCOME_FEEDBACK],
+        )
+        self.assertIsNotNone(loaded.routing_summary)
+        routing_entries = {
+            (entry.provider_name, entry.action_name): entry
+            for entry in aggregate_routing.entries
+        }
+        self.assertEqual(routing_entries[("codex", "deepen")].total_reward, 1.0)
+        self.assertEqual(
+            routing_entries[("opencode", "evaluate_candidate")].total_reward,
+            1.0,
+        )
+        self.assertEqual(
+            routing_entries[("gemini", "assess_novelty")].total_reward,
+            1.0,
         )
 
     def test_list_runs_returns_sorted_run_manifests(self) -> None:
@@ -398,7 +413,13 @@ def _sample_search_state(
         island_id="balanced",
         novelty_score=0.72,
         lifecycle_status=NodeLifecycleStatus.ARCHIVED,
-        metadata={"step": 2},
+        metadata={
+            "step": 2,
+            "provider_routing": {
+                "assess_novelty": ["gemini"],
+                "evaluate_candidate": ["opencode"],
+            },
+        },
         created_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
     )
     return SearchState(

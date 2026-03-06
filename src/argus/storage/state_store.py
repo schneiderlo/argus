@@ -18,6 +18,7 @@ from argus.models import (
     OutcomeFeedbackLedger,
     ProblemSpec,
     ProviderRoutingStats,
+    ProviderRoutingStatsEntry,
     SearchIsland,
     SearchState,
 )
@@ -748,6 +749,15 @@ class FileSystemStateStore:
         merged_memory = self.save_learning_memory(
             self.load_learning_memory().merge_outcome_feedback(feedback)
         )
+        routing_feedback = _feedback_routing_summary(node=node, feedback=feedback)
+        if routing_feedback.entries:
+            run_routing_summary = (
+                routing_feedback
+                if persisted_run.routing_summary is None
+                else persisted_run.routing_summary.merge(routing_feedback)
+            )
+            self.save_provider_routing_summary(feedback.run_id, run_routing_summary)
+            self.merge_provider_routing_stats(routing_feedback)
         return refreshed_manifest, aggregate_feedback, merged_memory
 
     def merge_provider_routing_stats(
@@ -1233,6 +1243,64 @@ def _normalize_learning_notes(value: object, field_name: str) -> list[LearningNo
             )
         normalized.append(note)
     return normalized
+
+
+def _feedback_routing_summary(
+    *,
+    node: Node,
+    feedback: OutcomeFeedback,
+) -> ProviderRoutingStats:
+    reward = _feedback_reward(feedback)
+    routing_keys = _node_feedback_routing_keys(node)
+    if reward == 0.0 or not routing_keys:
+        return ProviderRoutingStats.empty()
+
+    per_key_reward = reward / len(routing_keys)
+    return ProviderRoutingStats(
+        entries=[
+            ProviderRoutingStatsEntry(
+                provider_name=provider_name,
+                action_name=action_name,
+                invocation_count=1,
+                total_reward=per_key_reward,
+                last_run_id=feedback.run_id,
+                last_updated_at=feedback.recorded_at,
+            )
+            for provider_name, action_name in sorted(routing_keys)
+        ],
+        updated_at=feedback.recorded_at,
+    )
+
+
+def _node_feedback_routing_keys(node: Node) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = {(node.provider_name, node.action_type.value)}
+    provider_routing = node.metadata.get("provider_routing")
+    if not isinstance(provider_routing, Mapping):
+        return keys
+    for raw_action_name, raw_provider_names in provider_routing.items():
+        if not isinstance(raw_action_name, str) or not _is_sequence(raw_provider_names):
+            continue
+        action_name = raw_action_name.strip()
+        if not action_name:
+            continue
+        for raw_provider_name in raw_provider_names:
+            if not isinstance(raw_provider_name, str):
+                continue
+            provider_name = raw_provider_name.strip()
+            if provider_name:
+                keys.add((provider_name, action_name))
+    return keys
+
+
+def _feedback_reward(feedback: OutcomeFeedback) -> float:
+    outcome = feedback.outcome_status.value
+    if outcome == "validated":
+        return 3.0
+    if outcome == "mixed":
+        return 1.0
+    if outcome == "invalidated":
+        return -3.0
+    return 0.0
 
 
 def _copy_json_object(value: Mapping[str, JSONValue]) -> dict[str, JSONValue]:

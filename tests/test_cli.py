@@ -232,6 +232,7 @@ class CliTests(unittest.TestCase):
             run_dir = store.root_dir / manifest.run_id
             run_feedback_exists = (run_dir / "outcome-feedback.json").is_file()
             learning_memory_exists = (store.root_dir / "learning-memory.json").is_file()
+            routing_stats = store.load_provider_routing_stats()
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr, "")
@@ -240,6 +241,12 @@ class CliTests(unittest.TestCase):
         self.assertIn("learning_notes=1", stdout)
         self.assertTrue(run_feedback_exists)
         self.assertTrue(learning_memory_exists)
+        self.assertTrue(
+            any(
+                entry.provider_name == "codex" and entry.action_name == "deepen"
+                for entry in routing_stats.entries
+            )
+        )
 
 
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:
@@ -335,7 +342,12 @@ def _feedback_ready_state() -> SearchState:
         ),
         novelty_score=0.78,
         lifecycle_status=NodeLifecycleStatus.ADMITTED,
-        metadata={},
+        metadata={
+            "provider_routing": {
+                "assess_novelty": ["gemini"],
+                "evaluate_candidate": ["opencode"],
+            }
+        },
         created_at="2026-03-06T02:08:00Z",
     )
     return SearchState(

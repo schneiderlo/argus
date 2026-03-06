@@ -56,6 +56,7 @@ Argus must support a typed outcome-feedback path for shipped experiments. That i
 - let the operator attach explicit reusable learnings such as winning patterns, failure patterns, constraints, or routing hints
 - merge those learnings into the shared reusable-learning memory with provenance that marks them as outcome-backed rather than search-only
 - make future framing, evaluation, ranking, and critique prompts able to treat outcome-backed learnings as stronger priors than purely internal search observations
+- update the provider-routing ledgers for the feedback node so future routed actions can learn from shipped outcomes, not only from search-time proxy rewards
 
 ## Replay And Audit
 
