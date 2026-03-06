@@ -39,7 +39,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Later
 
-- [ ] Add Gemini CLI and OpenCode provider adapters behind the same interface, while keeping Codex as the default and best-supported provider.
+- [x] Add Gemini CLI and OpenCode provider adapters behind the same interface, while keeping Codex as the default and best-supported provider.
 - [ ] Add multi-island search so different optimization priors can evolve semi-independently.
 - [ ] Add outcome-feedback ingestion so shipped experiment results can influence future evaluation.
 - [x] Add learning compression persistence so reusable patterns survive across runs.
@@ -61,3 +61,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the aggregate cross-run ledger now lives at `artifacts/runs/provider-routing-stats.json`.
 - The evaluator now supports provider-backed pairwise `rank` comparisons, and the runtime uses them to refine best-bet, conservative, and high-upside selection from the archived finalists instead of relying only on deterministic score ordering.
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, each run snapshots its imported subset at `artifacts/runs/<run_id>/reusable-learning-context.json`, and the runtime feeds those priors into framing, generation, evaluation, stress testing, deepening, mutation, combination, ranking, and learning compression. The benchmark harness keeps shared learning memory disabled so stored case outputs remain comparable across sessions.
+- The provider layer now supports `codex`, `gemini`, and `opencode` behind the same typed contract. Codex remains the default and the most strongly supported path, while Gemini and OpenCode use their headless JSON surfaces plus the same audited prompt, artifact, and schema-validation pipeline.

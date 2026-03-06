@@ -9,13 +9,19 @@ import unittest
 from argus.eval.evaluator import evaluation_assessment_schema, pairwise_ranking_assessment_schema
 from argus.eval.novelty import novelty_assessment_schema
 from argus.models import ActionType, Candidate, ProblemSpec
-from argus.providers import CodexProvider, ProviderInvocationError, StructuredOutputSchema
+from argus.providers import (
+    CodexProvider,
+    GeminiProvider,
+    OpenCodeProvider,
+    ProviderInvocationError,
+    StructuredOutputSchema,
+)
 
 
 class CodexProviderTests(unittest.TestCase):
     def test_run_action_materializes_prompt_and_validates_structured_output(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
                     returncode=0,
                     stdout='{"event":"completed"}\n',
@@ -73,7 +79,7 @@ class CodexProviderTests(unittest.TestCase):
 
     def test_run_action_serializes_nonzero_exit_failures(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
                     returncode=17,
                     stdout='{"event":"failed"}\n',
@@ -110,7 +116,7 @@ class CodexProviderTests(unittest.TestCase):
 
     def test_run_action_serializes_schema_validation_failures(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
                     returncode=0,
                     stdout='{"event":"completed"}\n',
@@ -142,7 +148,7 @@ class CodexProviderTests(unittest.TestCase):
 
     def test_run_action_serializes_timeout_failures(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=subprocess.TimeoutExpired(
                     cmd=["codex", "exec"],
                     timeout=1.5,
@@ -175,7 +181,7 @@ class CodexProviderTests(unittest.TestCase):
 
     def test_run_action_materializes_action_specific_evaluation_prompt(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
                     returncode=0,
                     stdout='{"event":"completed"}\n',
@@ -216,7 +222,7 @@ class CodexProviderTests(unittest.TestCase):
 
     def test_run_action_materializes_action_specific_novelty_prompt(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
                     returncode=0,
                     stdout='{"event":"completed"}\n',
@@ -255,7 +261,7 @@ class CodexProviderTests(unittest.TestCase):
 
     def test_run_action_materializes_action_specific_pairwise_ranking_prompt(self) -> None:
         with TemporaryDirectory() as directory:
-            runner = FakeCodexRunner(
+            runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
                     returncode=0,
                     stdout='{"event":"completed"}\n',
@@ -292,7 +298,190 @@ class CodexProviderTests(unittest.TestCase):
         )
 
 
-class FakeCodexRunner:
+class GeminiProviderTests(unittest.TestCase):
+    def test_run_action_uses_headless_json_mode_and_unwraps_response_text(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "session_id": "gemini-session",
+                            "response": json.dumps(_candidate_payload()),
+                            "stats": {"total_tokens": 42},
+                        }
+                    ),
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = GeminiProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                model="gemini-2.5-pro",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 2},
+                output_schema=_candidate_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+            last_message_text = response.artifacts.last_message_path.read_text(encoding="utf-8")
+
+            self.assertEqual(response.provider_name, "gemini")
+            self.assertEqual(response.payload, Candidate.from_dict(_candidate_payload()))
+            self.assertIn("# Argus Gemini Worker", prompt_text)
+
+            command = runner.calls[0]["command"]
+            self.assertEqual(command[0], "gemini")
+            self.assertIn("--prompt", command)
+            self.assertIn("--output-format", command)
+            self.assertIn("json", command)
+            self.assertIn("--approval-mode", command)
+            self.assertIn("plan", command)
+            self.assertIn("--model", command)
+            self.assertIn("gemini-2.5-pro", command)
+            self.assertEqual(runner.calls[0]["cwd"], response.artifacts.sandbox_dir)
+            self.assertEqual(last_message_text, json.dumps(_candidate_payload()))
+
+    def test_run_action_fails_when_json_envelope_has_no_response_field(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=json.dumps({"session_id": "gemini-session", "stats": {"total_tokens": 9}}),
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = GeminiProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            with self.assertRaises(ProviderInvocationError) as captured:
+                provider.run_action(
+                    action_name=ActionType.GENERATE_SEED,
+                    problem_spec=_problem_spec(),
+                    input_payload={"target_count": 2},
+                    output_schema=_candidate_schema(),
+                )
+
+        failure = captured.exception.failure
+        self.assertEqual(failure.error_type, "missing_output")
+        self.assertIn("response", failure.message)
+
+
+class OpenCodeProviderTests(unittest.TestCase):
+    def test_run_action_reassembles_json_from_message_part_delta_events(self) -> None:
+        candidate_json = json.dumps(_candidate_payload())
+        midpoint = len(candidate_json) // 2
+        stdout = "\n".join(
+            json.dumps(event)
+            for event in [
+                {
+                    "event": "message.part.delta",
+                    "data": {
+                        "sessionID": "session-1",
+                        "messageID": "message-1",
+                        "partID": "part-1",
+                        "field": "text",
+                        "delta": candidate_json[:midpoint],
+                    },
+                },
+                {
+                    "event": "message.part.delta",
+                    "data": {
+                        "sessionID": "session-1",
+                        "messageID": "message-1",
+                        "partID": "part-1",
+                        "field": "text",
+                        "delta": candidate_json[midpoint:],
+                    },
+                },
+            ]
+        )
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=stdout,
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = OpenCodeProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                model="openai/gpt-5",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 2},
+                output_schema=_candidate_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+
+            self.assertEqual(response.provider_name, "opencode")
+            self.assertEqual(response.payload, Candidate.from_dict(_candidate_payload()))
+            self.assertIn("# Argus OpenCode Worker", prompt_text)
+
+            command = runner.calls[0]["command"]
+            self.assertEqual(command[:2], ["opencode", "run"])
+            self.assertIn("--format", command)
+            self.assertIn("json", command)
+            self.assertIn("--dir", command)
+            self.assertIn("--model", command)
+            self.assertIn("openai/gpt-5", command)
+            self.assertEqual(command[-1], prompt_text)
+
+    def test_run_action_fails_when_event_stream_has_no_assistant_text(self) -> None:
+        stdout = json.dumps(
+            {
+                "event": "message.part.updated",
+                "data": {
+                    "part": {
+                        "id": "part-1",
+                        "type": "tool",
+                        "text": "tool output",
+                    }
+                },
+            }
+        )
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=stdout,
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = OpenCodeProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            with self.assertRaises(ProviderInvocationError) as captured:
+                provider.run_action(
+                    action_name=ActionType.GENERATE_SEED,
+                    problem_spec=_problem_spec(),
+                    input_payload={"target_count": 2},
+                    output_schema=_candidate_schema(),
+                )
+
+        failure = captured.exception.failure
+        self.assertEqual(failure.error_type, "missing_output")
+        self.assertIn("assistant text response", failure.message)
+
+
+class FakeCliRunner:
     def __init__(self, *, outcome: CompletedRunnerResult | Exception) -> None:
         self.outcome = outcome
         self.calls: list[dict[str, object]] = []
@@ -300,10 +489,10 @@ class FakeCodexRunner:
     def __call__(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         self.calls.append({"command": list(command), **kwargs})
 
-        last_message_index = command.index("-o") + 1
-        last_message_path = Path(command[last_message_index])
         if isinstance(self.outcome, CompletedRunnerResult):
-            if self.outcome.last_message is not None:
+            if self.outcome.last_message is not None and "-o" in command:
+                last_message_index = command.index("-o") + 1
+                last_message_path = Path(command[last_message_index])
                 last_message_path.write_text(self.outcome.last_message, encoding="utf-8")
             return subprocess.CompletedProcess(
                 command,

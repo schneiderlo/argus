@@ -8,16 +8,17 @@ from argus.models import JSONValue, ProblemSpec
 from argus.providers.base import StructuredOutputSchema
 
 
-def render_codex_prompt(
+def render_provider_prompt(
     *,
+    provider_name: str,
     action_name: str,
     problem_spec: ProblemSpec,
     input_payload: Mapping[str, JSONValue],
     output_schema: StructuredOutputSchema[Any],
 ) -> str:
     sections = [
-        "# Argus Codex Worker",
-        "You are the Codex worker behind the Argus provider layer.",
+        f"# Argus {provider_name} Worker",
+        f"You are the {provider_name} worker behind the Argus provider layer.",
         "Return exactly one JSON response that satisfies the supplied schema.",
         "",
         "## Global Rules",
@@ -51,6 +52,22 @@ def render_codex_prompt(
         "Return only the JSON value that matches the schema.",
     ]
     return "\n".join(sections).strip() + "\n"
+
+
+def render_codex_prompt(
+    *,
+    action_name: str,
+    problem_spec: ProblemSpec,
+    input_payload: Mapping[str, JSONValue],
+    output_schema: StructuredOutputSchema[Any],
+) -> str:
+    return render_provider_prompt(
+        provider_name="Codex",
+        action_name=action_name,
+        problem_spec=problem_spec,
+        input_payload=input_payload,
+        output_schema=output_schema,
+    )
 
 
 def _action_specific_instructions(

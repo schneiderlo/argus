@@ -14,9 +14,15 @@ from argus.inspection import (
     render_inspection_report,
     resolve_inspection_target,
 )
-from argus.providers import CodexProvider, Provider
+from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider, Provider
 from argus.search import SearchRuntime
 from argus.storage import FileSystemStateStore
+
+_PROVIDER_TYPES = {
+    "codex": CodexProvider,
+    "gemini": GeminiProvider,
+    "opencode": OpenCodeProvider,
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -166,8 +172,10 @@ def _handle_inspect(args: argparse.Namespace, config: ArgusConfig) -> int:
 
 def _build_provider(config: ArgusConfig, provider_name: str) -> Provider:
     normalized_provider = provider_name.strip().lower()
-    if normalized_provider != "codex":
+    provider_type = _PROVIDER_TYPES.get(normalized_provider)
+    if provider_type is None:
+        supported = ", ".join(sorted(_PROVIDER_TYPES))
         raise ArgusUserError(
-            f"Unknown provider {provider_name!r}. Supported providers: codex."
+            f"Unknown provider {provider_name!r}. Supported providers: {supported}."
         )
-    return CodexProvider(artifacts_root=config.provider_invocations_dir)
+    return provider_type(artifacts_root=config.provider_invocations_dir)

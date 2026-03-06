@@ -34,6 +34,13 @@ Run a single Argus search:
 uv run argus run "Find the best retention strategy for a workflow-heavy product."
 ```
 
+Run the same search through a non-default provider:
+
+```bash
+uv run argus run --provider gemini "Find the best retention strategy for a workflow-heavy product."
+uv run argus run --provider opencode "Find the best retention strategy for a workflow-heavy product."
+```
+
 Run the stored benchmark suite, or a single case:
 
 ```bash
@@ -88,13 +95,14 @@ Current implementation status:
 - The core typed domain models now exist in `src/argus/models/` with explicit validation and deterministic `to_dict`/`from_dict` round-tripping.
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
+- The provider layer now also supports `gemini` and `opencode` behind the same typed contract and `--provider` CLI flag. Codex remains the default and the best-supported path; the additional adapters reuse the same audited prompt, artifact, and validation flow while speaking each CLI's native headless JSON surface.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors, semantic novelty judgments, and pairwise `rank` decisions instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn from admitted nodes, strong scores, useful critiques, and winner contributions.
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, and each `argus run` snapshots the imported reusable subset it used at `artifacts/runs/<run_id>/reusable-learning-context.json` before feeding those priors back into later framing, generation, evaluation, ranking, and critique steps.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The largest remaining implementation gaps are additional providers, multi-island search, and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
+The largest remaining implementation gaps are multi-island search and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
 
 Process guardrails:
 

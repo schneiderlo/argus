@@ -8,8 +8,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from argus.cli import build_parser, main
+from argus.cli import _build_provider, build_parser, main
+from argus.config import ArgusConfig
+from argus.errors import ArgusUserError
 from argus.models import ProblemSpec
+from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider
 from argus.storage import FileSystemStateStore
 from tests.search_fixtures import SearchFixtureProvider
 
@@ -19,6 +22,23 @@ class CliTests(unittest.TestCase):
         parser = build_parser()
         subcommands = parser._subparsers._group_actions[0].choices
         self.assertEqual(set(subcommands), {"run", "benchmark", "inspect"})
+
+    def test_build_provider_supports_codex_gemini_and_opencode(self) -> None:
+        with TemporaryRepoRoot() as root:
+            config = ArgusConfig.discover(root)
+
+            self.assertIsInstance(_build_provider(config, "codex"), CodexProvider)
+            self.assertIsInstance(_build_provider(config, "gemini"), GeminiProvider)
+            self.assertIsInstance(_build_provider(config, "opencode"), OpenCodeProvider)
+
+    def test_build_provider_rejects_unknown_provider_with_supported_list(self) -> None:
+        with TemporaryRepoRoot() as root:
+            config = ArgusConfig.discover(root)
+
+            with self.assertRaises(ArgusUserError) as captured:
+                _build_provider(config, "unknown-provider")
+
+        self.assertIn("codex, gemini, opencode", str(captured.exception))
 
     def test_run_command_executes_search_and_persists_artifacts(self) -> None:
         with TemporaryRepoRoot() as root:
