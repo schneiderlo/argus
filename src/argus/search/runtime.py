@@ -2260,30 +2260,62 @@ class SearchRuntime:
             if pre_rank_key is None
             else sorted(candidates, key=pre_rank_key, reverse=True)
         )
-        if len(ordered) == 1:
-            return ordered[0], []
+        pool = ordered[: min(_PAIRWISE_TOURNAMENT_POOL_LIMIT, len(ordered))]
+        if len(pool) == 1:
+            return pool[0], []
 
-        left = ordered[0]
-        right = ordered[1]
-        assessment = self._compare_nodes_pairwise(
-            problem_spec,
-            left,
-            right,
-            objective_name=objective_name,
-            objective_description=objective_description,
-            routing_tracker=routing_tracker,
-            reusable_learning_notes=reusable_learning_notes,
+        matchups: list[tuple[Node, Node]] = []
+        for left_index, left in enumerate(pool):
+            for right in pool[left_index + 1 :]:
+                matchups.append((left, right))
+
+        assessments = self._run_bounded_tasks(
+            matchups,
+            lambda pair: self._compare_nodes_pairwise(
+                problem_spec,
+                pair[0],
+                pair[1],
+                objective_name=objective_name,
+                objective_description=objective_description,
+                routing_tracker=routing_tracker,
+                reusable_learning_notes=reusable_learning_notes,
+            ),
         )
-        winner = left if assessment.winner == "left" else right
-        return winner, [
-            _PairwiseDecisionRecord(
-                selection_label=selection_label,
-                left_node_id=left.node_id,
-                right_node_id=right.node_id,
-                winner_node_id=winner.node_id,
-                assessment=assessment,
+        win_counts: dict[str, int] = {node.node_id: 0 for node in pool}
+        head_to_head: dict[tuple[str, str], int] = {}
+        decisions: list[_PairwiseDecisionRecord] = []
+        for (left, right), assessment in zip(matchups, assessments):
+            winner = left if assessment.winner == "left" else right
+            loser = right if winner.node_id == left.node_id else left
+            win_counts[winner.node_id] += 1
+            head_to_head[(winner.node_id, loser.node_id)] = 1
+            head_to_head[(loser.node_id, winner.node_id)] = 0
+            decisions.append(
+                _PairwiseDecisionRecord(
+                    selection_label=selection_label,
+                    left_node_id=left.node_id,
+                    right_node_id=right.node_id,
+                    winner_node_id=winner.node_id,
+                    assessment=assessment,
+                )
             )
-        ]
+        ordered_positions = {
+            node.node_id: len(pool) - index
+            for index, node in enumerate(pool)
+        }
+        winner = max(
+            pool,
+            key=lambda node: (
+                win_counts[node.node_id],
+                sum(
+                    head_to_head.get((node.node_id, other.node_id), 0)
+                    for other in pool
+                    if other.node_id != node.node_id
+                ),
+                ordered_positions[node.node_id],
+            ),
+        )
+        return winner, decisions
 
     def _compare_nodes_pairwise(
         self,
@@ -2929,6 +2961,7 @@ _LOW_FRONTIER_NOVELTY_THRESHOLD = 0.45
 _DEEPEN_SPECIFICITY_FLOOR = 0.86
 _MIGRATION_SOURCE_SCORE_FLOOR = 6.0
 _MIGRATION_ADVANTAGE_FLOOR = 0.4
+_PAIRWISE_TOURNAMENT_POOL_LIMIT = 4
 
 
 def _is_useful_critique(critique: object) -> bool:
@@ -2997,14 +3030,21 @@ def _finalist_nodes(state: SearchState) -> list[Node]:
     candidates = [
         state.nodes[node_id]
         for node_id in state.archive_ids
-        if node_id in state.nodes and _is_rankable(state.nodes[node_id])
+        if node_id in state.nodes
+        and node_id != state.root_id
+        and _is_rankable(state.nodes[node_id])
     ]
     if candidates:
         return candidates
     fallback = [
         node
         for node in state.nodes.values()
-        if node.score is not None and node.score.hard_constraint_pass
+        if node.score is not None
+        and node.score.hard_constraint_pass
+        and (
+            node.node_id == state.root_id
+            or node.action_type is not ActionType.FRAME_PROBLEM
+        )
     ]
     return rank_nodes(fallback) if fallback else []
 

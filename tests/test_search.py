@@ -78,7 +78,7 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertIn("mutate", action_names)
         self.assertIn("combine", action_names)
         self.assertIn("compress_learning", action_names)
-        self.assertGreaterEqual(action_names.count("rank"), 3)
+        self.assertGreaterEqual(action_names.count("rank"), 6)
         self.assertGreaterEqual(action_names.count("evaluate_candidate"), 6)
         self.assertGreaterEqual(action_names.count("assess_novelty"), 3)
         self.assertIsNotNone(loaded.routing_summary)
@@ -96,7 +96,7 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(entries["generate_seed"].hard_fail_count, 1)
         self.assertEqual(entries["generate_seed"].stress_test_survivor_count, 2)
         self.assertEqual(entries["generate_seed"].winner_contribution_count, 3)
-        self.assertEqual(entries["rank"].invocation_count, 3)
+        self.assertGreaterEqual(entries["rank"].invocation_count, 6)
         self.assertEqual(entries["stress_test"].critique_count, 2)
         self.assertEqual(entries["stress_test"].useful_critique_count, 2)
         self.assertEqual(entries["deepen"].winner_count, 1)
@@ -734,6 +734,40 @@ class SearchRuntimeTests(unittest.TestCase):
                 len(result.state.nodes) - 1,
             )
 
+    def test_pairwise_tournament_can_rescue_a_third_ranked_finalist(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = TournamentFixtureProvider(root / "artifacts" / "provider_invocations")
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=3,
+                    stress_test_limit=1,
+                    deepen_limit=1,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=3,
+                    rejected_limit=1,
+                    max_learning_notes=1,
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=2,
+                run_id="run-search-pairwise-tournament",
+            )
+
+        rank_calls = [call for call in provider.calls if call["action_name"] == "rank"]
+
+        self.assertEqual(result.final_recommendation.best_bet_node_id, "node-0004")
+        self.assertEqual(result.final_recommendation.conservative_node_id, "node-0003")
+        self.assertEqual(result.final_recommendation.high_upside_node_id, "node-0002")
+        self.assertEqual(len(rank_calls), 4)
+        self.assertIn("Best bet: `node-0004` beat `node-0002`.", result.summary_markdown)
+
 
 def _max_overlap(
     calls: list[dict[str, object]],
@@ -754,3 +788,212 @@ def _max_overlap(
         active += delta
         max_active = max(max_active, active)
     return max_active
+
+
+class TournamentFixtureProvider(SearchFixtureProvider):
+    def _handle_generate_seed(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        target_count = int(input_payload["target_count"])
+        templates = [
+            _tournament_candidate_payload(
+                thesis="Activation checklist wedge",
+                mechanism=(
+                    "Start with an easy-to-ship checklist layer that nudges teams into the product."
+                ),
+            ),
+            _tournament_candidate_payload(
+                thesis="Operational ritual scaffold",
+                mechanism=(
+                    "Build around a clearly defined recurring team ritual with explicit rollout steps."
+                ),
+            ),
+            _tournament_candidate_payload(
+                thesis="Workflow-native archive with compounding reviews",
+                mechanism=(
+                    "Anchor the product in a recurring review loop that compounds prior team decisions into future speed."
+                ),
+            ),
+        ]
+        candidates = [templates[index % len(templates)] for index in range(target_count)]
+        return {
+            "candidates": candidates,
+            "batch_summary": "Generated three viable finalists with different score and pairwise profiles.",
+        }
+
+    def _handle_assess_novelty(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "novelty_score": 0.82,
+            "max_similarity": 0.24,
+            "nearest_neighbor_id": None,
+            "similarity_threshold": input_payload["similarity_threshold"],
+            "is_novel": True,
+            "summary": "The candidate is distinct enough to enter the tournament.",
+            "duplicate_signals": [],
+        }
+
+    def _handle_evaluate_candidate(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        thesis = str(input_payload["candidate"]["thesis"])
+        if thesis == "Activation checklist wedge":
+            return _tournament_evaluation_payload(
+                total_score=6.9,
+                implementation_tractability=0.92,
+                upside=0.62,
+                distinctiveness=0.58,
+                usefulness=0.77,
+                specificity=0.76,
+                plausibility=0.88,
+                adversarial_robustness=0.72,
+                evidence_quality=0.68,
+                confidence_estimate=0.85,
+                summary="Fast to ship and tractable, but strategically narrow.",
+            )
+        if thesis == "Operational ritual scaffold":
+            return _tournament_evaluation_payload(
+                total_score=6.6,
+                implementation_tractability=0.86,
+                upside=0.71,
+                distinctiveness=0.66,
+                usefulness=0.83,
+                specificity=0.84,
+                plausibility=0.84,
+                adversarial_robustness=0.8,
+                evidence_quality=0.73,
+                confidence_estimate=0.83,
+                summary="The safest serious option with a clear rollout shape.",
+            )
+        return _tournament_evaluation_payload(
+            total_score=6.2,
+            implementation_tractability=0.74,
+            upside=0.9,
+            distinctiveness=0.88,
+            usefulness=0.9,
+            specificity=0.89,
+            plausibility=0.79,
+            adversarial_robustness=0.78,
+            evidence_quality=0.76,
+            confidence_estimate=0.78,
+            summary="Third by score, but strongest once pairwise tradeoffs are examined directly.",
+        )
+
+    def _handle_rank(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        objective_name = str(input_payload["objective"]["name"])
+        left_candidate = str(input_payload["left"]["candidate"]["thesis"])
+        right_candidate = str(input_payload["right"]["candidate"]["thesis"])
+
+        if objective_name == "best_overall":
+            preferred = "Workflow-native archive with compounding reviews"
+            if left_candidate == preferred:
+                return _tournament_pairwise_payload(
+                    winner="left",
+                    summary="The workflow-native archive wins because it compounds value over time instead of only improving activation mechanics.",
+                )
+            if right_candidate == preferred:
+                return _tournament_pairwise_payload(
+                    winner="right",
+                    summary="The workflow-native archive wins because it compounds value over time instead of only improving activation mechanics.",
+                )
+
+        if objective_name == "conservative_option":
+            preferred = "Operational ritual scaffold"
+            if left_candidate == preferred:
+                return _tournament_pairwise_payload(
+                    winner="left",
+                    summary="The operational ritual scaffold is the safer serious option because it keeps the rollout controlled without collapsing into a shallow wedge.",
+                )
+            if right_candidate == preferred:
+                return _tournament_pairwise_payload(
+                    winner="right",
+                    summary="The operational ritual scaffold is the safer serious option because it keeps the rollout controlled without collapsing into a shallow wedge.",
+                )
+
+        if objective_name == "high_upside_option":
+            preferred = "Activation checklist wedge"
+            if left_candidate == preferred:
+                return _tournament_pairwise_payload(
+                    winner="left",
+                    summary="The activation checklist wedge remains the remaining high-upside option because it can move quickly even if its moat is thinner.",
+                )
+            if right_candidate == preferred:
+                return _tournament_pairwise_payload(
+                    winner="right",
+                    summary="The activation checklist wedge remains the remaining high-upside option because it can move quickly even if its moat is thinner.",
+                )
+
+        return _tournament_pairwise_payload(
+            winner="left",
+            summary="The left candidate wins the fallback score-backed comparison.",
+        )
+
+
+def _tournament_candidate_payload(*, thesis: str, mechanism: str) -> dict[str, object]:
+    return {
+        "thesis": thesis,
+        "mechanism": mechanism,
+        "assumptions": ["Teams care about faster recurring work."],
+        "strengths": ["Solves a real operator problem."],
+        "failure_modes": ["Could still miss long-term retention."],
+        "unknowns": ["Which workflow will adopt first?"],
+        "implementation_shape": "A focused initial rollout.",
+        "evidence": ["The product brief prioritizes durable workflow retention."],
+    }
+
+
+def _tournament_evaluation_payload(
+    *,
+    total_score: float,
+    implementation_tractability: float,
+    upside: float,
+    distinctiveness: float,
+    usefulness: float,
+    specificity: float,
+    plausibility: float,
+    adversarial_robustness: float,
+    evidence_quality: float,
+    confidence_estimate: float,
+    summary: str,
+) -> dict[str, object]:
+    return {
+        "score": {
+            "hard_constraint_pass": True,
+            "hard_constraint_reasons": [],
+            "distinctiveness": distinctiveness,
+            "usefulness": usefulness,
+            "specificity": specificity,
+            "plausibility": plausibility,
+            "implementation_tractability": implementation_tractability,
+            "upside": upside,
+            "adversarial_robustness": adversarial_robustness,
+            "evidence_quality": evidence_quality,
+            "total_score": total_score,
+            "confidence_estimate": confidence_estimate,
+        },
+        "summary": summary,
+        "strengths": ["Clear mechanism."],
+        "weaknesses": ["The tradeoffs are still real."],
+        "open_questions": ["How well will this hold up under live usage?"],
+    }
+
+
+def _tournament_pairwise_payload(*, winner: str, summary: str) -> dict[str, object]:
+    return {
+        "winner": winner,
+        "summary": summary,
+        "decisive_advantages": ["The mechanism better matches the objective."],
+        "decisive_risks": ["Execution still matters."],
+        "confidence": 0.8,
+    }

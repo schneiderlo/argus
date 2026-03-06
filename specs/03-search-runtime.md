@@ -204,6 +204,8 @@ The search runtime must compile the final answer from the archive, not from an a
 - `summary_markdown`
 - `next_experiments`
 
+When choosing `best_bet`, `conservative_option`, and `high_upside_option`, the runtime should use provider-backed pairwise ranking over a bounded finalist pool rather than relying only on scalar score ordering or a single top-two comparison.
+
 ## Termination Conditions
 
 The search must stop when:

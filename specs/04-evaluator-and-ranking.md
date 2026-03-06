@@ -46,7 +46,7 @@ At minimum, `evaluate_candidate`, `assess_novelty`, and pairwise `rank` comparis
 Argus must support:
 
 - score-based sorting
-- pairwise comparison later
+- pairwise comparison over a small finalist pool rather than only a single top-two refinement
 - different selection logic for best, conservative, and high-upside outputs
 
 The "best overall" answer must not always be identical to the most conservative or highest-upside answer.
@@ -86,6 +86,8 @@ The novelty prompt must explicitly define what counts as a near-duplicate, a tri
 ## Pairwise Comparison
 
 Pairwise ranking must use a dedicated comparison prompt that asks the provider to compare two candidates against the problem spec and explain the decisive tradeoffs. It must not be implemented as a repackaged scalar score request with different JSON output.
+
+Finalist selection should not stop after comparing only the top two pre-ranked nodes. The runtime should pre-rank candidates to bound cost, then run a bounded round-robin style tournament over a small finalist pool so a slightly lower pre-ranked candidate can still win on direct pairwise merit.
 
 ## Benchmark Requirements
 
