@@ -67,6 +67,9 @@ class BenchmarkHarness:
             provider=self._provider,
             state_store=self._state_store,
             policy=self._policy,
+            # Keep benchmark outputs comparable across sessions instead of letting
+            # prior runs change the stored fixture behavior.
+            reuse_learning_memory=False,
         )
         case_results: list[BenchmarkCaseResult] = []
         overall_status = BenchmarkStatus.COMPLETED

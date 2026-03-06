@@ -80,6 +80,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
                 (first.session_dir / "cases" / "product-strategy-retention" / "summary.md").is_file()
             )
             self.assertTrue((root / "artifacts" / "runs" / first_case.run_id).is_dir())
+            self.assertFalse((root / "artifacts" / "runs" / "learning-memory.json").exists())
             self.assertEqual(
                 (root / "artifacts" / "benchmarks" / "latest.txt").read_text(encoding="utf-8").strip(),
                 str(second.session_dir),

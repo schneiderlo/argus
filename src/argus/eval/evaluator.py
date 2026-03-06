@@ -4,7 +4,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from argus.errors import ArgusValidationError
-from argus.models import Candidate, JSONValue, Node, ProblemSpec, ScoreVector
+from argus.models import (
+    Candidate,
+    JSONValue,
+    Node,
+    ProblemSpec,
+    ReusableLearningNote,
+    ScoreVector,
+)
 from argus.providers import Provider, StructuredOutputSchema
 
 
@@ -134,6 +141,7 @@ class AgenticEvaluator:
         candidate: Candidate,
         *,
         novelty_score: float | None = None,
+        reusable_learning_notes: Iterable[ReusableLearningNote] | None = None,
     ) -> EvaluationAssessment:
         if not isinstance(problem_spec, ProblemSpec):
             raise ArgusValidationError(
@@ -175,6 +183,9 @@ class AgenticEvaluator:
                 novelty_score,
                 "novelty_score",
             )
+        prompt_learning_notes = _prompt_reusable_learning_notes(reusable_learning_notes)
+        if prompt_learning_notes:
+            input_payload["reusable_learning_notes"] = prompt_learning_notes
 
         response = self._provider.run_action(
             action_name="evaluate_candidate",
@@ -192,6 +203,7 @@ class AgenticEvaluator:
         *,
         objective: str,
         objective_description: str,
+        reusable_learning_notes: Iterable[ReusableLearningNote] | None = None,
     ) -> PairwiseRankingAssessment:
         if not isinstance(problem_spec, ProblemSpec):
             raise ArgusValidationError(
@@ -218,27 +230,31 @@ class AgenticEvaluator:
             objective_description,
             "objective_description",
         )
+        input_payload: dict[str, JSONValue] = {
+            "objective": {
+                "name": normalized_objective,
+                "description": normalized_description,
+            },
+            "left": _comparison_node_payload(left),
+            "right": _comparison_node_payload(right),
+            "comparison_policy": {
+                "decision_rule": (
+                    "Choose the candidate that better satisfies the stated objective based "
+                    "on mechanism quality, score evidence, critique evidence, and realism."
+                ),
+                "anti_style_rule": (
+                    "Do not reward phrasing polish, buzzwords, or generic optimism unless "
+                    "they reflect a materially stronger plan."
+                ),
+            },
+        }
+        prompt_learning_notes = _prompt_reusable_learning_notes(reusable_learning_notes)
+        if prompt_learning_notes:
+            input_payload["reusable_learning_notes"] = prompt_learning_notes
         response = self._provider.run_action(
             action_name="rank",
             problem_spec=problem_spec,
-            input_payload={
-                "objective": {
-                    "name": normalized_objective,
-                    "description": normalized_description,
-                },
-                "left": _comparison_node_payload(left),
-                "right": _comparison_node_payload(right),
-                "comparison_policy": {
-                    "decision_rule": (
-                        "Choose the candidate that better satisfies the stated objective based "
-                        "on mechanism quality, score evidence, critique evidence, and realism."
-                    ),
-                    "anti_style_rule": (
-                        "Do not reward phrasing polish, buzzwords, or generic optimism unless "
-                        "they reflect a materially stronger plan."
-                    ),
-                },
-            },
+            input_payload=input_payload,
             output_schema=pairwise_ranking_assessment_schema(),
         )
         return response.payload
@@ -347,6 +363,22 @@ def _score_vector_json_schema() -> dict[str, JSONValue]:
             "confidence_estimate": probability_field,
         },
     }
+
+
+def _prompt_reusable_learning_notes(
+    reusable_learning_notes: Iterable[ReusableLearningNote] | None,
+) -> list[dict[str, JSONValue]]:
+    if reusable_learning_notes is None:
+        return []
+    prompt_notes: list[dict[str, JSONValue]] = []
+    for index, note in enumerate(reusable_learning_notes):
+        if not isinstance(note, ReusableLearningNote):
+            raise ArgusValidationError(
+                "reusable_learning_notes entries must be ReusableLearningNote instances, "
+                f"got {type(note).__name__} at index {index}."
+            )
+        prompt_notes.append(note.to_prompt_dict())
+    return prompt_notes
 
 
 def _string_array_schema() -> dict[str, JSONValue]:

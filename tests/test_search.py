@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from argus.errors import ArgusValidationError
+from argus.models import LearningNote, LearningNoteType, ProblemSpec
 from argus.search import SearchPolicy, SearchRuntime
 from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import SearchFixtureProvider
@@ -113,3 +114,77 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(entry.invocation_count, 1)
         self.assertEqual(entry.provider_failure_count, 1)
         self.assertEqual(entry.total_reward, -2.0)
+
+    def test_runtime_reuses_and_merges_cross_run_learning_memory(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            store.merge_learning_memory(
+                run_id="run-prior-learning",
+                problem_spec=ProblemSpec(
+                    request="Design the best retention strategy for a workflow-heavy product.",
+                    constraints=["Keep every decision auditable."],
+                    success_criteria=["Increase repeated use."],
+                    context={"segment": "product"},
+                ),
+                notes=[
+                    LearningNote(
+                        note_type=LearningNoteType.WINNING_PATTERN,
+                        text="Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+                        source_node_ids=["node-0003"],
+                    )
+                ],
+            )
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=2,
+                    deepen_limit=2,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=4,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                    reusable_learning_limit=2,
+                ),
+            )
+
+            runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=9,
+                run_id="run-search-learning-memory",
+            )
+            loaded = store.load_run("run-search-learning-memory")
+            memory = store.load_learning_memory()
+            context_path = loaded.path / "reusable-learning-context.json"
+
+        frame_call = next(call for call in provider.calls if call["action_name"] == "frame_problem")
+        evaluation_call = next(
+            call for call in provider.calls if call["action_name"] == "evaluate_candidate"
+        )
+        self.assertIn("reusable_learning_notes", frame_call["input_payload"])
+        self.assertEqual(
+            frame_call["input_payload"]["reusable_learning_notes"][0]["text"],
+            "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+        )
+        self.assertEqual(
+            evaluation_call["input_payload"]["reusable_learning_notes"][0]["text"],
+            "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+        )
+        self.assertIsNotNone(loaded.reusable_learning_context)
+        self.assertEqual(len(loaded.reusable_learning_context.entries), 1)
+        self.assertEqual(loaded.manifest.reusable_learning_path, "reusable-learning-context.json")
+        self.assertTrue(str(context_path).endswith("reusable-learning-context.json"))
+        entry = next(
+            item
+            for item in memory.entries
+            if item.text == "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas."
+        )
+        self.assertEqual(entry.observation_count, 2)
+        self.assertEqual(
+            entry.source_run_ids,
+            ["run-prior-learning", "run-search-learning-memory"],
+        )

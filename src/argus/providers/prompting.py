@@ -59,16 +59,18 @@ def _action_specific_instructions(
 ) -> list[str]:
     normalized_action = action_name.strip().lower()
     if normalized_action == "evaluate_candidate":
-        return _evaluate_candidate_instructions()
+        return _evaluate_candidate_instructions(input_payload)
     if normalized_action == "assess_novelty":
         return _assess_novelty_instructions()
     if normalized_action == "rank":
         return _pairwise_rank_instructions(input_payload)
-    return _default_action_instructions(action_name)
+    return _default_action_instructions(action_name, input_payload)
 
 
-def _evaluate_candidate_instructions() -> list[str]:
-    return [
+def _evaluate_candidate_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
         "Role: candidate evaluator for Argus. Decide whether this candidate deserves to survive search.",
         "Authoritative evidence, in order: explicit problem constraints and success criteria; the candidate mechanism, assumptions, strengths, failure modes, unknowns, and evidence; novelty_score if provided as a secondary signal.",
         "Hard-constraint gate: set score.hard_constraint_pass=false when the candidate violates explicit constraints, fails to solve the stated request, depends on contradicted assumptions, or only offers decorative rhetoric. When false, populate score.hard_constraint_reasons with concrete violations.",
@@ -83,6 +85,11 @@ def _evaluate_candidate_instructions() -> list[str]:
         "Anti-style rule: do not reward polish, buzzwords, generic optimism, or schema compliance by itself. Penalize fake specificity and unsupported confidence.",
         "Output contract: keep score.total_score consistent with the dimension scores, treat hard-constraint failures as non-winning outcomes, and make summary/strengths/weaknesses/open_questions concrete enough that an operator can audit why the candidate did or did not survive.",
     ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: when reusable_learning_notes are present, treat them as archived observations about past winning patterns, failure modes, and constraints. Use them to pressure-test the candidate, but never let them override the current problem spec."
+        )
+    return instructions
 
 
 def _assess_novelty_instructions() -> list[str]:
@@ -120,15 +127,27 @@ def _pairwise_rank_instructions(input_payload: Mapping[str, JSONValue]) -> list[
         instructions.append(
             "Objective description is authoritative. Use it to break close calls when the generic ranking heuristics conflict."
         )
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: when reusable_learning_notes are present, use them as prior evidence about patterns that succeeded or failed before, but keep the winner grounded in the current problem and objective."
+        )
     return instructions
 
 
-def _default_action_instructions(action_name: str) -> list[str]:
-    return [
+def _default_action_instructions(
+    action_name: str,
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
         f"Role: execute the Argus action `{action_name}` faithfully using only the supplied problem spec and input payload.",
         "Prefer concrete mechanisms, explicit tradeoffs, and realistic assumptions over generic brainstorming language.",
         "If the schema requires judgment, make that judgment explicit in the JSON fields instead of relying on free-form prose.",
     ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes as compact prior art from earlier Argus runs. Apply them as guardrails and pattern memory, but do not cargo-cult them when the current problem points elsewhere."
+        )
+    return instructions
 
 
 def _objective_focus(objective_name: str) -> str:
@@ -173,3 +192,8 @@ def _nested_string(
 
 def _format_instruction_lines(lines: list[str]) -> list[str]:
     return [f"{index}. {line}" for index, line in enumerate(lines, start=1)]
+
+
+def _has_reusable_learning_notes(input_payload: Mapping[str, JSONValue]) -> bool:
+    value = input_payload.get("reusable_learning_notes")
+    return isinstance(value, list) and len(value) > 0

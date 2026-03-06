@@ -4,7 +4,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
+import hashlib
 import math
+import re
 
 from argus.errors import ArgusValidationError
 
@@ -490,6 +492,330 @@ class LearningNote:
 
 
 @dataclass(frozen=True, slots=True)
+class ReusableLearningNote:
+    note_id: str
+    note_type: LearningNoteType
+    text: str
+    source_run_ids: list[str] = field(default_factory=list)
+    source_node_refs: list[str] = field(default_factory=list)
+    problem_statements: list[str] = field(default_factory=list)
+    observation_count: int = 1
+    first_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "note_id", _normalize_non_empty_string(self.note_id, "note_id"))
+        object.__setattr__(
+            self,
+            "note_type",
+            _normalize_enum(self.note_type, LearningNoteType, "note_type"),
+        )
+        object.__setattr__(self, "text", _normalize_non_empty_string(self.text, "text"))
+        object.__setattr__(
+            self,
+            "source_run_ids",
+            _normalize_unique_string_list(self.source_run_ids, "source_run_ids"),
+        )
+        object.__setattr__(
+            self,
+            "source_node_refs",
+            _normalize_unique_string_list(self.source_node_refs, "source_node_refs"),
+        )
+        object.__setattr__(
+            self,
+            "problem_statements",
+            _normalize_unique_string_list(self.problem_statements, "problem_statements"),
+        )
+        object.__setattr__(
+            self,
+            "observation_count",
+            _normalize_positive_int(self.observation_count, "observation_count"),
+        )
+        object.__setattr__(
+            self,
+            "first_seen_at",
+            _normalize_datetime(self.first_seen_at, "first_seen_at"),
+        )
+        object.__setattr__(
+            self,
+            "last_seen_at",
+            _normalize_datetime(self.last_seen_at, "last_seen_at"),
+        )
+        if self.last_seen_at < self.first_seen_at:
+            raise ArgusValidationError("last_seen_at must not be earlier than first_seen_at.")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "note_id": self.note_id,
+            "note_type": self.note_type.value,
+            "text": self.text,
+            "source_run_ids": list(self.source_run_ids),
+            "source_node_refs": list(self.source_node_refs),
+            "problem_statements": list(self.problem_statements),
+            "observation_count": self.observation_count,
+            "first_seen_at": _dump_datetime(self.first_seen_at),
+            "last_seen_at": _dump_datetime(self.last_seen_at),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "ReusableLearningNote":
+        data = _validate_payload_keys(
+            payload,
+            field_name="ReusableLearningNote",
+            required={
+                "note_id",
+                "note_type",
+                "text",
+                "source_run_ids",
+                "source_node_refs",
+                "problem_statements",
+                "observation_count",
+                "first_seen_at",
+                "last_seen_at",
+            },
+        )
+        return cls(
+            note_id=data["note_id"],
+            note_type=data["note_type"],
+            text=data["text"],
+            source_run_ids=data["source_run_ids"],
+            source_node_refs=data["source_node_refs"],
+            problem_statements=data["problem_statements"],
+            observation_count=data["observation_count"],
+            first_seen_at=data["first_seen_at"],
+            last_seen_at=data["last_seen_at"],
+        )
+
+    @classmethod
+    def from_learning_note(
+        cls,
+        *,
+        run_id: str,
+        problem_spec: ProblemSpec,
+        note: LearningNote,
+        observed_at: datetime | None = None,
+    ) -> "ReusableLearningNote":
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
+        if not isinstance(note, LearningNote):
+            raise ArgusValidationError(
+                f"note must be a LearningNote instance, got {type(note).__name__}."
+            )
+        timestamp = _normalize_datetime(
+            observed_at or datetime.now(timezone.utc),
+            "observed_at",
+        )
+        normalized_run_id = _normalize_non_empty_string(run_id, "run_id")
+        return cls(
+            note_id=_build_reusable_learning_note_id(note.note_type, note.text),
+            note_type=note.note_type,
+            text=note.text,
+            source_run_ids=[normalized_run_id],
+            source_node_refs=[
+                f"{normalized_run_id}:{node_id}" for node_id in note.source_node_ids
+            ],
+            problem_statements=[problem_spec.request],
+            observation_count=1,
+            first_seen_at=timestamp,
+            last_seen_at=timestamp,
+        )
+
+    def merge(self, other: "ReusableLearningNote") -> "ReusableLearningNote":
+        if not isinstance(other, ReusableLearningNote):
+            raise ArgusValidationError(
+                "other must be a ReusableLearningNote instance, "
+                f"got {type(other).__name__}."
+            )
+        if self.note_id != other.note_id or self.note_type != other.note_type or self.text != other.text:
+            raise ArgusValidationError(
+                "Cannot merge reusable learning notes with different identities."
+            )
+        return ReusableLearningNote(
+            note_id=self.note_id,
+            note_type=self.note_type,
+            text=self.text,
+            source_run_ids=_merge_unique_strings(self.source_run_ids, other.source_run_ids),
+            source_node_refs=_merge_unique_strings(
+                self.source_node_refs,
+                other.source_node_refs,
+            ),
+            problem_statements=_merge_unique_strings(
+                self.problem_statements,
+                other.problem_statements,
+            ),
+            observation_count=self.observation_count + other.observation_count,
+            first_seen_at=min(self.first_seen_at, other.first_seen_at),
+            last_seen_at=max(self.last_seen_at, other.last_seen_at),
+        )
+
+    def to_prompt_dict(self) -> dict[str, JSONValue]:
+        return {
+            "note_id": self.note_id,
+            "note_type": self.note_type.value,
+            "text": self.text,
+            "observation_count": self.observation_count,
+            "source_run_ids": list(self.source_run_ids[:3]),
+            "problem_statements": list(self.problem_statements[:2]),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LearningMemory:
+    entries: list[ReusableLearningNote] = field(default_factory=list)
+    schema_version: int = 1
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "entries",
+            _normalize_reusable_learning_entries(self.entries, "entries"),
+        )
+        object.__setattr__(
+            self,
+            "schema_version",
+            _normalize_positive_int(self.schema_version, "schema_version"),
+        )
+        object.__setattr__(
+            self,
+            "updated_at",
+            _normalize_datetime(self.updated_at, "updated_at"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "entries": [entry.to_dict() for entry in self.entries],
+            "schema_version": self.schema_version,
+            "updated_at": _dump_datetime(self.updated_at),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "LearningMemory":
+        data = _validate_payload_keys(
+            payload,
+            field_name="LearningMemory",
+            required={"entries", "schema_version", "updated_at"},
+        )
+        return cls(
+            entries=[
+                ReusableLearningNote.from_dict(item)
+                for item in _normalize_sequence(data["entries"], "entries")
+            ],
+            schema_version=data["schema_version"],
+            updated_at=data["updated_at"],
+        )
+
+    @classmethod
+    def empty(cls) -> "LearningMemory":
+        return cls(entries=[])
+
+    def merge(self, other: "LearningMemory") -> "LearningMemory":
+        if not isinstance(other, LearningMemory):
+            raise ArgusValidationError(
+                "other must be a LearningMemory instance, "
+                f"got {type(other).__name__}."
+            )
+        if not self.entries:
+            return other
+        if not other.entries:
+            return self
+        merged: dict[str, ReusableLearningNote] = {
+            entry.note_id: entry for entry in self.entries
+        }
+        for entry in other.entries:
+            if entry.note_id in merged:
+                merged[entry.note_id] = merged[entry.note_id].merge(entry)
+            else:
+                merged[entry.note_id] = entry
+        return LearningMemory(
+            entries=_sort_reusable_learning_entries(merged.values()),
+            schema_version=max(self.schema_version, other.schema_version),
+            updated_at=max(self.updated_at, other.updated_at),
+        )
+
+    def merge_observations(
+        self,
+        *,
+        run_id: str,
+        problem_spec: ProblemSpec,
+        notes: Sequence[LearningNote],
+        observed_at: datetime | None = None,
+    ) -> "LearningMemory":
+        normalized_notes = _normalize_learning_notes(notes)
+        if not normalized_notes:
+            return self
+        timestamp = _normalize_datetime(
+            observed_at or datetime.now(timezone.utc),
+            "observed_at",
+        )
+        observed_entries: dict[str, ReusableLearningNote] = {}
+        for note in normalized_notes:
+            entry = ReusableLearningNote.from_learning_note(
+                run_id=run_id,
+                problem_spec=problem_spec,
+                note=note,
+                observed_at=timestamp,
+            )
+            if entry.note_id in observed_entries:
+                observed_entries[entry.note_id] = observed_entries[entry.note_id].merge(entry)
+            else:
+                observed_entries[entry.note_id] = entry
+        return self.merge(
+            LearningMemory(
+                entries=_sort_reusable_learning_entries(observed_entries.values()),
+                schema_version=self.schema_version,
+                updated_at=timestamp,
+            )
+        )
+
+    def select_for_problem(
+        self,
+        problem_spec: ProblemSpec,
+        *,
+        limit: int,
+    ) -> "LearningMemory":
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
+        normalized_limit = _normalize_positive_int(limit, "limit")
+        if not self.entries:
+            return LearningMemory(
+                entries=[],
+                schema_version=self.schema_version,
+                updated_at=self.updated_at,
+            )
+
+        query_tokens = _problem_query_tokens(problem_spec)
+        overlap_by_note_id = {
+            entry.note_id: len(query_tokens & _reusable_learning_tokens(entry))
+            for entry in self.entries
+        }
+        ordered = sorted(
+            self.entries,
+            key=lambda entry: (
+                1 if overlap_by_note_id[entry.note_id] > 0 else 0,
+                overlap_by_note_id[entry.note_id],
+                entry.observation_count,
+                _reusable_learning_type_priority(entry.note_type),
+                entry.last_seen_at,
+                entry.note_id,
+            ),
+            reverse=True,
+        )
+        selected = ordered[:normalized_limit]
+        return LearningMemory(
+            entries=selected,
+            schema_version=self.schema_version,
+            updated_at=self.updated_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SearchState:
     problem_spec: ProblemSpec
     root_id: str
@@ -765,6 +1091,13 @@ def _normalize_non_negative_int(value: object, field_name: str) -> int:
     return value
 
 
+def _normalize_positive_int(value: object, field_name: str) -> int:
+    normalized = _normalize_non_negative_int(value, field_name)
+    if normalized <= 0:
+        raise ArgusValidationError(f"{field_name} must be greater than 0.")
+    return normalized
+
+
 def _normalize_float(value: object, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ArgusValidationError(
@@ -926,6 +1259,14 @@ def _normalize_node_map(value: object) -> dict[str, Node]:
     return normalized
 
 
+def _normalize_sequence(value: object, field_name: str) -> list[object]:
+    if not _is_sequence(value):
+        raise ArgusValidationError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    return list(value)
+
+
 def _normalize_learning_notes(value: object) -> list[LearningNote]:
     if not _is_sequence(value):
         raise ArgusValidationError(
@@ -940,6 +1281,119 @@ def _normalize_learning_notes(value: object) -> list[LearningNote]:
             )
         normalized.append(note)
     return normalized
+
+
+def _normalize_reusable_learning_entries(
+    value: object,
+    field_name: str,
+) -> list[ReusableLearningNote]:
+    if not _is_sequence(value):
+        raise ArgusValidationError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    normalized: list[ReusableLearningNote] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(value):
+        if not isinstance(entry, ReusableLearningNote):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a ReusableLearningNote instance, "
+                f"got {type(entry).__name__}."
+            )
+        if entry.note_id in seen:
+            raise ArgusValidationError(
+                f"{field_name} contains duplicate note_id values: {entry.note_id}."
+            )
+        seen.add(entry.note_id)
+        normalized.append(entry)
+    return normalized
+
+
+def _build_reusable_learning_note_id(
+    note_type: LearningNoteType,
+    text: str,
+) -> str:
+    normalized_type = _normalize_enum(note_type, LearningNoteType, "note_type")
+    normalized_text = re.sub(r"\s+", " ", _normalize_non_empty_string(text, "text").lower())
+    digest = hashlib.sha256(
+        f"{normalized_type.value}\n{normalized_text}".encode("utf-8")
+    ).hexdigest()[:12]
+    return f"learning-{digest}"
+
+
+def _merge_unique_strings(left: Sequence[str], right: Sequence[str]) -> list[str]:
+    merged: list[str] = []
+    for value in [*left, *right]:
+        if value not in merged:
+            merged.append(value)
+    return merged
+
+
+def _sort_reusable_learning_entries(
+    entries: Sequence[ReusableLearningNote],
+) -> list[ReusableLearningNote]:
+    return sorted(
+        entries,
+        key=lambda entry: (
+            entry.observation_count,
+            _reusable_learning_type_priority(entry.note_type),
+            entry.last_seen_at,
+            entry.note_id,
+        ),
+        reverse=True,
+    )
+
+
+def _reusable_learning_type_priority(note_type: LearningNoteType) -> int:
+    priorities = {
+        LearningNoteType.WINNING_PATTERN: 5,
+        LearningNoteType.FAILURE_PATTERN: 4,
+        LearningNoteType.CONSTRAINT: 4,
+        LearningNoteType.ROUTING_HINT: 3,
+        LearningNoteType.SUMMARY: 2,
+    }
+    return priorities[note_type]
+
+
+_REUSABLE_LEARNING_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "for",
+    "from",
+    "into",
+    "not",
+    "that",
+    "the",
+    "their",
+    "then",
+    "this",
+    "with",
+}
+
+
+def _problem_query_tokens(problem_spec: ProblemSpec) -> set[str]:
+    parts = [
+        problem_spec.request,
+        *problem_spec.constraints,
+        *problem_spec.success_criteria,
+    ]
+    return _tokenize_reusable_learning_text(" ".join(parts))
+
+
+def _reusable_learning_tokens(entry: ReusableLearningNote) -> set[str]:
+    parts = [entry.text, *entry.problem_statements]
+    return _tokenize_reusable_learning_text(" ".join(parts))
+
+
+def _tokenize_reusable_learning_text(text: str) -> set[str]:
+    # This lexical pass is only for retrieving a small subset of persisted notes.
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) >= 3 and token not in _REUSABLE_LEARNING_STOPWORDS
+    }
+    return tokens
 
 
 def _is_sequence(value: object) -> bool:

@@ -9,6 +9,7 @@ from argus.models import (
     Candidate,
     Critique,
     FinalRecommendation,
+    LearningMemory,
     LearningNote,
     LearningNoteType,
     Node,
@@ -196,6 +197,70 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(recommendation, restored)
         self.assertIn("assumptions", payload)
         self.assertIn("reversal_conditions", payload)
+
+    def test_learning_memory_round_trips_and_selects_relevant_entries(self) -> None:
+        product_problem = ProblemSpec(
+            request="Design the best retention strategy for a workflow-heavy product.",
+            constraints=["Keep the system auditable."],
+            success_criteria=["Increase repeated usage."],
+            context={"family": "product"},
+        )
+        architecture_problem = ProblemSpec(
+            request="Design the best local-first architecture for Argus.",
+            constraints=["Keep the runtime deterministic."],
+            success_criteria=["Preserve replayability."],
+            context={"family": "architecture"},
+        )
+        memory = LearningMemory.empty().merge_observations(
+            run_id="run-product-a",
+            problem_spec=product_problem,
+            notes=[
+                LearningNote(
+                    note_type=LearningNoteType.WINNING_PATTERN,
+                    text="Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+                    source_node_ids=["node-0003"],
+                )
+            ],
+            observed_at=datetime(2026, 3, 6, 2, 4, 56, tzinfo=timezone.utc),
+        )
+        memory = memory.merge_observations(
+            run_id="run-product-b",
+            problem_spec=product_problem,
+            notes=[
+                LearningNote(
+                    note_type=LearningNoteType.WINNING_PATTERN,
+                    text="Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+                    source_node_ids=["node-0007"],
+                )
+            ],
+            observed_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
+        )
+        memory = memory.merge_observations(
+            run_id="run-architecture-a",
+            problem_spec=architecture_problem,
+            notes=[
+                LearningNote(
+                    note_type=LearningNoteType.CONSTRAINT,
+                    text="Local-first systems need explicit sync conflict handling and replay-safe logs.",
+                    source_node_ids=["node-0011"],
+                )
+            ],
+            observed_at=datetime(2026, 3, 6, 2, 12, 0, tzinfo=timezone.utc),
+        )
+
+        payload = memory.to_dict()
+        restored = LearningMemory.from_dict(payload)
+        selected = restored.select_for_problem(product_problem, limit=1)
+
+        self.assertEqual(memory, restored)
+        self.assertEqual(len(restored.entries), 2)
+        workflow_entry = restored.entries[0]
+        self.assertEqual(workflow_entry.observation_count, 2)
+        self.assertEqual(workflow_entry.source_run_ids, ["run-product-a", "run-product-b"])
+        self.assertEqual(
+            selected.entries[0].text,
+            "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+        )
 
     def test_provider_routing_stats_round_trip_with_derived_averages(self) -> None:
         stats = ProviderRoutingStats(

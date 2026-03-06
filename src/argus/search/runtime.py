@@ -18,12 +18,14 @@ from argus.models import (
     Candidate,
     FinalRecommendation,
     JSONValue,
+    LearningMemory,
     LearningNote,
     Node,
     NodeLifecycleStatus,
     ProblemSpec,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    ReusableLearningNote,
     SearchState,
 )
 from argus.providers import Provider
@@ -48,6 +50,7 @@ class SearchPolicy:
     frontier_limit: int = 6
     rejected_limit: int = 3
     max_learning_notes: int = 4
+    reusable_learning_limit: int = 4
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -59,6 +62,7 @@ class SearchPolicy:
             "frontier_limit",
             "rejected_limit",
             "max_learning_notes",
+            "reusable_learning_limit",
         ):
             value = getattr(self, field_name)
             if not isinstance(value, int) or value <= 0:
@@ -74,6 +78,7 @@ class SearchPolicy:
             "frontier_limit": self.frontier_limit,
             "rejected_limit": self.rejected_limit,
             "max_learning_notes": self.max_learning_notes,
+            "reusable_learning_limit": self.reusable_learning_limit,
         }
 
 
@@ -102,10 +107,14 @@ class SearchRuntime:
         provider: Provider,
         state_store: FileSystemStateStore,
         policy: SearchPolicy | None = None,
+        reuse_learning_memory: bool = True,
     ) -> None:
         self._provider = provider
         self._state_store = state_store
         self._policy = policy or SearchPolicy()
+        if not isinstance(reuse_learning_memory, bool):
+            raise ArgusValidationError("reuse_learning_memory must be a boolean.")
+        self._reuse_learning_memory = reuse_learning_memory
         self._evaluator = AgenticEvaluator(provider=provider)
         self._novelty_filter = AgenticNoveltyFilter(provider=provider)
 
@@ -116,6 +125,17 @@ class SearchRuntime:
     @property
     def policy(self) -> SearchPolicy:
         return self._policy
+
+    def _select_reusable_learning_context(
+        self,
+        problem_spec: ProblemSpec,
+    ) -> LearningMemory:
+        if not self._reuse_learning_memory:
+            return LearningMemory.empty()
+        return self._state_store.load_learning_memory().select_for_problem(
+            problem_spec,
+            limit=self._policy.reusable_learning_limit,
+        )
 
     def run(
         self,
@@ -167,13 +187,27 @@ class SearchRuntime:
             run_id=run_id,
             metadata={"runtime": "search_v1"},
         )
+        reusable_learning_context = self._select_reusable_learning_context(initial_problem_spec)
+        if reusable_learning_context.entries:
+            self._state_store.save_reusable_learning_context(
+                manifest.run_id,
+                reusable_learning_context,
+            )
 
         session: _MutableSession | None = None
         routing_tracker = _RoutingTracker(default_provider_name=self._provider.name)
         current_action = ActionType.FRAME_PROBLEM.value
         try:
-            frame = self._frame_problem(initial_problem_spec, budget, routing_tracker)
-            root_node = self._build_framing_node(frame)
+            frame = self._frame_problem(
+                initial_problem_spec,
+                budget,
+                routing_tracker,
+                reusable_learning_context.entries,
+            )
+            root_node = self._build_framing_node(
+                frame,
+                reusable_learning_context.entries,
+            )
             session = _MutableSession(
                 problem_spec=frame.problem_spec,
                 root_node=root_node,
@@ -181,6 +215,7 @@ class SearchRuntime:
                 step_count=1,
             )
             session.set_learning_notes([])
+            session.set_reusable_learning_notes(reusable_learning_context.entries)
             session.refresh_frontier(limit=self._policy.frontier_limit)
             self._persist_running_snapshot(manifest.run_id, session, frame_summary=frame.framing_notes)
 
@@ -224,6 +259,7 @@ class SearchRuntime:
             recommendation = self._compile_final_recommendation(
                 session.snapshot(),
                 routing_tracker,
+                session.reusable_learning_notes,
             )
             session.apply_winners(
                 [
@@ -250,6 +286,13 @@ class SearchRuntime:
                     "winner_count": len(final_state.winner_ids),
                 },
             )
+            current_action = "persist_learning_memory"
+            if self._reuse_learning_memory and final_state.learning_notes:
+                self._state_store.merge_learning_memory(
+                    run_id=manifest.run_id,
+                    problem_spec=final_state.problem_spec,
+                    notes=final_state.learning_notes,
+                )
             self._state_store.merge_provider_routing_stats(routing_summary)
             return SearchRunResult(
                 run_path=self._state_store.root_dir / refreshed_manifest.run_id,
@@ -298,30 +341,41 @@ class SearchRuntime:
         problem_spec: ProblemSpec,
         budget: int,
         routing_tracker: "_RoutingTracker",
+        reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> ProblemFrame:
+        input_payload: dict[str, JSONValue] = {
+            "request": problem_spec.request,
+            "budget": budget,
+            "search_policy": self._policy.to_dict(),
+            "framing_requirements": [
+                "Normalize explicit constraints.",
+                "Normalize success criteria.",
+                "Produce a framing candidate that captures the most decision-relevant angle.",
+            ],
+        }
+        if reusable_learning_notes:
+            input_payload["reusable_learning_notes"] = [
+                note.to_prompt_dict() for note in reusable_learning_notes
+            ]
         response = self._run_provider_action(
             routing_tracker,
             action_name=ActionType.FRAME_PROBLEM,
             problem_spec=problem_spec,
-            input_payload={
-                "request": problem_spec.request,
-                "budget": budget,
-                "search_policy": self._policy.to_dict(),
-                "framing_requirements": [
-                    "Normalize explicit constraints.",
-                    "Normalize success criteria.",
-                    "Produce a framing candidate that captures the most decision-relevant angle.",
-                ],
-            },
+            input_payload=input_payload,
             output_schema=problem_frame_schema(),
         )
         return response.payload
 
-    def _build_framing_node(self, frame: ProblemFrame) -> Node:
+    def _build_framing_node(
+        self,
+        frame: ProblemFrame,
+        reusable_learning_notes: Sequence[ReusableLearningNote],
+    ) -> Node:
         assessment = self._evaluator.evaluate(
             frame.problem_spec,
             frame.framing_candidate,
             novelty_score=1.0,
+            reusable_learning_notes=reusable_learning_notes,
         )
         return Node(
             node_id="node-0001",
@@ -345,23 +399,28 @@ class SearchRuntime:
         session: "_MutableSession",
         routing_tracker: "_RoutingTracker",
     ) -> None:
+        input_payload: dict[str, JSONValue] = {
+            "target_count": self._policy.seed_target,
+            "framing_candidate": session.root_node.candidate.to_dict(),
+            "learning_notes": [note.to_dict() for note in session.learning_notes],
+            "generation_policy": {
+                "diversity_requirement": (
+                    "Return materially distinct strategic directions, not paraphrases."
+                ),
+                "quality_requirement": (
+                    "Prefer executable mechanisms with explicit assumptions and failure modes."
+                ),
+            },
+        }
+        if session.reusable_learning_notes:
+            input_payload["reusable_learning_notes"] = [
+                note.to_prompt_dict() for note in session.reusable_learning_notes
+            ]
         response = self._run_provider_action(
             routing_tracker,
             action_name=ActionType.GENERATE_SEED,
             problem_spec=session.problem_spec,
-            input_payload={
-                "target_count": self._policy.seed_target,
-                "framing_candidate": session.root_node.candidate.to_dict(),
-                "learning_notes": [note.to_dict() for note in session.learning_notes],
-                "generation_policy": {
-                    "diversity_requirement": (
-                        "Return materially distinct strategic directions, not paraphrases."
-                    ),
-                    "quality_requirement": (
-                        "Prefer executable mechanisms with explicit assumptions and failure modes."
-                    ),
-                },
-            },
+            input_payload=input_payload,
             output_schema=candidate_batch_schema(),
         )
         session.consume_budget()
@@ -385,23 +444,28 @@ class SearchRuntime:
         for node in self._top_ranked_nodes(session, limit=self._policy.stress_test_limit):
             if session.budget_spent >= budget:
                 break
+            input_payload: dict[str, JSONValue] = {
+                "node_id": node.node_id,
+                "candidate": node.candidate.to_dict(),
+                "score": None if node.score is None else node.score.to_dict(),
+                "learning_notes": [note.to_dict() for note in session.learning_notes],
+                "stress_test_policy": {
+                    "focus": [
+                        "hidden dependencies",
+                        "kill shots",
+                        "operational sharp edges",
+                    ],
+                },
+            }
+            if session.reusable_learning_notes:
+                input_payload["reusable_learning_notes"] = [
+                    note.to_prompt_dict() for note in session.reusable_learning_notes
+                ]
             response = self._run_provider_action(
                 routing_tracker,
                 action_name=ActionType.STRESS_TEST,
                 problem_spec=session.problem_spec,
-                input_payload={
-                    "node_id": node.node_id,
-                    "candidate": node.candidate.to_dict(),
-                    "score": None if node.score is None else node.score.to_dict(),
-                    "learning_notes": [note.to_dict() for note in session.learning_notes],
-                    "stress_test_policy": {
-                        "focus": [
-                            "hidden dependencies",
-                            "kill shots",
-                            "operational sharp edges",
-                        ],
-                    },
-                },
+                input_payload=input_payload,
                 output_schema=critique_schema(),
             )
             session.consume_budget()
@@ -430,22 +494,27 @@ class SearchRuntime:
         for node in self._top_ranked_nodes(session, limit=self._policy.deepen_limit):
             if session.budget_spent >= budget:
                 break
+            input_payload: dict[str, JSONValue] = {
+                "node_id": node.node_id,
+                "candidate": node.candidate.to_dict(),
+                "score": None if node.score is None else node.score.to_dict(),
+                "critique": None if node.critique is None else node.critique.to_dict(),
+                "learning_notes": [note.to_dict() for note in session.learning_notes],
+                "deepen_policy": {
+                    "goal": (
+                        "Increase specificity and execution readiness without collapsing distinctiveness."
+                    ),
+                },
+            }
+            if session.reusable_learning_notes:
+                input_payload["reusable_learning_notes"] = [
+                    note.to_prompt_dict() for note in session.reusable_learning_notes
+                ]
             response = self._run_provider_action(
                 routing_tracker,
                 action_name=ActionType.DEEPEN,
                 problem_spec=session.problem_spec,
-                input_payload={
-                    "node_id": node.node_id,
-                    "candidate": node.candidate.to_dict(),
-                    "score": None if node.score is None else node.score.to_dict(),
-                    "critique": None if node.critique is None else node.critique.to_dict(),
-                    "learning_notes": [note.to_dict() for note in session.learning_notes],
-                    "deepen_policy": {
-                        "goal": (
-                            "Increase specificity and execution readiness without collapsing distinctiveness."
-                        ),
-                    },
-                },
+                input_payload=input_payload,
                 output_schema=candidate_schema(),
             )
             session.consume_budget()
@@ -468,19 +537,24 @@ class SearchRuntime:
         for node in self._top_ranked_nodes(session, limit=self._policy.mutate_limit):
             if mutations >= self._policy.mutate_limit or session.budget_spent >= budget:
                 break
+            input_payload: dict[str, JSONValue] = {
+                "node_id": node.node_id,
+                "candidate": node.candidate.to_dict(),
+                "score": None if node.score is None else node.score.to_dict(),
+                "critique": None if node.critique is None else node.critique.to_dict(),
+                "mutation_policy": {
+                    "goal": "Address the sharpest weakness while preserving the core mechanism.",
+                },
+            }
+            if session.reusable_learning_notes:
+                input_payload["reusable_learning_notes"] = [
+                    note.to_prompt_dict() for note in session.reusable_learning_notes
+                ]
             response = self._run_provider_action(
                 routing_tracker,
                 action_name=ActionType.MUTATE,
                 problem_spec=session.problem_spec,
-                input_payload={
-                    "node_id": node.node_id,
-                    "candidate": node.candidate.to_dict(),
-                    "score": None if node.score is None else node.score.to_dict(),
-                    "critique": None if node.critique is None else node.critique.to_dict(),
-                    "mutation_policy": {
-                        "goal": "Address the sharpest weakness while preserving the core mechanism.",
-                    },
-                },
+                input_payload=input_payload,
                 output_schema=candidate_batch_schema(),
             )
             session.consume_budget()
@@ -506,21 +580,26 @@ class SearchRuntime:
         ranked = self._top_ranked_nodes(session, limit=2)
         if len(ranked) < 2:
             return
+        input_payload: dict[str, JSONValue] = {
+            "primary_node_id": ranked[0].node_id,
+            "secondary_node_id": ranked[1].node_id,
+            "primary_candidate": ranked[0].candidate.to_dict(),
+            "secondary_candidate": ranked[1].candidate.to_dict(),
+            "combine_policy": {
+                "goal": (
+                    "Fuse compatible strengths only if the combined direction remains coherent and distinct."
+                ),
+            },
+        }
+        if session.reusable_learning_notes:
+            input_payload["reusable_learning_notes"] = [
+                note.to_prompt_dict() for note in session.reusable_learning_notes
+            ]
         response = self._run_provider_action(
             routing_tracker,
             action_name=ActionType.COMBINE,
             problem_spec=session.problem_spec,
-            input_payload={
-                "primary_node_id": ranked[0].node_id,
-                "secondary_node_id": ranked[1].node_id,
-                "primary_candidate": ranked[0].candidate.to_dict(),
-                "secondary_candidate": ranked[1].candidate.to_dict(),
-                "combine_policy": {
-                    "goal": (
-                        "Fuse compatible strengths only if the combined direction remains coherent and distinct."
-                    ),
-                },
-            },
+            input_payload=input_payload,
             output_schema=candidate_batch_schema(),
         )
         session.consume_budget()
@@ -554,18 +633,23 @@ class SearchRuntime:
         if not archived_nodes and not pruned_nodes:
             return
 
+        input_payload: dict[str, JSONValue] = {
+            "archived_nodes": archived_nodes,
+            "pruned_nodes": pruned_nodes,
+            "max_notes": self._policy.max_learning_notes,
+            "compression_policy": {
+                "goal": "Extract reusable patterns, failure modes, and constraints from the current search state.",
+            },
+        }
+        if session.reusable_learning_notes:
+            input_payload["reusable_learning_notes"] = [
+                note.to_prompt_dict() for note in session.reusable_learning_notes
+            ]
         response = self._run_provider_action(
             routing_tracker,
             action_name=ActionType.COMPRESS_LEARNING,
             problem_spec=session.problem_spec,
-            input_payload={
-                "archived_nodes": archived_nodes,
-                "pruned_nodes": pruned_nodes,
-                "max_notes": self._policy.max_learning_notes,
-                "compression_policy": {
-                    "goal": "Extract reusable patterns, failure modes, and constraints from the current search state.",
-                },
-            },
+            input_payload=input_payload,
             output_schema=learning_compression_schema(),
         )
         session.consume_budget()
@@ -625,6 +709,7 @@ class SearchRuntime:
             session.problem_spec,
             candidate,
             novelty_score=novelty.novelty_score,
+            reusable_learning_notes=session.reusable_learning_notes,
         )
         node_id = session.allocate_node_id()
         if parent_ids:
@@ -712,6 +797,7 @@ class SearchRuntime:
         self,
         state: SearchState,
         routing_tracker: "_RoutingTracker",
+        reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> FinalRecommendation:
         candidates = _finalist_nodes(state)
         if not candidates:
@@ -728,6 +814,7 @@ class SearchRuntime:
                 "and adversarial robustness against the refined problem frame."
             ),
             routing_tracker=routing_tracker,
+            reusable_learning_notes=reusable_learning_notes,
         )
         if best is None:
             raise ArgusValidationError("Pairwise best-bet selection returned no candidate.")
@@ -748,6 +835,7 @@ class SearchRuntime:
                 "tractability, plausibility, and robustness over raw upside."
             ),
             routing_tracker=routing_tracker,
+            reusable_learning_notes=reusable_learning_notes,
             pre_rank_key=lambda node: (
                 node.score.implementation_tractability,
                 node.score.plausibility,
@@ -775,6 +863,7 @@ class SearchRuntime:
                 "implementation risk or realism."
             ),
             routing_tracker=routing_tracker,
+            reusable_learning_notes=reusable_learning_notes,
             pre_rank_key=lambda node: (
                 node.score.upside,
                 node.novelty_score,
@@ -855,6 +944,7 @@ class SearchRuntime:
         objective_name: str,
         objective_description: str,
         routing_tracker: "_RoutingTracker",
+        reusable_learning_notes: Sequence[ReusableLearningNote],
         pre_rank_key=None,
     ) -> tuple[Node | None, list[_PairwiseDecisionRecord]]:
         candidates = list(nodes)
@@ -877,6 +967,7 @@ class SearchRuntime:
             objective_name=objective_name,
             objective_description=objective_description,
             routing_tracker=routing_tracker,
+            reusable_learning_notes=reusable_learning_notes,
         )
         winner = left if assessment.winner == "left" else right
         return winner, [
@@ -898,6 +989,7 @@ class SearchRuntime:
         objective_name: str,
         objective_description: str,
         routing_tracker: "_RoutingTracker",
+        reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> PairwiseRankingAssessment:
         routing_tracker.record_invocation(
             action_name=ActionType.RANK.value,
@@ -910,6 +1002,7 @@ class SearchRuntime:
                 right,
                 objective=objective_name,
                 objective_description=objective_description,
+                reusable_learning_notes=reusable_learning_notes,
             )
         except Exception:
             routing_tracker.record_provider_failure(
@@ -936,6 +1029,7 @@ class _MutableSession:
         self.pruned_ids: list[str] = []
         self.winner_ids: list[str] = []
         self.learning_notes: list[LearningNote] = []
+        self.reusable_learning_notes: list[ReusableLearningNote] = []
         self.budget_spent = budget_spent
         self.step_count = step_count
         self._next_node_index = 2
@@ -972,6 +1066,12 @@ class _MutableSession:
 
     def set_learning_notes(self, notes: Sequence[LearningNote]) -> None:
         self.learning_notes = list(notes)
+
+    def set_reusable_learning_notes(
+        self,
+        notes: Sequence[ReusableLearningNote],
+    ) -> None:
+        self.reusable_learning_notes = list(notes)
 
     def refresh_frontier(self, *, limit: int) -> None:
         candidates = [

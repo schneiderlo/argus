@@ -63,6 +63,7 @@ Storage must be filesystem-backed at first. It must persist:
 - score vectors
 - critiques
 - learning notes
+- reusable cross-run learning memory with provenance
 - benchmark outputs
 - final compiled recommendations
 

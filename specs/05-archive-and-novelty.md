@@ -36,6 +36,17 @@ Every few steps, the system should compress recent search results into reusable 
 
 These notes must be first-class stored objects, not only transient prompt text.
 
+## Cross-Run Reuse
+
+Reusable learning notes should survive beyond a single run. The first durable version should:
+
+- maintain a root-level shared learning-memory ledger with note provenance
+- deduplicate exact repeated learnings into support-counted entries
+- snapshot the subset of imported reusable learnings into each run directory for audit
+- feed those imported priors back into future framing, generation, evaluation, ranking, and critique actions
+
+Deterministic retrieval is acceptable for selecting a bounded subset of stored learnings, but it must remain a retrieval layer only, not a replacement for provider-backed evaluation or novelty judgment.
+
 ## Replay And Audit
 
 An operator must be able to inspect a run and answer:
@@ -50,4 +61,3 @@ That means the archive format must remain human-inspectable.
 ## Future Direction
 
 Later versions should add search islands with different optimization priors and allow selective migration of strong insights between islands.
-

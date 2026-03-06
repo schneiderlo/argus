@@ -91,9 +91,10 @@ Current implementation status:
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors, semantic novelty judgments, and pairwise `rank` decisions instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn from admitted nodes, strong scores, useful critiques, and winner contributions.
+- Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, and each `argus run` snapshots the imported reusable subset it used at `artifacts/runs/<run_id>/reusable-learning-context.json` before feeding those priors back into later framing, generation, evaluation, ranking, and critique steps.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The biggest remaining product risk is evaluator quality. The runtime and provider plumbing exist, but the Codex-facing evaluator prompts still need to be hardened into rich action-specific judge prompts and backed by stronger judgment-quality benchmarks. Persisted cross-run learning compression also remains open.
+The largest remaining implementation gaps are additional providers, multi-island search, and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
 
 Process guardrails:
 

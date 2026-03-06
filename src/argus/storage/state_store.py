@@ -11,6 +11,7 @@ from argus.errors import ArgusUserError, ArgusValidationError
 from argus.models import (
     FinalRecommendation,
     JSONValue,
+    LearningMemory,
     LearningNote,
     Node,
     ProblemSpec,
@@ -38,6 +39,7 @@ class RunManifest:
     problem_spec_path: str = "problem-spec.json"
     state_path: str | None = None
     learning_notes_path: str | None = None
+    reusable_learning_path: str | None = None
     final_recommendation_path: str | None = None
     summary_path: str | None = None
     nodes_dir: str = "nodes"
@@ -92,6 +94,14 @@ class RunManifest:
         )
         object.__setattr__(
             self,
+            "reusable_learning_path",
+            _normalize_optional_relative_path(
+                self.reusable_learning_path,
+                "reusable_learning_path",
+            ),
+        )
+        object.__setattr__(
+            self,
             "final_recommendation_path",
             _normalize_optional_relative_path(
                 self.final_recommendation_path,
@@ -127,6 +137,7 @@ class RunManifest:
             "problem_spec_path": self.problem_spec_path,
             "state_path": self.state_path,
             "learning_notes_path": self.learning_notes_path,
+            "reusable_learning_path": self.reusable_learning_path,
             "final_recommendation_path": self.final_recommendation_path,
             "summary_path": self.summary_path,
             "nodes_dir": self.nodes_dir,
@@ -160,6 +171,7 @@ class RunManifest:
                 "metadata",
                 "error",
             },
+            optional={"reusable_learning_path"},
         )
         return cls(
             run_id=data["run_id"],
@@ -172,6 +184,7 @@ class RunManifest:
             problem_spec_path=data["problem_spec_path"],
             state_path=data["state_path"],
             learning_notes_path=data["learning_notes_path"],
+            reusable_learning_path=data.get("reusable_learning_path"),
             final_recommendation_path=data["final_recommendation_path"],
             summary_path=data["summary_path"],
             nodes_dir=data["nodes_dir"],
@@ -305,12 +318,14 @@ class PersistedRun:
     manifest: RunManifest
     problem_spec: ProblemSpec
     state: SearchState | None = None
+    reusable_learning_context: LearningMemory | None = None
     final_recommendation: FinalRecommendation | None = None
     summary_markdown: str | None = None
     routing_summary: ProviderRoutingStats | None = None
 
 
 class FileSystemStateStore:
+    _LEARNING_MEMORY_PATH = "learning-memory.json"
     _ROUTING_SUMMARY_PATH = "routing-summary.json"
     _ROUTING_STATS_PATH = "provider-routing-stats.json"
 
@@ -433,6 +448,36 @@ class FileSystemStateStore:
         self._write_manifest(run_dir, refreshed_manifest)
         return refreshed_manifest
 
+    def save_reusable_learning_context(
+        self,
+        run_id: str,
+        memory: LearningMemory | None,
+        *,
+        updated_at: datetime | None = None,
+    ) -> RunManifest:
+        if memory is not None and not isinstance(memory, LearningMemory):
+            raise ArgusValidationError(
+                "memory must be a LearningMemory instance or None, "
+                f"got {type(memory).__name__}."
+            )
+        normalized_run_id = _normalize_path_segment(run_id, "run_id")
+        manifest, run_dir = self._load_manifest(normalized_run_id)
+        reusable_learning_path = self._write_optional_json(
+            run_dir,
+            "reusable-learning-context.json",
+            None if memory is None or not memory.entries else memory.to_dict(),
+        )
+        refreshed_manifest = replace(
+            manifest,
+            updated_at=_normalize_datetime(
+                updated_at or datetime.now(timezone.utc),
+                "updated_at",
+            ),
+            reusable_learning_path=reusable_learning_path,
+        )
+        self._write_manifest(run_dir, refreshed_manifest)
+        return refreshed_manifest
+
     def load_run(self, run_id: str) -> PersistedRun:
         normalized_run_id = _normalize_path_segment(run_id, "run_id")
         manifest, run_dir = self._load_manifest(normalized_run_id)
@@ -440,6 +485,11 @@ class FileSystemStateStore:
             self._read_json_required(run_dir / manifest.problem_spec_path)
         )
         state = self._load_state(run_dir, manifest, problem_spec)
+        reusable_learning_context: LearningMemory | None = None
+        if manifest.reusable_learning_path is not None:
+            reusable_learning_context = LearningMemory.from_dict(
+                self._read_json_required(run_dir / manifest.reusable_learning_path)
+            )
         final_recommendation: FinalRecommendation | None = None
         if manifest.final_recommendation_path is not None:
             if state is None:
@@ -470,6 +520,7 @@ class FileSystemStateStore:
             manifest=manifest,
             problem_spec=problem_spec,
             state=state,
+            reusable_learning_context=reusable_learning_context,
             final_recommendation=final_recommendation,
             summary_markdown=summary_markdown,
             routing_summary=routing_summary,
@@ -539,6 +590,46 @@ class FileSystemStateStore:
         if not path.is_file():
             return ProviderRoutingStats.empty()
         return ProviderRoutingStats.from_dict(self._read_json_required(path))
+
+    def load_learning_memory(self) -> LearningMemory:
+        path = self.root_dir / self._LEARNING_MEMORY_PATH
+        if not path.is_file():
+            return LearningMemory.empty()
+        return LearningMemory.from_dict(self._read_json_required(path))
+
+    def save_learning_memory(self, memory: LearningMemory) -> LearningMemory:
+        if not isinstance(memory, LearningMemory):
+            raise ArgusValidationError(
+                "memory must be a LearningMemory instance, "
+                f"got {type(memory).__name__}."
+            )
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        self._write_json(self.root_dir / self._LEARNING_MEMORY_PATH, memory.to_dict())
+        return memory
+
+    def merge_learning_memory(
+        self,
+        *,
+        run_id: str,
+        problem_spec: ProblemSpec,
+        notes: Sequence[LearningNote],
+        updated_at: datetime | None = None,
+    ) -> LearningMemory:
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
+        normalized_notes = _normalize_learning_notes(notes, "notes")
+        if not normalized_notes:
+            return self.load_learning_memory()
+        merged = self.load_learning_memory().merge_observations(
+            run_id=_normalize_non_empty_string(run_id, "run_id"),
+            problem_spec=problem_spec,
+            notes=normalized_notes,
+            observed_at=updated_at,
+        )
+        return self.save_learning_memory(merged)
 
     def merge_provider_routing_stats(
         self,
@@ -976,6 +1067,22 @@ def _normalize_json_value(value: object, field_name: str) -> JSONValue:
     raise ArgusValidationError(
         f"{field_name} must be JSON-serializable, got {type(value).__name__}."
     )
+
+
+def _normalize_learning_notes(value: object, field_name: str) -> list[LearningNote]:
+    if not _is_sequence(value):
+        raise ArgusValidationError(
+            f"{field_name} must be a list of learning notes, got {type(value).__name__}."
+        )
+    normalized: list[LearningNote] = []
+    for index, note in enumerate(value):
+        if not isinstance(note, LearningNote):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a LearningNote instance, "
+                f"got {type(note).__name__}."
+            )
+        normalized.append(note)
+    return normalized
 
 
 def _copy_json_object(value: Mapping[str, JSONValue]) -> dict[str, JSONValue]:

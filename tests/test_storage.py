@@ -12,6 +12,7 @@ from argus.models import (
     Candidate,
     Critique,
     FinalRecommendation,
+    LearningMemory,
     LearningNote,
     LearningNoteType,
     Node,
@@ -198,6 +199,79 @@ class FileSystemStateStoreTests(unittest.TestCase):
 
         self.assertEqual(loaded.routing_summary, routing_summary)
         self.assertEqual(aggregate, routing_summary)
+
+    def test_store_persists_run_reusable_learning_context(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020500Z",
+            )
+            memory = LearningMemory.empty().merge_observations(
+                run_id="run-prior",
+                problem_spec=problem_spec,
+                notes=[
+                    LearningNote(
+                        note_type=LearningNoteType.WINNING_PATTERN,
+                        text="Workflow-native ideas beat generic chat loops.",
+                        source_node_ids=["node-0009"],
+                    )
+                ],
+                observed_at=datetime(2026, 3, 6, 2, 15, 0, tzinfo=timezone.utc),
+            )
+
+            refreshed_manifest = store.save_reusable_learning_context(
+                manifest.run_id,
+                memory,
+                updated_at=manifest.created_at,
+            )
+            loaded = store.load_run(manifest.run_id)
+
+        self.assertEqual(
+            refreshed_manifest.reusable_learning_path,
+            "reusable-learning-context.json",
+        )
+        self.assertEqual(loaded.reusable_learning_context, memory)
+
+    def test_merge_learning_memory_persists_cross_run_observations(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            store.merge_learning_memory(
+                run_id="run-20260306T020501Z",
+                problem_spec=problem_spec,
+                notes=[
+                    LearningNote(
+                        note_type=LearningNoteType.WINNING_PATTERN,
+                        text="Workflow-native ideas beat generic chat loops.",
+                        source_node_ids=["node-0001"],
+                    )
+                ],
+                updated_at=datetime(2026, 3, 6, 2, 20, 0, tzinfo=timezone.utc),
+            )
+            second = store.merge_learning_memory(
+                run_id="run-20260306T020502Z",
+                problem_spec=problem_spec,
+                notes=[
+                    LearningNote(
+                        note_type=LearningNoteType.WINNING_PATTERN,
+                        text="Workflow-native ideas beat generic chat loops.",
+                        source_node_ids=["node-0002"],
+                    )
+                ],
+                updated_at=datetime(2026, 3, 6, 2, 25, 0, tzinfo=timezone.utc),
+            )
+            loaded = store.load_learning_memory()
+
+        self.assertEqual(second, loaded)
+        self.assertEqual(len(loaded.entries), 1)
+        entry = loaded.entries[0]
+        self.assertEqual(entry.observation_count, 2)
+        self.assertEqual(entry.source_run_ids, ["run-20260306T020501Z", "run-20260306T020502Z"])
+        self.assertEqual(entry.last_seen_at, datetime(2026, 3, 6, 2, 25, 0, tzinfo=timezone.utc))
 
     def test_list_runs_returns_sorted_run_manifests(self) -> None:
         with TemporaryDirectory() as directory:

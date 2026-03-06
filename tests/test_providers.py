@@ -194,6 +194,16 @@ class CodexProviderTests(unittest.TestCase):
                 input_payload={
                     "candidate": _candidate_payload(),
                     "novelty_score": 0.71,
+                    "reusable_learning_notes": [
+                        {
+                            "note_id": "learning-abc123",
+                            "note_type": "winning_pattern",
+                            "text": "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+                            "observation_count": 2,
+                            "source_run_ids": ["run-a", "run-b"],
+                            "problem_statements": ["Find the best retention strategy."],
+                        }
+                    ],
                 },
                 output_schema=evaluation_assessment_schema(),
             )
@@ -202,6 +212,7 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("Role: candidate evaluator for Argus.", prompt_text)
         self.assertIn("Hard-constraint gate: set score.hard_constraint_pass=false", prompt_text)
         self.assertIn("Anti-style rule: do not reward polish, buzzwords, generic optimism", prompt_text)
+        self.assertIn("Reusable priors: when reusable_learning_notes are present", prompt_text)
 
     def test_run_action_materializes_action_specific_novelty_prompt(self) -> None:
         with TemporaryDirectory() as directory:

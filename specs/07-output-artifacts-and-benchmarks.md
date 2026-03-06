@@ -9,8 +9,11 @@ A completed `argus run` must persist:
 - score vectors
 - critiques
 - learning notes
+- any imported reusable-learning context used to steer the run
 - the final recommendation object
 - a readable markdown summary for humans
+
+The repository should also persist a root-level reusable learning-memory ledger so future non-benchmark runs can reuse compressed patterns with provenance.
 
 ## Final Recommendation Requirements
 
@@ -46,6 +49,8 @@ The benchmark harness must:
 - persist outputs
 - record run metadata
 - make regressions visible
+
+To keep comparisons stable, the harness may isolate or disable shared cross-run learning memory while still persisting each case's own run artifacts.
 
 The first harness can be basic, but it must exist. A concrete first implementation may persist each session under `artifacts/benchmarks/<session_id>/` with a manifest plus per-case snapshots of the copied fixture, final recommendation, summary markdown, and a stable output digest for comparison against the previous session.
 
