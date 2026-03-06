@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -29,14 +30,23 @@ class BenchmarkHarness:
     def __init__(
         self,
         *,
-        provider: Provider,
+        provider: Provider | None = None,
+        providers: Mapping[str, Provider] | Sequence[Provider] | None = None,
         state_store: FileSystemStateStore,
         cases_dir: Path,
         output_root: Path,
         latest_pointer: Path | None = None,
         policy: SearchPolicy | None = None,
     ) -> None:
-        self._provider = provider
+        self._providers = self._normalize_provider_pool(
+            provider=provider,
+            providers=providers,
+        )
+        self._provider = (
+            next(iter(self._providers.values()))
+            if provider is None
+            else self._providers[provider.name]
+        )
         self._state_store = state_store
         self._cases_dir = cases_dir.expanduser().resolve()
         self._output_root = output_root.expanduser().resolve()
@@ -46,6 +56,29 @@ class BenchmarkHarness:
             else self._output_root / "latest.txt"
         )
         self._policy = policy
+
+    def _normalize_provider_pool(
+        self,
+        *,
+        provider: Provider | None,
+        providers: Mapping[str, Provider] | Sequence[Provider] | None,
+    ) -> dict[str, Provider]:
+        normalized: dict[str, Provider] = {}
+        if providers is not None:
+            provider_items: Sequence[tuple[str, Provider]] | Mapping[str, Provider]
+            if isinstance(providers, Mapping):
+                provider_items = providers
+            else:
+                provider_items = [(pool_provider.name, pool_provider) for pool_provider in providers]
+            for provider_name, pool_provider in dict(provider_items).items():
+                if not hasattr(pool_provider, "name") or not callable(getattr(pool_provider, "run_action", None)):
+                    raise TypeError("providers entries must implement the Provider protocol.")
+                normalized[provider_name] = pool_provider
+        if provider is not None:
+            normalized.setdefault(provider.name, provider)
+        if not normalized:
+            raise TypeError("BenchmarkHarness requires at least one provider.")
+        return normalized
 
     def run(self, *, case_name: str | None = None) -> BenchmarkRunResult:
         cases = load_benchmark_cases(self._cases_dir)
@@ -65,6 +98,7 @@ class BenchmarkHarness:
 
         runtime = SearchRuntime(
             provider=self._provider,
+            providers=self._providers,
             state_store=self._state_store,
             policy=self._policy,
             # Keep benchmark outputs comparable across sessions instead of letting

@@ -41,6 +41,14 @@ uv run argus run --provider gemini "Find the best retention strategy for a workf
 uv run argus run --provider opencode "Find the best retention strategy for a workflow-heavy product."
 ```
 
+Run the search through a provider pool so Argus can route each action using persisted
+provider-routing stats while falling back to the first provider in the list:
+
+```bash
+uv run argus run --provider codex,gemini,opencode \
+  "Find the best retention strategy for a workflow-heavy product."
+```
+
 Run the stored benchmark suite, or a single case:
 
 ```bash
@@ -104,6 +112,7 @@ Current implementation status:
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
 - The provider layer now also supports `gemini` and `opencode` behind the same typed contract and `--provider` CLI flag. Codex remains the default and the best-supported path; the additional adapters reuse the same audited prompt, artifact, and validation flow while speaking each CLI's native headless JSON surface.
+- `argus run` and `argus benchmark` now also accept a comma-separated provider pool such as `--provider codex,gemini,opencode`. When a pool is present, Argus consults persisted provider-routing stats to choose which configured provider should handle each routed action, while falling back to the first provider when the action has no strong prior signal yet.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors, semantic novelty judgments, and pairwise `rank` decisions instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
 - The runtime now dispatches bounded concurrent provider-backed work for archive novelty checks, candidate evaluation, stress tests, deepens, and mutations. Commits remain deterministic, node ids stay stable, and final same-batch novelty admission is serialized so near-duplicates cannot race into the archive together.

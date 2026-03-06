@@ -33,6 +33,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Next Priority
 
+- [x] Turn provider-routing statistics into a real action router so multi-provider runs can choose among a configured provider pool instead of collecting routing telemetry only.
 - [x] Create benchmark fixtures for at least five representative problem types: product strategy, growth, UX, technical architecture, and monetization.
 - [x] Add a benchmark harness that can run Argus against stored prompts and record structured outputs.
 - [x] Add provider-routing statistics so the system can learn which provider performs best for each action.
@@ -61,6 +62,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - The first working search runtime now lives in `src/argus/search/`; `argus run` frames the problem, generates and filters seeds, stress-tests and deepens survivors, compresses learnings, and persists a compiled final recommendation under `artifacts/runs/<run_id>/`.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` records replayable benchmark sessions under `artifacts/benchmarks/<session_id>/` with per-case snapshots plus manifest-level output digests for change detection.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the aggregate cross-run ledger now lives at `artifacts/runs/provider-routing-stats.json`.
+- `argus run` and `argus benchmark` now accept a comma-separated provider pool. When more than one provider is configured, the runtime uses the persisted routing ledger to choose the best-scoring configured provider per routed action, while preserving the first provider as the deterministic fallback and recording the actual source provider on each admitted node.
 - The evaluator now supports provider-backed pairwise `rank` comparisons, and the runtime uses them to refine best-bet, conservative, and high-upside selection from the archived finalists instead of relying only on deterministic score ordering.
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, each run snapshots its imported subset at `artifacts/runs/<run_id>/reusable-learning-context.json`, and the runtime feeds those priors into framing, generation, evaluation, stress testing, deepening, mutation, combination, ranking, and learning compression. The benchmark harness keeps shared learning memory disabled so stored case outputs remain comparable across sessions.
 - The provider layer now supports `codex`, `gemini`, and `opencode` behind the same typed contract. Codex remains the default and the most strongly supported path, while Gemini and OpenCode use their headless JSON surfaces plus the same audited prompt, artifact, and schema-validation pipeline.

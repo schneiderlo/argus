@@ -12,18 +12,18 @@ from argus.search.contracts import CandidateBatch, LearningCompression, ProblemF
 
 
 class SearchFixtureProvider:
-    name = "fixture"
-
     def __init__(
         self,
         root_dir: Path,
         *,
+        name: str = "fixture",
         fail_on_action: str | None = None,
         sleep_by_action: dict[str, float] | None = None,
         seed_candidates: list[Candidate] | None = None,
         seed_candidates_by_island: dict[str, list[Candidate]] | None = None,
     ) -> None:
         self.root_dir = root_dir
+        self.name = name
         self.fail_on_action = fail_on_action
         self.sleep_by_action = dict(sleep_by_action or {})
         if seed_candidates is not None and not seed_candidates:

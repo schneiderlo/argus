@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -241,6 +241,7 @@ class _CandidateAdmissionRequest:
     candidate: Candidate
     parent_ids: tuple[str, ...]
     batch_summary: str
+    source_provider_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,31 +268,138 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
+@dataclass(frozen=True, slots=True)
+class _ActionRouter:
+    providers: dict[str, Provider]
+    default_provider_name: str
+    routing_stats: ProviderRoutingStats
+    min_invocations: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.providers:
+            raise ArgusValidationError("_ActionRouter requires at least one provider.")
+        if self.default_provider_name not in self.providers:
+            raise ArgusValidationError(
+                "default_provider_name must exist in providers."
+            )
+        if self.min_invocations <= 0:
+            raise ArgusValidationError("min_invocations must be a positive integer.")
+        if not isinstance(self.routing_stats, ProviderRoutingStats):
+            raise ArgusValidationError(
+                "routing_stats must be a ProviderRoutingStats instance."
+            )
+
+    def select(self, action_name: str) -> Provider:
+        normalized_action = _normalize_non_empty_string(action_name, "action_name")
+        if len(self.providers) == 1:
+            return self.providers[self.default_provider_name]
+
+        candidates: list[tuple[float, int, int, str]] = []
+        for entry in self.routing_stats.entries:
+            if entry.action_name != normalized_action or entry.provider_name not in self.providers:
+                continue
+            if entry.invocation_count < self.min_invocations:
+                continue
+            if entry.total_reward <= 0:
+                continue
+            candidates.append(
+                (
+                    entry.average_reward,
+                    entry.invocation_count,
+                    1 if entry.provider_name == self.default_provider_name else 0,
+                    entry.provider_name,
+                )
+            )
+        if not candidates:
+            return self.providers[self.default_provider_name]
+        return self.providers[max(candidates)[3]]
+
+
 class SearchRuntime:
     def __init__(
         self,
         *,
-        provider: Provider,
+        provider: Provider | None = None,
+        providers: Mapping[str, Provider] | Sequence[Provider] | None = None,
         state_store: FileSystemStateStore,
         policy: SearchPolicy | None = None,
         reuse_learning_memory: bool = True,
     ) -> None:
-        self._provider = provider
+        provider_pool = self._normalize_provider_pool(
+            provider=provider,
+            providers=providers,
+        )
+        if provider is None:
+            default_provider = next(iter(provider_pool.values()))
+        else:
+            default_provider = provider_pool[provider.name]
+
+        self._provider = default_provider
+        self._providers = provider_pool
         self._state_store = state_store
         self._policy = policy or SearchPolicy()
         if not isinstance(reuse_learning_memory, bool):
             raise ArgusValidationError("reuse_learning_memory must be a boolean.")
         self._reuse_learning_memory = reuse_learning_memory
-        self._evaluator = AgenticEvaluator(provider=provider)
-        self._novelty_filter = AgenticNoveltyFilter(provider=provider)
+        self._evaluators = {
+            provider_name: AgenticEvaluator(provider=pool_provider)
+            for provider_name, pool_provider in self._providers.items()
+        }
+        self._novelty_filters = {
+            provider_name: AgenticNoveltyFilter(provider=pool_provider)
+            for provider_name, pool_provider in self._providers.items()
+        }
+        self._action_router: _ActionRouter | None = None
 
     @property
     def provider(self) -> Provider:
         return self._provider
 
     @property
+    def providers(self) -> dict[str, Provider]:
+        return dict(self._providers)
+
+    @property
     def policy(self) -> SearchPolicy:
         return self._policy
+
+    def _normalize_provider_pool(
+        self,
+        *,
+        provider: Provider | None,
+        providers: Mapping[str, Provider] | Sequence[Provider] | None,
+    ) -> dict[str, Provider]:
+        normalized: dict[str, Provider] = {}
+        if providers is not None:
+            provider_items: Iterable[tuple[str, Provider]]
+            if isinstance(providers, Mapping):
+                provider_items = providers.items()
+            else:
+                provider_items = ((pool_provider.name, pool_provider) for pool_provider in providers)
+            for provider_name, pool_provider in provider_items:
+                self._validate_provider_object(pool_provider, field_name="providers entry")
+                normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
+                if normalized_name in normalized:
+                    raise ArgusValidationError(
+                        f"providers contains duplicate provider names: {normalized_name}."
+                    )
+                if normalized_name != pool_provider.name:
+                    raise ArgusValidationError(
+                        "providers keys must match each provider's name."
+                    )
+                normalized[normalized_name] = pool_provider
+        if provider is not None:
+            self._validate_provider_object(provider, field_name="provider")
+            normalized.setdefault(provider.name, provider)
+        if not normalized:
+            raise ArgusValidationError("SearchRuntime requires at least one provider.")
+        return normalized
+
+    def _validate_provider_object(self, provider: object, *, field_name: str) -> None:
+        if not hasattr(provider, "name") or not isinstance(getattr(provider, "name"), str):
+            raise ArgusValidationError(f"{field_name} must expose a string `name`.")
+        if not hasattr(provider, "run_action") or not callable(getattr(provider, "run_action")):
+            raise ArgusValidationError(f"{field_name} must expose callable `run_action`.")
 
     def _select_reusable_learning_context(
         self,
@@ -345,14 +453,23 @@ class SearchRuntime:
             context={
                 **problem_spec.context,
                 "requested_provider": self._provider.name,
+                "provider_pool": list(self._providers),
             },
+        )
+        self._action_router = _ActionRouter(
+            providers=self._providers,
+            default_provider_name=self._provider.name,
+            routing_stats=self._state_store.load_provider_routing_stats(),
         )
         manifest = self._state_store.create_run(
             problem_spec=initial_problem_spec,
             provider_name=self._provider.name,
             budget=budget,
             run_id=run_id,
-            metadata={"runtime": "search_v1"},
+            metadata={
+                "runtime": "search_v1",
+                "provider_pool": list(self._providers),
+            },
         )
         reusable_learning_context = self._select_reusable_learning_context(initial_problem_spec)
         if reusable_learning_context.entries:
@@ -365,15 +482,17 @@ class SearchRuntime:
         routing_tracker = _RoutingTracker(default_provider_name=self._provider.name)
         current_action = ActionType.FRAME_PROBLEM.value
         try:
-            frame = self._frame_problem(
+            frame_response = self._frame_problem(
                 initial_problem_spec,
                 budget,
                 routing_tracker,
                 reusable_learning_context.entries,
             )
+            frame = frame_response.payload
             root_node = self._build_framing_node(
                 frame,
-                reusable_learning_context.entries,
+                provider_name=frame_response.provider_name,
+                reusable_learning_notes=reusable_learning_context.entries,
             )
             session = _MutableSession(
                 problem_spec=frame.problem_spec,
@@ -503,6 +622,8 @@ class SearchRuntime:
             if routing_summary.entries:
                 self._state_store.merge_provider_routing_stats(routing_summary)
             raise
+        finally:
+            self._action_router = None
 
     def _frame_problem(
         self,
@@ -510,7 +631,7 @@ class SearchRuntime:
         budget: int,
         routing_tracker: "_RoutingTracker",
         reusable_learning_notes: Sequence[ReusableLearningNote],
-    ) -> ProblemFrame:
+    ):
         input_payload: dict[str, JSONValue] = {
             "request": problem_spec.request,
             "budget": budget,
@@ -525,21 +646,22 @@ class SearchRuntime:
             input_payload["reusable_learning_notes"] = [
                 note.to_prompt_dict() for note in reusable_learning_notes
             ]
-        response = self._run_provider_action(
+        return self._run_provider_action(
             routing_tracker,
             action_name=ActionType.FRAME_PROBLEM,
             problem_spec=problem_spec,
             input_payload=input_payload,
             output_schema=problem_frame_schema(),
         )
-        return response.payload
 
     def _build_framing_node(
         self,
         frame: ProblemFrame,
+        *,
+        provider_name: str,
         reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> Node:
-        assessment = self._evaluator.evaluate(
+        assessment = self._evaluator_for_provider(provider_name).evaluate(
             frame.problem_spec,
             frame.framing_candidate,
             novelty_score=1.0,
@@ -550,7 +672,7 @@ class SearchRuntime:
             parent_ids=[],
             depth=0,
             action_type=ActionType.FRAME_PROBLEM,
-            provider_name=self._provider.name,
+            provider_name=_normalize_non_empty_string(provider_name, "provider_name"),
             candidate=frame.framing_candidate,
             score=assessment.score,
             novelty_score=1.0,
@@ -627,6 +749,7 @@ class SearchRuntime:
                         candidate=candidate,
                         parent_ids=(session.root_id,),
                         batch_summary=batch.batch_summary,
+                        source_provider_name=response.provider_name,
                     )
                     for candidate in batch.candidates
                 ],
@@ -685,7 +808,7 @@ class SearchRuntime:
             critique = response.payload
             routing_tracker.record_critique(
                 action_name=ActionType.STRESS_TEST.value,
-                provider_name=self._provider.name,
+                provider_name=response.provider_name,
                 useful=_is_useful_critique(critique),
             )
             updated = replace(
@@ -751,6 +874,7 @@ class SearchRuntime:
                     candidate=response.payload,
                     parent_ids=(selection.node.node_id,),
                     batch_summary="Deepened a high-scoring survivor.",
+                    source_provider_name=response.provider_name,
                 )
             )
         for selection, admission_request in zip(selected_nodes, admission_requests):
@@ -815,6 +939,7 @@ class SearchRuntime:
                         candidate=candidate,
                         parent_ids=(selection.node.node_id,),
                         batch_summary=response.payload.batch_summary,
+                        source_provider_name=response.provider_name,
                     )
                     for candidate in response.payload.candidates
                 ],
@@ -876,6 +1001,7 @@ class SearchRuntime:
                         candidate=candidate,
                         parent_ids=(primary.node_id, secondary.node_id),
                         batch_summary=response.payload.batch_summary,
+                        source_provider_name=response.provider_name,
                     )
                     for candidate in response.payload.candidates
                 ],
@@ -934,7 +1060,7 @@ class SearchRuntime:
         compression = response.payload
         routing_tracker.record_learning_notes(
             action_name=ActionType.COMPRESS_LEARNING.value,
-            provider_name=self._provider.name,
+            provider_name=response.provider_name,
             count=len(compression.notes),
         )
         session.set_learning_notes(compression.notes[: self._policy.max_learning_notes])
@@ -950,12 +1076,13 @@ class SearchRuntime:
         output_schema,
     ):
         normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
+        provider = self._provider_for_action(normalized_action)
         routing_tracker.record_invocation(
             action_name=normalized_action,
-            provider_name=self._provider.name,
+            provider_name=provider.name,
         )
         try:
-            return self._provider.run_action(
+            return provider.run_action(
                 action_name=action_name,
                 problem_spec=problem_spec,
                 input_payload=input_payload,
@@ -964,7 +1091,7 @@ class SearchRuntime:
         except Exception:
             routing_tracker.record_provider_failure(
                 action_name=normalized_action,
-                provider_name=self._provider.name,
+                provider_name=provider.name,
             )
             raise
 
@@ -1073,7 +1200,7 @@ class SearchRuntime:
                 # stays serial so same-batch near-duplicates cannot both land.
                 novelty = _merge_novelty_assessments(
                     archive_novelty=novelty,
-                    intra_batch_novelty=self._novelty_filter.assess(
+                    intra_batch_novelty=self._novelty_filter_for_provider(self._provider.name).assess(
                         problem_spec=session.problem_spec,
                         candidate=request.candidate,
                         archive_nodes=admitted_batch_nodes,
@@ -1086,6 +1213,7 @@ class SearchRuntime:
                 candidate=request.candidate,
                 parent_ids=request.parent_ids,
                 batch_summary=request.batch_summary,
+                source_provider_name=request.source_provider_name,
                 novelty=novelty,
                 assessment=prepared_candidate.assessment,
             )
@@ -1102,12 +1230,12 @@ class SearchRuntime:
         archive_nodes: Sequence[Node],
         reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> _PreparedCandidateAdmission:
-        novelty = self._novelty_filter.assess(
+        novelty = self._novelty_filter_for_provider(self._provider.name).assess(
             problem_spec=problem_spec,
             candidate=candidate,
             archive_nodes=archive_nodes,
         )
-        assessment = self._evaluator.evaluate(
+        assessment = self._evaluator_for_provider(self._provider.name).evaluate(
             problem_spec,
             candidate,
             novelty_score=novelty.novelty_score,
@@ -1127,6 +1255,7 @@ class SearchRuntime:
         candidate: Candidate,
         parent_ids: Sequence[str],
         batch_summary: str,
+        source_provider_name: str,
         novelty: NoveltyAssessment,
         assessment: EvaluationAssessment,
     ) -> Node:
@@ -1153,7 +1282,10 @@ class SearchRuntime:
             parent_ids=list(parent_ids),
             depth=depth,
             action_type=action_type,
-            provider_name=self._provider.name,
+            provider_name=_normalize_non_empty_string(
+                source_provider_name,
+                "source_provider_name",
+            ),
             candidate=candidate,
             island_id=island_id,
             score=assessment.score,
@@ -1477,12 +1609,13 @@ class SearchRuntime:
         routing_tracker: "_RoutingTracker",
         reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> PairwiseRankingAssessment:
+        provider = self._provider_for_action(ActionType.RANK.value)
         routing_tracker.record_invocation(
             action_name=ActionType.RANK.value,
-            provider_name=self._provider.name,
+            provider_name=provider.name,
         )
         try:
-            return self._evaluator.compare_nodes(
+            return self._evaluator_for_provider(provider.name).compare_nodes(
                 problem_spec,
                 left,
                 right,
@@ -1493,9 +1626,24 @@ class SearchRuntime:
         except Exception:
             routing_tracker.record_provider_failure(
                 action_name=ActionType.RANK.value,
-                provider_name=self._provider.name,
+                provider_name=provider.name,
             )
             raise
+
+    def _provider_for_action(self, action_name: ActionType | str) -> Provider:
+        normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
+        router = self._action_router
+        if router is None:
+            return self._provider
+        return router.select(normalized_action)
+
+    def _evaluator_for_provider(self, provider_name: str) -> AgenticEvaluator:
+        return self._evaluators[_normalize_non_empty_string(provider_name, "provider_name")]
+
+    def _novelty_filter_for_provider(self, provider_name: str) -> AgenticNoveltyFilter:
+        return self._novelty_filters[
+            _normalize_non_empty_string(provider_name, "provider_name")
+        ]
 
 
 @dataclass(slots=True)

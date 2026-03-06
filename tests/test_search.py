@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from argus.errors import ArgusValidationError
-from argus.models import ActionType, LearningNote, LearningNoteType, NodeLifecycleStatus, ProblemSpec
+from argus.models import (
+    ActionType,
+    LearningNote,
+    LearningNoteType,
+    NodeLifecycleStatus,
+    ProblemSpec,
+    ProviderRoutingStats,
+    ProviderRoutingStatsEntry,
+)
 from argus.search import (
     SearchPolicy,
     SearchRuntime,
@@ -386,6 +395,119 @@ class SearchRuntimeTests(unittest.TestCase):
             {call["input_payload"]["island"]["island_id"] for call in generate_calls},
             {"balanced", "conservative", "upside"},
         )
+
+    def test_runtime_routes_actions_through_provider_pool_using_persisted_stats(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            store.merge_provider_routing_stats(
+                ProviderRoutingStats(
+                    entries=[
+                        ProviderRoutingStatsEntry(
+                            provider_name="gemini",
+                            action_name="generate_seed",
+                            run_count=2,
+                            invocation_count=4,
+                            provider_failure_count=0,
+                            candidate_count=8,
+                            scored_node_count=8,
+                            admitted_count=6,
+                            rejected_count=1,
+                            hard_fail_count=1,
+                            strong_score_count=4,
+                            stress_test_survivor_count=3,
+                            winner_count=1,
+                            winner_contribution_count=2,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=25.2,
+                            total_reward=10.5,
+                            last_run_id="run-routing-gemini",
+                            last_updated_at=datetime(2026, 3, 6, 15, 30, 0, tzinfo=timezone.utc),
+                        ),
+                        ProviderRoutingStatsEntry(
+                            provider_name="opencode",
+                            action_name="rank",
+                            run_count=2,
+                            invocation_count=3,
+                            provider_failure_count=0,
+                            candidate_count=0,
+                            scored_node_count=0,
+                            admitted_count=0,
+                            rejected_count=0,
+                            hard_fail_count=0,
+                            strong_score_count=0,
+                            stress_test_survivor_count=0,
+                            winner_count=0,
+                            winner_contribution_count=0,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=0.0,
+                            total_reward=3.0,
+                            last_run_id="run-routing-opencode",
+                            last_updated_at=datetime(2026, 3, 6, 15, 31, 0, tzinfo=timezone.utc),
+                        ),
+                    ],
+                    updated_at=datetime(2026, 3, 6, 15, 31, 0, tzinfo=timezone.utc),
+                )
+            )
+            codex_provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "codex",
+                name="codex",
+            )
+            gemini_provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "gemini",
+                name="gemini",
+            )
+            opencode_provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "opencode",
+                name="opencode",
+            )
+            runtime = SearchRuntime(
+                provider=codex_provider,
+                providers=[codex_provider, gemini_provider, opencode_provider],
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=2,
+                    deepen_limit=2,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=4,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=9,
+                run_id="run-search-routed-provider-pool",
+            )
+            self.assertTrue(
+                any(call["action_name"] == "generate_seed" for call in gemini_provider.calls)
+            )
+            self.assertFalse(
+                any(call["action_name"] == "generate_seed" for call in codex_provider.calls)
+            )
+            self.assertTrue(
+                any(call["action_name"] == "rank" for call in opencode_provider.calls)
+            )
+            self.assertTrue(
+                all(
+                    node.provider_name == "gemini"
+                    for node in result.state.nodes.values()
+                    if node.action_type is ActionType.GENERATE_SEED
+                )
+            )
+            rank_entry = next(
+                entry
+                for entry in store.load_provider_routing_stats().entries
+                if entry.provider_name == "opencode" and entry.action_name == "rank"
+            )
+            self.assertGreaterEqual(rank_entry.invocation_count, 1)
 
 
 def _max_overlap(

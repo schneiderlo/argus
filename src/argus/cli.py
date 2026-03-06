@@ -55,7 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--provider",
         default="codex",
-        help="Provider name to route actions through. Defaults to codex.",
+        help=(
+            "Provider name or comma-separated provider pool. The first provider is the "
+            "fallback default. Defaults to codex."
+        ),
     )
     run_parser.set_defaults(handler=_handle_run)
 
@@ -72,7 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--provider",
         default="codex",
-        help="Provider name to route benchmark actions through. Defaults to codex.",
+        help=(
+            "Provider name or comma-separated provider pool for benchmark actions. "
+            "The first provider is the fallback default. Defaults to codex."
+        ),
     )
     benchmark_parser.set_defaults(handler=_handle_benchmark)
 
@@ -191,9 +197,12 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     if not request:
         raise ArgusUserError("request must not be empty.")
 
-    provider = _build_provider(config, args.provider)
+    provider_names = _parse_provider_names(args.provider)
+    providers = [_build_provider(config, provider_name) for provider_name in provider_names]
+    provider = providers[0]
     runtime = SearchRuntime(
         provider=provider,
+        providers=providers,
         state_store=FileSystemStateStore(config.runs_dir),
     )
     result = runtime.run(
@@ -211,9 +220,12 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
 
 
 def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
-    provider = _build_provider(config, args.provider)
+    provider_names = _parse_provider_names(args.provider)
+    providers = [_build_provider(config, provider_name) for provider_name in provider_names]
+    provider = providers[0]
     harness = BenchmarkHarness(
         provider=provider,
+        providers=providers,
         state_store=FileSystemStateStore(config.runs_dir),
         cases_dir=config.benchmark_cases_dir,
         output_root=config.benchmark_runs_dir,
@@ -299,6 +311,21 @@ def _build_provider(config: ArgusConfig, provider_name: str) -> Provider:
             f"Unknown provider {provider_name!r}. Supported providers: {supported}."
         )
     return provider_type(artifacts_root=config.provider_invocations_dir)
+
+
+def _parse_provider_names(value: str) -> list[str]:
+    if not isinstance(value, str):
+        raise ArgusUserError("--provider must be a string.")
+    provider_names: list[str] = []
+    for raw_name in value.split(","):
+        normalized_name = raw_name.strip().lower()
+        if not normalized_name:
+            continue
+        if normalized_name not in provider_names:
+            provider_names.append(normalized_name)
+    if not provider_names:
+        raise ArgusUserError("--provider must include at least one provider name.")
+    return provider_names
 
 
 def _build_feedback_learning_notes(
