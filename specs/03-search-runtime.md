@@ -126,6 +126,7 @@ The first working policy should still be intentionally simple, but it should alr
    deepen under-specified survivors,
    mutate critiqued but repairable branches,
    combine compatible survivors,
+   revisit archived stepping stones when stage capacity is wider than the live frontier,
    or compress learning periodically
 6. repeat until the run budget or stop condition is reached
 7. compile the final answer package from the resulting archive
@@ -174,6 +175,8 @@ The system must not only expand the single highest-score node. It must preserve 
 - novelty
 - depth exploration
 - uncertainty or low-confidence opportunities
+
+Stage parent selection should sample from the full island archive, not only the current frontier. The strongest current survivors should still get first access to stage work, but additional stage capacity should be able to revisit older archived stepping stones so the search can exploit promising off-frontier branches instead of collapsing onto one narrow beam.
 
 ## Multi-Island Search
 

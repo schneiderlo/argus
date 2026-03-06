@@ -1075,31 +1075,42 @@ class SearchRuntime:
                 reason="Frontier diversity collapsed or archive width is too small.",
             )
 
+        stress_candidates_available = self._has_stage_candidates(session, ActionType.STRESS_TEST)
+        deepen_candidates_available = self._has_stage_candidates(session, ActionType.DEEPEN)
+        mutate_candidates_available = self._has_stage_candidates(session, ActionType.MUTATE)
+        combine_candidates_available = self._has_combine_candidates(session)
+
         if (
             not self._has_useful_critique_coverage(session)
-            and self._has_stage_candidates(session, ActionType.STRESS_TEST)
+            and stress_candidates_available
         ):
             return _ScheduledAction(
                 action_type=ActionType.STRESS_TEST,
                 reason="Promising nodes need adversarial pressure before more expansion.",
             )
 
-        if self._has_stage_candidates(session, ActionType.DEEPEN):
+        if deepen_candidates_available and (
+            not self._has_executed_action(session, ActionType.DEEPEN)
+            or (
+                not combine_candidates_available
+                and (
+                    not mutate_candidates_available
+                    or self._has_executed_action(session, ActionType.MUTATE)
+                )
+            )
+        ):
             return _ScheduledAction(
                 action_type=ActionType.DEEPEN,
                 reason="Promising survivors are still shallow or under-specified.",
             )
 
-        if (
-            self._has_stage_candidates(session, ActionType.MUTATE)
-            and not self._has_executed_action(session, ActionType.MUTATE)
-        ):
+        if mutate_candidates_available and not self._has_executed_action(session, ActionType.MUTATE):
             return _ScheduledAction(
                 action_type=ActionType.MUTATE,
                 reason="Critiqued nodes have repairable weaknesses worth iterating on.",
             )
 
-        if self._has_combine_candidates(session):
+        if combine_candidates_available:
             return _ScheduledAction(
                 action_type=ActionType.COMBINE,
                 reason="Frontier contains complementary survivors worth hybridizing.",
@@ -1115,19 +1126,19 @@ class SearchRuntime:
                 reason="Periodic compression can refresh reusable lessons for later steps.",
             )
 
-        if self._has_stage_candidates(session, ActionType.MUTATE):
+        if mutate_candidates_available:
             return _ScheduledAction(
                 action_type=ActionType.MUTATE,
                 reason="Critiqued nodes still have repair passes left after hybrid exploration.",
             )
 
-        if self._has_stage_candidates(session, ActionType.STRESS_TEST):
+        if stress_candidates_available:
             return _ScheduledAction(
                 action_type=ActionType.STRESS_TEST,
                 reason="Unstressed archive nodes remain worth challenging.",
             )
 
-        if self._has_stage_candidates(session, ActionType.DEEPEN):
+        if deepen_candidates_available:
             return _ScheduledAction(
                 action_type=ActionType.DEEPEN,
                 reason="Archive revisits still have room for deeper specification.",
@@ -1653,6 +1664,83 @@ class SearchRuntime:
             for node in session.nodes.values()
         )
 
+    def _archive_stage_candidates(
+        self,
+        session: "_MutableSession",
+        *,
+        island_id: str,
+        stage_name: ActionType,
+    ) -> list[Node]:
+        island_policy = session.island_policy(island_id)
+        candidates = [
+            session.nodes[node_id]
+            for node_id in session.islands[island_id].archive_ids
+            if node_id in session.nodes
+            and self._is_stage_eligible(
+                session,
+                node=session.nodes[node_id],
+                island_id=island_id,
+                stage_name=stage_name,
+            )
+        ]
+        return sorted(
+            candidates,
+            key=lambda node: (
+                *[
+                    float(value)
+                    for value in _stage_priority_key(
+                        node,
+                        island_policy,
+                    )
+                ],
+                -float(_node_order(node.node_id)),
+            ),
+            reverse=True,
+        )
+
+    def _stage_candidate_selection_key(
+        self,
+        session: "_MutableSession",
+        *,
+        node: Node,
+        island_id: str,
+        stage_name: ActionType,
+    ) -> tuple[float, ...]:
+        base_priority = [
+            float(value) for value in _stage_priority_key(node, session.island_policy(island_id))
+        ]
+        child_count = self._node_child_count(session, node.node_id)
+        stage_child_count = self._node_child_count(
+            session,
+            node.node_id,
+            action_type=stage_name,
+        )
+        archive_revisit_bonus = 1.0 if node.node_id not in session.frontier_ids else 0.0
+        branch_freshness_bonus = max(0.0, 1.0 - min(child_count, 4) * 0.25)
+        stage_freshness_bonus = max(0.0, 1.0 - min(stage_child_count, 2) * 0.5)
+        return (
+            base_priority[0],
+            archive_revisit_bonus,
+            branch_freshness_bonus,
+            stage_freshness_bonus,
+            *base_priority[1:],
+            -float(_node_order(node.node_id)),
+        )
+
+    def _node_child_count(
+        self,
+        session: "_MutableSession",
+        parent_node_id: str,
+        *,
+        action_type: ActionType | None = None,
+    ) -> int:
+        return sum(
+            1
+            for node in session.nodes.values()
+            if parent_node_id in node.parent_ids
+            and (action_type is None or node.action_type is action_type)
+        )
+
     def _select_stage_nodes(
         self,
         session: "_MutableSession",
@@ -1666,16 +1754,11 @@ class SearchRuntime:
         phase_one: list[_IslandNodeSelection] = []
         leftovers: list[_IslandNodeSelection] = []
         for island_id in session.island_ids:
-            ranked = [
-                node
-                for node in session.rank_island_nodes(island_id)
-                if self._is_stage_eligible(
-                    session,
-                    node=node,
-                    island_id=island_id,
-                    stage_name=stage_name,
-                )
-            ]
+            ranked = self._archive_stage_candidates(
+                session,
+                island_id=island_id,
+                stage_name=stage_name,
+            )
             if not ranked:
                 continue
             phase_one.append(_IslandNodeSelection(island_id=island_id, node=ranked[0]))
@@ -1708,11 +1791,13 @@ class SearchRuntime:
             sorted(
                 remaining,
                 key=lambda item: (
-                    _stage_priority_key(
-                        item.node,
-                        session.island_policy(item.island_id),
+                    self._stage_candidate_selection_key(
+                        session,
+                        node=item.node,
+                        island_id=item.island_id,
+                        stage_name=stage_name,
                     ),
-                    -session.island_order(item.island_id),
+                    -float(session.island_order(item.island_id)),
                 ),
                 reverse=True,
             )[: limit - len(selected)]
@@ -1732,25 +1817,55 @@ class SearchRuntime:
         for island_id in session.island_ids:
             ranked = [
                 node
-                for node in session.rank_island_nodes(island_id)
-                if node.node_id != session.root_id
-                and _is_rankable(node)
+                for node in (
+                    session.nodes[node_id]
+                    for node_id in session.islands[island_id].archive_ids
+                    if node_id in session.nodes
+                )
+                if node.node_id != session.root_id and _is_rankable(node)
             ]
+            ranked = sorted(
+                ranked,
+                key=lambda node: self._stage_candidate_selection_key(
+                    session,
+                    node=node,
+                    island_id=island_id,
+                    stage_name=ActionType.COMBINE,
+                ),
+                reverse=True,
+            )
             if len(ranked) < 2:
                 continue
-            primary, secondary = ranked[0], ranked[1]
-            if self._pair_has_action_child(
-                session,
-                primary.node_id,
-                secondary.node_id,
-                ActionType.COMBINE,
-            ):
-                continue
-            eligible_pairs.append((island_id, primary, secondary))
+            pair_added = False
+            for left_index, primary in enumerate(ranked[:4]):
+                for secondary in ranked[left_index + 1 : 4]:
+                    if self._pair_has_action_child(
+                        session,
+                        primary.node_id,
+                        secondary.node_id,
+                        ActionType.COMBINE,
+                    ):
+                        continue
+                    eligible_pairs.append((island_id, primary, secondary))
+                    pair_added = True
+                    break
+                if pair_added:
+                    break
         return sorted(
             eligible_pairs,
             key=lambda item: (
-                _stage_priority_key(item[1], session.island_policy(item[0])),
+                self._stage_candidate_selection_key(
+                    session,
+                    node=item[1],
+                    island_id=item[0],
+                    stage_name=ActionType.COMBINE,
+                ),
+                self._stage_candidate_selection_key(
+                    session,
+                    node=item[2],
+                    island_id=item[0],
+                    stage_name=ActionType.COMBINE,
+                ),
                 -session.island_order(item[0]),
             ),
             reverse=True,
@@ -2454,6 +2569,13 @@ def _stage_priority_key(
         node.score.usefulness,
         node.score.confidence_estimate,
     )
+
+
+def _node_order(node_id: str) -> int:
+    try:
+        return int(node_id.rsplit("-", 1)[-1])
+    except ValueError:
+        return 0
 
 
 def _node_snapshot_payload(node: Node) -> dict[str, JSONValue]:
