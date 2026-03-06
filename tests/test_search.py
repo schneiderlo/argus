@@ -259,6 +259,42 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(_max_overlap(provider.calls, actions={"stress_test"}), 2)
         self.assertEqual(_max_overlap(provider.calls, actions={"deepen"}), 2)
 
+    def test_runtime_reopens_seed_generation_when_frontier_width_collapses(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                seed_candidates=[_workflow_archive_candidate()],
+            )
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=1,
+                    deepen_limit=1,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=3,
+                    rejected_limit=2,
+                    max_learning_notes=1,
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=6,
+                run_id="run-search-seed-reopen",
+            )
+
+        generate_calls = [
+            call for call in provider.calls if call["action_name"] == "generate_seed"
+        ]
+        self.assertGreaterEqual(len(generate_calls), 2)
+        self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+        self.assertTrue(result.state.archive_ids)
+
     def test_runtime_rejects_same_batch_duplicates_after_parallel_archive_checks(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

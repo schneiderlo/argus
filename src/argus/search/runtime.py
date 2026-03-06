@@ -171,6 +171,7 @@ class SearchPolicy:
     max_learning_notes: int = 4
     reusable_learning_limit: int = 4
     provider_max_concurrency: int = 4
+    compression_interval: int = 5
     island_policies: tuple[SearchIslandPolicy, ...] = field(
         default_factory=lambda: (balanced_island_policy(),)
     )
@@ -187,6 +188,7 @@ class SearchPolicy:
             "max_learning_notes",
             "reusable_learning_limit",
             "provider_max_concurrency",
+            "compression_interval",
         ):
             value = getattr(self, field_name)
             if not isinstance(value, int) or value <= 0:
@@ -217,6 +219,7 @@ class SearchPolicy:
             "max_learning_notes": self.max_learning_notes,
             "reusable_learning_limit": self.reusable_learning_limit,
             "provider_max_concurrency": self.provider_max_concurrency,
+            "compression_interval": self.compression_interval,
             "islands": [island.to_dict() for island in self.island_policies],
         }
 
@@ -259,6 +262,12 @@ class _PreparedCandidateAdmission:
 class _IslandNodeSelection:
     island_id: str
     node: Node
+
+
+@dataclass(frozen=True, slots=True)
+class _ScheduledAction:
+    action_type: ActionType
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,36 +533,50 @@ class SearchRuntime:
                 current_action = ActionType.GENERATE_SEED.value
                 self._generate_seed_nodes(session, budget, routing_tracker)
                 self._persist_running_snapshot(manifest.run_id, session)
+            last_compression_budget = 0
+            while session.budget_spent < budget:
+                current_action = ActionType.RANK.value
+                session.record_internal_step()
+                session.refresh_frontier(limit=self._policy.frontier_limit)
+                scheduled = self._choose_next_search_action(
+                    session,
+                    budget=budget,
+                    last_compression_budget=last_compression_budget,
+                )
+                if scheduled is None:
+                    break
+                current_action = scheduled.action_type.value
+                if scheduled.action_type is ActionType.GENERATE_SEED:
+                    self._generate_seed_nodes(session, budget, routing_tracker)
+                elif scheduled.action_type is ActionType.STRESS_TEST:
+                    self._stress_test_frontier(session, budget, routing_tracker)
+                elif scheduled.action_type is ActionType.DEEPEN:
+                    self._deepen_frontier(session, budget, routing_tracker)
+                elif scheduled.action_type is ActionType.MUTATE:
+                    self._mutate_survivors(session, budget, routing_tracker)
+                elif scheduled.action_type is ActionType.COMBINE:
+                    self._combine_survivors(session, budget, routing_tracker)
+                elif scheduled.action_type is ActionType.COMPRESS_LEARNING:
+                    self._compress_learning(session, budget, routing_tracker)
+                    last_compression_budget = session.budget_spent
+                else:
+                    raise ArgusValidationError(
+                        f"Unsupported scheduled action: {scheduled.action_type.value}."
+                    )
+                self._persist_running_snapshot(manifest.run_id, session)
 
-            current_action = ActionType.RANK.value
-            session.record_internal_step()
-            session.refresh_frontier(limit=self._policy.frontier_limit)
-
-            current_action = ActionType.STRESS_TEST.value
-            self._stress_test_frontier(session, budget, routing_tracker)
-            self._persist_running_snapshot(manifest.run_id, session)
-
-            current_action = ActionType.RANK.value
-            session.record_internal_step()
-            session.refresh_frontier(limit=self._policy.frontier_limit)
-
-            current_action = ActionType.DEEPEN.value
-            self._deepen_frontier(session, budget, routing_tracker)
-            self._persist_running_snapshot(manifest.run_id, session)
-
-            current_action = ActionType.RANK.value
-            session.record_internal_step()
-            session.refresh_frontier(limit=self._policy.frontier_limit)
-
-            current_action = ActionType.MUTATE.value
-            self._mutate_survivors(session, budget, routing_tracker)
-
-            current_action = ActionType.COMBINE.value
-            self._combine_survivors(session, budget, routing_tracker)
-            self._persist_running_snapshot(manifest.run_id, session)
-
-            current_action = ActionType.COMPRESS_LEARNING.value
-            self._compress_learning(session, budget, routing_tracker)
+            if (
+                session.budget_spent < budget
+                and self._should_run_learning_compression(
+                    session,
+                    budget=budget,
+                    last_compression_budget=last_compression_budget,
+                    force=True,
+                )
+            ):
+                current_action = ActionType.COMPRESS_LEARNING.value
+                self._compress_learning(session, budget, routing_tracker)
+                self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.RANK.value
             session.record_internal_step()
@@ -1024,6 +1047,175 @@ class SearchRuntime:
             )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
+    def _choose_next_search_action(
+        self,
+        session: "_MutableSession",
+        *,
+        budget: int,
+        last_compression_budget: int,
+    ) -> _ScheduledAction | None:
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return None
+
+        if remaining_budget == 1 and self._should_run_learning_compression(
+            session,
+            budget=budget,
+            last_compression_budget=last_compression_budget,
+            force=True,
+        ):
+            return _ScheduledAction(
+                action_type=ActionType.COMPRESS_LEARNING,
+                reason="Use the final budget unit to capture reusable learning before compile.",
+            )
+
+        if self._needs_more_seed_generation(session):
+            return _ScheduledAction(
+                action_type=ActionType.GENERATE_SEED,
+                reason="Frontier diversity collapsed or archive width is too small.",
+            )
+
+        if (
+            not self._has_useful_critique_coverage(session)
+            and self._has_stage_candidates(session, ActionType.STRESS_TEST)
+        ):
+            return _ScheduledAction(
+                action_type=ActionType.STRESS_TEST,
+                reason="Promising nodes need adversarial pressure before more expansion.",
+            )
+
+        if self._has_stage_candidates(session, ActionType.DEEPEN):
+            return _ScheduledAction(
+                action_type=ActionType.DEEPEN,
+                reason="Promising survivors are still shallow or under-specified.",
+            )
+
+        if (
+            self._has_stage_candidates(session, ActionType.MUTATE)
+            and not self._has_executed_action(session, ActionType.MUTATE)
+        ):
+            return _ScheduledAction(
+                action_type=ActionType.MUTATE,
+                reason="Critiqued nodes have repairable weaknesses worth iterating on.",
+            )
+
+        if self._has_combine_candidates(session):
+            return _ScheduledAction(
+                action_type=ActionType.COMBINE,
+                reason="Frontier contains complementary survivors worth hybridizing.",
+            )
+
+        if self._should_run_learning_compression(
+            session,
+            budget=budget,
+            last_compression_budget=last_compression_budget,
+        ):
+            return _ScheduledAction(
+                action_type=ActionType.COMPRESS_LEARNING,
+                reason="Periodic compression can refresh reusable lessons for later steps.",
+            )
+
+        if self._has_stage_candidates(session, ActionType.MUTATE):
+            return _ScheduledAction(
+                action_type=ActionType.MUTATE,
+                reason="Critiqued nodes still have repair passes left after hybrid exploration.",
+            )
+
+        if self._has_stage_candidates(session, ActionType.STRESS_TEST):
+            return _ScheduledAction(
+                action_type=ActionType.STRESS_TEST,
+                reason="Unstressed archive nodes remain worth challenging.",
+            )
+
+        if self._has_stage_candidates(session, ActionType.DEEPEN):
+            return _ScheduledAction(
+                action_type=ActionType.DEEPEN,
+                reason="Archive revisits still have room for deeper specification.",
+            )
+
+        if remaining_budget > 1:
+            return _ScheduledAction(
+                action_type=ActionType.GENERATE_SEED,
+                reason="No strong branch operation remained, so widen the search again.",
+            )
+        return None
+
+    def _needs_more_seed_generation(self, session: "_MutableSession") -> bool:
+        rankable_archive = [
+            session.nodes[node_id]
+            for node_id in session.archive_ids
+            if node_id in session.nodes and _is_rankable(session.nodes[node_id])
+        ]
+        rankable_non_root = [
+            node
+            for node in rankable_archive
+            if node.node_id != session.root_id
+        ]
+        frontier = [
+            session.nodes[node_id]
+            for node_id in session.frontier_ids
+            if node_id in session.nodes and _is_rankable(session.nodes[node_id])
+        ]
+        minimum_candidate_width = max(2, len(session.island_ids))
+        if len(rankable_non_root) < minimum_candidate_width:
+            return True
+        if not frontier:
+            return True
+        average_novelty = sum(node.novelty_score for node in frontier) / len(frontier)
+        return average_novelty < _LOW_FRONTIER_NOVELTY_THRESHOLD
+
+    def _has_useful_critique_coverage(self, session: "_MutableSession") -> bool:
+        return any(
+            node.critique is not None and _is_useful_critique(node.critique)
+            for node in session.nodes.values()
+            if node.node_id != session.root_id
+        )
+
+    def _has_stage_candidates(
+        self,
+        session: "_MutableSession",
+        stage_name: ActionType,
+    ) -> bool:
+        return bool(
+            self._select_stage_nodes(
+                session,
+                limit=1,
+                stage_name=stage_name,
+            )
+        )
+
+    def _has_combine_candidates(self, session: "_MutableSession") -> bool:
+        return bool(self._select_combine_pairs(session, limit=1))
+
+    def _has_executed_action(
+        self,
+        session: "_MutableSession",
+        action_type: ActionType,
+    ) -> bool:
+        return any(node.action_type is action_type for node in session.nodes.values())
+
+    def _should_run_learning_compression(
+        self,
+        session: "_MutableSession",
+        *,
+        budget: int,
+        last_compression_budget: int,
+        force: bool = False,
+    ) -> bool:
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return False
+        if not session.archive_ids and not session.pruned_ids:
+            return False
+        if force:
+            return session.budget_spent > last_compression_budget or not session.learning_notes
+        if remaining_budget <= 1:
+            return False
+        return (
+            session.budget_spent > last_compression_budget
+            and session.budget_spent - last_compression_budget >= self._policy.compression_interval
+        )
+
     def _compress_learning(
         self,
         session: "_MutableSession",
@@ -1405,6 +1597,62 @@ class SearchRuntime:
         session.archive(node.node_id, island_id=island_id)
         return node
 
+    def _is_stage_eligible(
+        self,
+        session: "_MutableSession",
+        *,
+        node: Node,
+        island_id: str,
+        stage_name: ActionType,
+    ) -> bool:
+        if node.node_id == session.root_id or node.island_id != island_id or not _is_rankable(node):
+            return False
+        if stage_name is ActionType.STRESS_TEST:
+            return node.critique is None
+        if stage_name is ActionType.DEEPEN:
+            if self._node_has_child_action(session, node.node_id, ActionType.DEEPEN):
+                return False
+            if node.score is None:
+                return False
+            if node.critique is None and node.depth > 1:
+                return False
+            return (
+                node.critique is not None
+                or node.score.total_score >= _STRONG_SCORE_THRESHOLD
+                or node.score.specificity < _DEEPEN_SPECIFICITY_FLOOR
+                or node.candidate.implementation_shape is None
+            )
+        if stage_name is ActionType.MUTATE:
+            return (
+                node.critique is not None
+                and not self._node_has_child_action(session, node.node_id, ActionType.MUTATE)
+            )
+        raise ArgusValidationError(f"Unsupported stage selector: {stage_name.value}.")
+
+    def _node_has_child_action(
+        self,
+        session: "_MutableSession",
+        parent_node_id: str,
+        action_type: ActionType,
+    ) -> bool:
+        return any(
+            node.action_type is action_type and parent_node_id in node.parent_ids
+            for node in session.nodes.values()
+        )
+
+    def _pair_has_action_child(
+        self,
+        session: "_MutableSession",
+        left_node_id: str,
+        right_node_id: str,
+        action_type: ActionType,
+    ) -> bool:
+        parent_ids = {left_node_id, right_node_id}
+        return any(
+            node.action_type is action_type and set(node.parent_ids) == parent_ids
+            for node in session.nodes.values()
+        )
+
     def _select_stage_nodes(
         self,
         session: "_MutableSession",
@@ -1418,7 +1666,16 @@ class SearchRuntime:
         phase_one: list[_IslandNodeSelection] = []
         leftovers: list[_IslandNodeSelection] = []
         for island_id in session.island_ids:
-            ranked = session.rank_island_nodes(island_id)
+            ranked = [
+                node
+                for node in session.rank_island_nodes(island_id)
+                if self._is_stage_eligible(
+                    session,
+                    node=node,
+                    island_id=island_id,
+                    stage_name=stage_name,
+                )
+            ]
             if not ranked:
                 continue
             phase_one.append(_IslandNodeSelection(island_id=island_id, node=ranked[0]))
@@ -1477,10 +1734,19 @@ class SearchRuntime:
                 node
                 for node in session.rank_island_nodes(island_id)
                 if node.node_id != session.root_id
+                and _is_rankable(node)
             ]
             if len(ranked) < 2:
                 continue
-            eligible_pairs.append((island_id, ranked[0], ranked[1]))
+            primary, secondary = ranked[0], ranked[1]
+            if self._pair_has_action_child(
+                session,
+                primary.node_id,
+                secondary.node_id,
+                ActionType.COMBINE,
+            ):
+                continue
+            eligible_pairs.append((island_id, primary, secondary))
         return sorted(
             eligible_pairs,
             key=lambda item: (
@@ -2294,6 +2560,8 @@ def _evaluation_metadata(assessment: object) -> dict[str, JSONValue]:
 
 
 _STRONG_SCORE_THRESHOLD = 6.0
+_LOW_FRONTIER_NOVELTY_THRESHOLD = 0.45
+_DEEPEN_SPECIFICITY_FLOOR = 0.86
 
 
 def _is_useful_critique(critique: object) -> bool:

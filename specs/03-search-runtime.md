@@ -114,16 +114,21 @@ These actions are the control vocabulary for the search runtime.
 
 ### Version 1 Search Policy
 
-The first working policy should be intentionally simple:
+The first working policy should still be intentionally simple, but it should already be a frontier loop rather than a one-pass phase script:
 
 1. frame the problem
-2. generate 8 to 12 seed candidates
-3. prune hard failures
-4. apply novelty filtering
-5. stress-test the top 5
-6. deepen the top 3
-7. optionally mutate or combine top survivors
-8. compile the final answer package
+2. generate an initial seed population
+3. prune hard failures and reject near-duplicates on admission
+4. refresh a ranked frontier from the archive
+5. choose the next action based on frontier state:
+   widen with more seeds when diversity collapses,
+   stress-test promising but unchallenged nodes,
+   deepen under-specified survivors,
+   mutate critiqued but repairable branches,
+   combine compatible survivors,
+   or compress learning periodically
+6. repeat until the run budget or stop condition is reached
+7. compile the final answer package from the resulting archive
 
 ### Node Admission Rules
 
@@ -133,7 +138,7 @@ When a provider returns a candidate:
 2. convert the raw payload into typed models
 3. calculate novelty against archived nodes
 4. reject near-duplicates for generative actions
-5. compute the deterministic score vector
+5. compute the evaluator score vector
 6. update router stats
 7. persist the node and its attachments
 
