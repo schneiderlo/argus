@@ -21,6 +21,7 @@ from argus.models import (
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
     ScoreVector,
+    SearchIsland,
     SearchState,
 )
 from argus.storage import FileSystemStateStore, RunStatus
@@ -316,6 +317,7 @@ def _sample_search_state(
         action_type=ActionType.FRAME_PROBLEM,
         provider_name="codex",
         candidate=_sample_candidate("Frame the search around workflow lock-in."),
+        island_id="balanced",
         score=_sample_score() if include_attachments else None,
         critique=_sample_critique() if include_attachments else None,
         novelty_score=0.63,
@@ -330,6 +332,7 @@ def _sample_search_state(
         action_type=ActionType.DEEPEN,
         provider_name="codex",
         candidate=_sample_candidate("Bias the product toward team habits, not dashboards."),
+        island_id="balanced",
         novelty_score=0.72,
         lifecycle_status=NodeLifecycleStatus.ARCHIVED,
         metadata={"step": 2},
@@ -346,6 +349,16 @@ def _sample_search_state(
         frontier_ids=["node-0002"],
         pruned_ids=[],
         winner_ids=["node-0002"],
+        islands={
+            "balanced": SearchIsland(
+                island_id="balanced",
+                label="Balanced",
+                description="Balanced exploration.",
+                archive_ids=["node-0001", "node-0002"],
+                frontier_ids=["node-0002"],
+                pruned_ids=[],
+            )
+        },
         learning_notes=[
             LearningNote(
                 note_type=LearningNoteType.WINNING_PATTERN,

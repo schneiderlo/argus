@@ -21,12 +21,24 @@ class SearchFixtureProvider:
         fail_on_action: str | None = None,
         sleep_by_action: dict[str, float] | None = None,
         seed_candidates: list[Candidate] | None = None,
+        seed_candidates_by_island: dict[str, list[Candidate]] | None = None,
     ) -> None:
         self.root_dir = root_dir
         self.fail_on_action = fail_on_action
         self.sleep_by_action = dict(sleep_by_action or {})
         if seed_candidates is not None and not seed_candidates:
             raise ArgusValidationError("seed_candidates must not be empty when provided.")
+        if seed_candidates_by_island is not None:
+            normalized_seed_candidates_by_island: dict[str, list[Candidate]] = {}
+            for island_id, candidates in seed_candidates_by_island.items():
+                if not candidates:
+                    raise ArgusValidationError(
+                        "seed_candidates_by_island entries must not be empty."
+                    )
+                normalized_seed_candidates_by_island[island_id] = list(candidates)
+            self.seed_candidates_by_island = normalized_seed_candidates_by_island
+        else:
+            self.seed_candidates_by_island = None
         self.seed_candidates = None if seed_candidates is None else list(seed_candidates)
         self.calls: list[dict[str, object]] = []
         self._lock = Lock()
@@ -139,16 +151,28 @@ class SearchFixtureProvider:
         input_payload: dict[str, object],
     ) -> CandidateBatch:
         target_count = int(input_payload["target_count"])
-        templates = (
-            list(self.seed_candidates)
-            if self.seed_candidates is not None
-            else [
+        island_payload = input_payload.get("island")
+        island_id = None
+        if isinstance(island_payload, dict):
+            raw_island_id = island_payload.get("island_id")
+            if isinstance(raw_island_id, str):
+                island_id = raw_island_id
+        templates: list[Candidate]
+        if (
+            island_id is not None
+            and self.seed_candidates_by_island is not None
+            and island_id in self.seed_candidates_by_island
+        ):
+            templates = list(self.seed_candidates_by_island[island_id])
+        elif self.seed_candidates is not None:
+            templates = list(self.seed_candidates)
+        else:
+            templates = [
                 _workflow_archive_candidate(),
                 _operational_assistant_candidate(),
                 _benchmark_market_candidate(),
                 _chat_wrapper_candidate(),
             ]
-        )
         candidates = [templates[index % len(templates)] for index in range(target_count)]
         return CandidateBatch(
             candidates=candidates,

@@ -18,6 +18,7 @@ from argus.models import (
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
     ScoreVector,
+    SearchIsland,
     SearchState,
 )
 
@@ -80,6 +81,7 @@ class ModelTests(unittest.TestCase):
             action_type=ActionType.FRAME_PROBLEM,
             provider_name="codex",
             candidate=_sample_candidate(),
+            island_id="balanced",
             score=_sample_score(),
             critique=_sample_critique(),
             novelty_score=0.72,
@@ -103,6 +105,7 @@ class ModelTests(unittest.TestCase):
             action_type=ActionType.FRAME_PROBLEM,
             provider_name="codex",
             candidate=_sample_candidate(),
+            island_id="balanced",
             score=_sample_score(),
             novelty_score=0.61,
             lifecycle_status=NodeLifecycleStatus.ARCHIVED,
@@ -122,6 +125,16 @@ class ModelTests(unittest.TestCase):
             frontier_ids=["node-0001"],
             pruned_ids=[],
             winner_ids=[],
+            islands={
+                "balanced": SearchIsland(
+                    island_id="balanced",
+                    label="Balanced",
+                    description="Balanced exploration.",
+                    archive_ids=["node-0001"],
+                    frontier_ids=["node-0001"],
+                    pruned_ids=[],
+                )
+            },
             learning_notes=[
                 LearningNote(
                     note_type=LearningNoteType.CONSTRAINT,
@@ -138,6 +151,8 @@ class ModelTests(unittest.TestCase):
 
         self.assertEqual(state, restored)
         self.assertEqual(list(payload["nodes"]), ["node-0001"])
+        self.assertEqual(payload["nodes"]["node-0001"]["island_id"], "balanced")
+        self.assertEqual(list(payload["islands"]), ["balanced"])
 
     def test_search_state_rejects_unknown_learning_note_sources(self) -> None:
         node = Node(
@@ -167,6 +182,16 @@ class ModelTests(unittest.TestCase):
                 frontier_ids=[],
                 pruned_ids=[],
                 winner_ids=[],
+                islands={
+                    "balanced": SearchIsland(
+                        island_id="balanced",
+                        label="Balanced",
+                        description="Balanced exploration.",
+                        archive_ids=["node-0001"],
+                        frontier_ids=[],
+                        pruned_ids=[],
+                    )
+                },
                 learning_notes=[
                     LearningNote(
                         note_type=LearningNoteType.SUMMARY,

@@ -16,6 +16,7 @@ from argus.models import (
     Node,
     ProblemSpec,
     ProviderRoutingStats,
+    SearchIsland,
     SearchState,
 )
 
@@ -203,6 +204,7 @@ class StateIndex:
     frontier_ids: list[str] = field(default_factory=list)
     pruned_ids: list[str] = field(default_factory=list)
     winner_ids: list[str] = field(default_factory=list)
+    islands: dict[str, SearchIsland] = field(default_factory=dict)
     budget_spent: int = 0
     step_count: int = 0
 
@@ -229,6 +231,7 @@ class StateIndex:
             "winner_ids",
             _normalize_unique_string_list(self.winner_ids, "winner_ids"),
         )
+        object.__setattr__(self, "islands", _normalize_search_island_map(self.islands))
         object.__setattr__(
             self,
             "budget_spent",
@@ -267,6 +270,10 @@ class StateIndex:
             "frontier_ids": list(self.frontier_ids),
             "pruned_ids": list(self.pruned_ids),
             "winner_ids": list(self.winner_ids),
+            "islands": {
+                island_id: self.islands[island_id].to_dict()
+                for island_id in sorted(self.islands)
+            },
             "budget_spent": self.budget_spent,
             "step_count": self.step_count,
         }
@@ -286,6 +293,7 @@ class StateIndex:
                 "budget_spent",
                 "step_count",
             },
+            optional={"islands"},
         )
         return cls(
             root_id=data["root_id"],
@@ -294,6 +302,12 @@ class StateIndex:
             frontier_ids=data["frontier_ids"],
             pruned_ids=data["pruned_ids"],
             winner_ids=data["winner_ids"],
+            islands={
+                island_id: SearchIsland.from_dict(island_payload)
+                for island_id, island_payload in sorted(
+                    _normalize_mapping(data.get("islands", {}), "islands").items()
+                )
+            },
             budget_spent=data["budget_spent"],
             step_count=data["step_count"],
         )
@@ -307,6 +321,7 @@ class StateIndex:
             frontier_ids=state.frontier_ids,
             pruned_ids=state.pruned_ids,
             winner_ids=state.winner_ids,
+            islands=state.islands,
             budget_spent=state.budget_spent,
             step_count=state.step_count,
         )
@@ -753,6 +768,7 @@ class FileSystemStateStore:
             frontier_ids=index.frontier_ids,
             pruned_ids=index.pruned_ids,
             winner_ids=index.winner_ids,
+            islands=index.islands,
             learning_notes=learning_notes,
             budget_spent=index.budget_spent,
             step_count=index.step_count,
@@ -926,6 +942,19 @@ def _validate_payload_keys(
     return payload
 
 
+def _normalize_mapping(value: object, field_name: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ArgusValidationError(
+            f"{field_name} must be a mapping, got {type(value).__name__}."
+        )
+    for key in value:
+        if not isinstance(key, str):
+            raise ArgusValidationError(
+                f"{field_name} must use string keys, got {type(key).__name__}."
+            )
+    return value
+
+
 def _normalize_non_empty_string(value: object, field_name: str) -> str:
     if not isinstance(value, str):
         raise ArgusValidationError(
@@ -1039,6 +1068,23 @@ def _normalize_unique_string_list(values: object, field_name: str) -> list[str]:
         raise ArgusValidationError(
             f"{field_name} contains duplicate values: {', '.join(duplicates)}."
         )
+    return normalized
+
+
+def _normalize_search_island_map(value: object) -> dict[str, SearchIsland]:
+    mapping = _normalize_mapping(value, "islands")
+    normalized: dict[str, SearchIsland] = {}
+    for island_id, island in sorted(mapping.items()):
+        if not isinstance(island, SearchIsland):
+            raise ArgusValidationError(
+                f"islands[{island_id!r}] must be a SearchIsland instance, "
+                f"got {type(island).__name__}."
+            )
+        if island.island_id != island_id:
+            raise ArgusValidationError(
+                f"islands key {island_id!r} does not match embedded island_id {island.island_id!r}."
+            )
+        normalized[island_id] = island
     return normalized
 
 

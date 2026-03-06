@@ -41,7 +41,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 ## Later
 
 - [x] Add Gemini CLI and OpenCode provider adapters behind the same interface, while keeping Codex as the default and best-supported provider.
-- [ ] Add multi-island search so different optimization priors can evolve semi-independently.
+- [x] Add multi-island search so different optimization priors can evolve semi-independently.
 - [ ] Add outcome-feedback ingestion so shipped experiment results can influence future evaluation.
 - [x] Add learning compression persistence so reusable patterns survive across runs.
 
@@ -65,3 +65,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, each run snapshots its imported subset at `artifacts/runs/<run_id>/reusable-learning-context.json`, and the runtime feeds those priors into framing, generation, evaluation, stress testing, deepening, mutation, combination, ranking, and learning compression. The benchmark harness keeps shared learning memory disabled so stored case outputs remain comparable across sessions.
 - The provider layer now supports `codex`, `gemini`, and `opencode` behind the same typed contract. Codex remains the default and the most strongly supported path, while Gemini and OpenCode use their headless JSON surfaces plus the same audited prompt, artifact, and schema-validation pipeline.
 - Concurrent CLI provider invocations now allocate artifact directories atomically in `src/argus/providers/cli_base.py`, so parallel `run_action` calls keep isolated prompt/schema/log artifacts instead of racing on shared invocation ids.
+- `SearchPolicy.island_policies` now enables deterministic multi-island search. Each island persists its own archive/frontier/pruned bookkeeping through `SearchState.islands`, provider actions receive explicit island context, and the final recommendation summary labels which island produced each surviving bet while global novelty admission still prevents cross-island duplicates from racing into state.

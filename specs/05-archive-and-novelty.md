@@ -58,6 +58,14 @@ An operator must be able to inspect a run and answer:
 
 That means the archive format must remain human-inspectable.
 
+## Multi-Island Archive Behavior
+
+When multi-island search is enabled, the archive must still behave like one deterministic run-level source of truth. That means:
+
+- admitted nodes keep one global node id and one persisted node record even when islands use different search priors
+- the run state also persists explicit per-island archive/frontier/pruned views so the operator can audit how each island evolved
+- novelty checks still guard the run-level archive, not only one island, so cross-island duplicates do not silently accumulate
+
 ## Future Direction
 
-Later versions should add search islands with different optimization priors and allow selective migration of strong insights between islands.
+Later versions should allow selective migration of strong insights between islands without losing the audit trail for which island first produced or adopted a node.

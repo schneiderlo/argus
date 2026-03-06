@@ -344,6 +344,7 @@ class Node:
     action_type: ActionType
     provider_name: str
     candidate: Candidate
+    island_id: str | None = None
     score: ScoreVector | None = None
     critique: Critique | None = None
     novelty_score: float = 0.0
@@ -368,6 +369,11 @@ class Node:
             self,
             "provider_name",
             _normalize_non_empty_string(self.provider_name, "provider_name"),
+        )
+        object.__setattr__(
+            self,
+            "island_id",
+            _normalize_optional_string(self.island_id, "island_id"),
         )
         if not isinstance(self.candidate, Candidate):
             raise ArgusValidationError(
@@ -408,6 +414,8 @@ class Node:
             "metadata": _copy_json_object(self.metadata),
             "created_at": _dump_datetime(self.created_at),
         }
+        if self.island_id is not None:
+            payload["island_id"] = self.island_id
         if self.score is not None:
             payload["score"] = self.score.to_dict()
         if self.critique is not None:
@@ -431,7 +439,7 @@ class Node:
                 "metadata",
                 "created_at",
             },
-            optional={"score", "critique"},
+            optional={"island_id", "score", "critique"},
         )
         score_payload = data.get("score")
         critique_payload = data.get("critique")
@@ -442,6 +450,7 @@ class Node:
             action_type=data["action_type"],
             provider_name=data["provider_name"],
             candidate=Candidate.from_dict(data["candidate"]),
+            island_id=data.get("island_id"),
             score=None if score_payload is None else ScoreVector.from_dict(score_payload),
             critique=None if critique_payload is None else Critique.from_dict(critique_payload),
             novelty_score=data["novelty_score"],
@@ -816,6 +825,78 @@ class LearningMemory:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchIsland:
+    island_id: str
+    label: str
+    description: str
+    archive_ids: list[str] = field(default_factory=list)
+    frontier_ids: list[str] = field(default_factory=list)
+    pruned_ids: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "island_id", _normalize_non_empty_string(self.island_id, "island_id"))
+        object.__setattr__(self, "label", _normalize_non_empty_string(self.label, "label"))
+        object.__setattr__(self, "description", _normalize_non_empty_string(self.description, "description"))
+        object.__setattr__(
+            self,
+            "archive_ids",
+            _normalize_unique_string_list(self.archive_ids, "archive_ids"),
+        )
+        object.__setattr__(
+            self,
+            "frontier_ids",
+            _normalize_unique_string_list(self.frontier_ids, "frontier_ids"),
+        )
+        object.__setattr__(
+            self,
+            "pruned_ids",
+            _normalize_unique_string_list(self.pruned_ids, "pruned_ids"),
+        )
+
+        archive_ids = set(self.archive_ids)
+        unknown_frontier_ids = [node_id for node_id in self.frontier_ids if node_id not in archive_ids]
+        if unknown_frontier_ids:
+            joined = ", ".join(sorted(unknown_frontier_ids))
+            raise ArgusValidationError(
+                "frontier_ids must be a subset of archive_ids within each island: "
+                f"{joined}."
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "island_id": self.island_id,
+            "label": self.label,
+            "description": self.description,
+            "archive_ids": list(self.archive_ids),
+            "frontier_ids": list(self.frontier_ids),
+            "pruned_ids": list(self.pruned_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "SearchIsland":
+        data = _validate_payload_keys(
+            payload,
+            field_name="SearchIsland",
+            required={
+                "island_id",
+                "label",
+                "description",
+                "archive_ids",
+                "frontier_ids",
+                "pruned_ids",
+            },
+        )
+        return cls(
+            island_id=data["island_id"],
+            label=data["label"],
+            description=data["description"],
+            archive_ids=data["archive_ids"],
+            frontier_ids=data["frontier_ids"],
+            pruned_ids=data["pruned_ids"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SearchState:
     problem_spec: ProblemSpec
     root_id: str
@@ -824,6 +905,7 @@ class SearchState:
     frontier_ids: list[str] = field(default_factory=list)
     pruned_ids: list[str] = field(default_factory=list)
     winner_ids: list[str] = field(default_factory=list)
+    islands: dict[str, SearchIsland] = field(default_factory=dict)
     learning_notes: list[LearningNote] = field(default_factory=list)
     budget_spent: int = 0
     step_count: int = 0
@@ -840,6 +922,7 @@ class SearchState:
         object.__setattr__(self, "frontier_ids", _normalize_unique_string_list(self.frontier_ids, "frontier_ids"))
         object.__setattr__(self, "pruned_ids", _normalize_unique_string_list(self.pruned_ids, "pruned_ids"))
         object.__setattr__(self, "winner_ids", _normalize_unique_string_list(self.winner_ids, "winner_ids"))
+        object.__setattr__(self, "islands", _normalize_search_island_map(self.islands))
         object.__setattr__(
             self,
             "learning_notes",
@@ -871,6 +954,31 @@ class SearchState:
                 joined = ", ".join(sorted(unknown_ids))
                 raise ArgusValidationError(f"{field_name} contains unknown node ids: {joined}.")
 
+        for island in self.islands.values():
+            if self.root_id not in island.archive_ids:
+                raise ArgusValidationError(
+                    f"island {island.island_id!r} must include the root node in archive_ids."
+                )
+            for field_name, ids, aggregate_ids in (
+                ("archive_ids", island.archive_ids, self.archive_ids),
+                ("frontier_ids", island.frontier_ids, self.frontier_ids),
+                ("pruned_ids", island.pruned_ids, self.pruned_ids),
+            ):
+                missing = [node_id for node_id in ids if node_id not in aggregate_ids]
+                if missing:
+                    joined = ", ".join(sorted(missing))
+                    raise ArgusValidationError(
+                        f"island {island.island_id!r} {field_name} must be reflected in the "
+                        f"aggregate state lists: {joined}."
+                    )
+            for node_id in island.archive_ids:
+                node = self.nodes[node_id]
+                if node.node_id != self.root_id and node.island_id != island.island_id:
+                    raise ArgusValidationError(
+                        f"island {island.island_id!r} archive_ids contains node {node_id!r} "
+                        f"owned by island {node.island_id!r}."
+                    )
+
         for note in self.learning_notes:
             unknown_sources = [node_id for node_id in note.source_node_ids if node_id not in node_ids]
             if unknown_sources:
@@ -889,6 +997,10 @@ class SearchState:
             "frontier_ids": list(self.frontier_ids),
             "pruned_ids": list(self.pruned_ids),
             "winner_ids": list(self.winner_ids),
+            "islands": {
+                island_id: self.islands[island_id].to_dict()
+                for island_id in sorted(self.islands)
+            },
             "learning_notes": [note.to_dict() for note in self.learning_notes],
             "budget_spent": self.budget_spent,
             "step_count": self.step_count,
@@ -911,6 +1023,7 @@ class SearchState:
                 "budget_spent",
                 "step_count",
             },
+            optional={"islands"},
         )
 
         nodes_payload = _normalize_mapping(data["nodes"], "nodes")
@@ -931,6 +1044,14 @@ class SearchState:
             )
         learning_notes = [LearningNote.from_dict(item) for item in learning_payload]
 
+        islands_payload = data.get("islands", {})
+        islands = {
+            island_id: SearchIsland.from_dict(island_payload)
+            for island_id, island_payload in sorted(
+                _normalize_mapping(islands_payload, "islands").items()
+            )
+        }
+
         return cls(
             problem_spec=ProblemSpec.from_dict(data["problem_spec"]),
             root_id=data["root_id"],
@@ -939,6 +1060,7 @@ class SearchState:
             frontier_ids=data["frontier_ids"],
             pruned_ids=data["pruned_ids"],
             winner_ids=data["winner_ids"],
+            islands=islands,
             learning_notes=learning_notes,
             budget_spent=data["budget_spent"],
             step_count=data["step_count"],
@@ -1256,6 +1378,23 @@ def _normalize_node_map(value: object) -> dict[str, Node]:
                 f"nodes key {node_id!r} does not match embedded node_id {node.node_id!r}."
             )
         normalized[node_id] = node
+    return normalized
+
+
+def _normalize_search_island_map(value: object) -> dict[str, SearchIsland]:
+    mapping = _normalize_mapping(value, "islands")
+    normalized: dict[str, SearchIsland] = {}
+    for island_id, island in sorted(mapping.items()):
+        if not isinstance(island, SearchIsland):
+            raise ArgusValidationError(
+                f"islands[{island_id!r}] must be a SearchIsland instance, "
+                f"got {type(island).__name__}."
+            )
+        if island.island_id != island_id:
+            raise ArgusValidationError(
+                f"islands key {island_id!r} does not match embedded island_id {island.island_id!r}."
+            )
+        normalized[island_id] = island
     return normalized
 
 

@@ -6,7 +6,13 @@ import unittest
 
 from argus.errors import ArgusValidationError
 from argus.models import ActionType, LearningNote, LearningNoteType, NodeLifecycleStatus, ProblemSpec
-from argus.search import SearchPolicy, SearchRuntime
+from argus.search import (
+    SearchPolicy,
+    SearchRuntime,
+    balanced_island_policy,
+    conservative_island_policy,
+    upside_island_policy,
+)
 from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import (
     SearchFixtureProvider,
@@ -302,6 +308,83 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertIn(
             "near-duplicate",
             rejected_duplicates[0].metadata["novelty"]["summary"].lower(),
+        )
+
+    def test_runtime_supports_multi_island_search_with_independent_frontiers(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                seed_candidates_by_island={
+                    "balanced": [_workflow_archive_candidate()],
+                    "conservative": [_operational_assistant_candidate()],
+                    "upside": [_benchmark_market_candidate()],
+                },
+            )
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=3,
+                    stress_test_limit=3,
+                    deepen_limit=3,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=6,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                    island_policies=(
+                        balanced_island_policy(),
+                        conservative_island_policy(),
+                        upside_island_policy(),
+                    ),
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=12,
+                run_id="run-search-multi-island",
+            )
+
+        self.assertEqual(
+            list(result.state.islands),
+            ["balanced", "conservative", "upside"],
+        )
+        for island_id, island in result.state.islands.items():
+            self.assertIn(result.state.root_id, island.archive_ids)
+            self.assertGreaterEqual(len(island.archive_ids), 2)
+            self.assertGreaterEqual(len(island.frontier_ids), 1)
+        for node in result.state.nodes.values():
+            if node.node_id == result.state.root_id:
+                self.assertIsNone(node.island_id)
+                continue
+            self.assertIn(node.island_id, result.state.islands)
+            for parent_id in node.parent_ids:
+                parent = result.state.nodes[parent_id]
+                if parent_id == result.state.root_id:
+                    continue
+                self.assertEqual(parent.island_id, node.island_id)
+
+        best = result.state.nodes[result.final_recommendation.best_bet_node_id]
+        conservative = result.state.nodes[result.final_recommendation.conservative_node_id]
+        high_upside = result.state.nodes[result.final_recommendation.high_upside_node_id]
+        self.assertEqual(best.island_id, "balanced")
+        self.assertEqual(conservative.island_id, "conservative")
+        self.assertEqual(high_upside.island_id, "upside")
+        self.assertIn("## Search Islands", result.summary_markdown)
+        self.assertIn("Balanced (`balanced`)", result.summary_markdown)
+        self.assertIn("Conservative (`conservative`)", result.summary_markdown)
+        self.assertIn("High Upside (`upside`)", result.summary_markdown)
+
+        generate_calls = [
+            call for call in provider.calls if call["action_name"] == "generate_seed"
+        ]
+        self.assertEqual(len(generate_calls), 3)
+        self.assertEqual(
+            {call["input_payload"]["island"]["island_id"] for call in generate_calls},
+            {"balanced", "conservative", "upside"},
         )
 
 

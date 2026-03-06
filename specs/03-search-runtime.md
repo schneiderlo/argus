@@ -90,6 +90,7 @@ Must contain:
 - frontier ids
 - pruned ids
 - winner ids
+- optional per-island frontier/archive/pruned state when multi-island search is enabled
 - learning notes
 - budget spent
 - step count
@@ -168,6 +169,18 @@ The system must not only expand the single highest-score node. It must preserve 
 - novelty
 - depth exploration
 - uncertainty or low-confidence opportunities
+
+## Multi-Island Search
+
+Later search policies may run multiple search islands with different optimization priors. When enabled, the runtime must:
+
+- keep a single deterministic global node id space and persisted node archive
+- maintain explicit per-island archive, frontier, and pruned bookkeeping for audit
+- let each island evolve mostly from its own admitted survivors rather than collapsing into one shared frontier
+- keep cross-island novelty admission deterministic so two islands cannot race the same near-duplicate into state
+- allow the final recommendation to draw winners from different islands while still compiling from persisted state rather than a final ad hoc provider answer
+
+The first multi-island version does not need free-form island creation. A fixed small set of typed optimization priors is acceptable as long as the state and selection logic remain explicit and testable.
 
 ## Final Answer Compilation
 

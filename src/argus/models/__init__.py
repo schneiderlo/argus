@@ -13,6 +13,7 @@ from argus.models.core import (
     ProblemSpec,
     ReusableLearningNote,
     ScoreVector,
+    SearchIsland,
     SearchState,
 )
 from argus.models.routing import ProviderRoutingStats, ProviderRoutingStatsEntry
@@ -34,5 +35,6 @@ __all__ = [
     "ProviderRoutingStatsEntry",
     "ReusableLearningNote",
     "ScoreVector",
+    "SearchIsland",
     "SearchState",
 ]

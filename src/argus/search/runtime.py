@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -31,6 +31,7 @@ from argus.models import (
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
     ReusableLearningNote,
+    SearchIsland,
     SearchState,
 )
 from argus.providers import Provider, StructuredOutputSchema
@@ -46,6 +47,116 @@ from argus.storage import FileSystemStateStore, RunManifest, RunStatus
 
 
 @dataclass(frozen=True, slots=True)
+class SearchIslandPolicy:
+    island_id: str
+    label: str
+    description: str
+    selection_mode: str
+    generation_focus: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "island_id", _normalize_non_empty_string(self.island_id, "island_id"))
+        object.__setattr__(self, "label", _normalize_non_empty_string(self.label, "label"))
+        object.__setattr__(self, "description", _normalize_non_empty_string(self.description, "description"))
+        object.__setattr__(
+            self,
+            "selection_mode",
+            _normalize_non_empty_string(self.selection_mode, "selection_mode"),
+        )
+        object.__setattr__(
+            self,
+            "generation_focus",
+            _normalize_non_empty_string(self.generation_focus, "generation_focus"),
+        )
+        if self.selection_mode not in {"balanced", "conservative", "upside"}:
+            raise ArgusValidationError(
+                "selection_mode must be one of balanced, conservative, or upside."
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "island_id": self.island_id,
+            "label": self.label,
+            "description": self.description,
+            "selection_mode": self.selection_mode,
+            "generation_focus": self.generation_focus,
+        }
+
+    def to_search_island(
+        self,
+        *,
+        archive_ids: Sequence[str],
+        frontier_ids: Sequence[str],
+        pruned_ids: Sequence[str],
+    ) -> SearchIsland:
+        return SearchIsland(
+            island_id=self.island_id,
+            label=self.label,
+            description=self.description,
+            archive_ids=list(archive_ids),
+            frontier_ids=list(frontier_ids),
+            pruned_ids=list(pruned_ids),
+        )
+
+    def to_prompt_dict(self) -> dict[str, JSONValue]:
+        return {
+            "island_id": self.island_id,
+            "label": self.label,
+            "description": self.description,
+            "selection_mode": self.selection_mode,
+            "generation_focus": self.generation_focus,
+        }
+
+
+def balanced_island_policy() -> SearchIslandPolicy:
+    return SearchIslandPolicy(
+        island_id="balanced",
+        label="Balanced",
+        description=(
+            "Explore candidates that balance usefulness, specificity, plausibility, "
+            "tractability, and upside without overfitting to any single dimension."
+        ),
+        selection_mode="balanced",
+        generation_focus=(
+            "Favor well-rounded mechanisms that could win on substance, not just on safety "
+            "or upside alone."
+        ),
+    )
+
+
+def conservative_island_policy() -> SearchIslandPolicy:
+    return SearchIslandPolicy(
+        island_id="conservative",
+        label="Conservative",
+        description=(
+            "Explore safer, implementation-ready directions that still meaningfully solve "
+            "the problem under the stated constraints."
+        ),
+        selection_mode="conservative",
+        generation_focus=(
+            "Favor operational clarity, tractability, robust rollout paths, and low-regret "
+            "adoption wedges."
+        ),
+    )
+
+
+def upside_island_policy() -> SearchIslandPolicy:
+    return SearchIslandPolicy(
+        island_id="upside",
+        label="High Upside",
+        description=(
+            "Explore differentiated bets with larger ceilings while still demanding a "
+            "defensible mechanism and explicit tradeoffs."
+        ),
+        selection_mode="upside",
+        generation_focus=(
+            "Favor high-leverage or network-style opportunities, but keep the mechanism "
+            "concrete enough to evaluate and stress-test."
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class SearchPolicy:
     seed_target: int = 8
     stress_test_limit: int = 5
@@ -57,6 +168,9 @@ class SearchPolicy:
     max_learning_notes: int = 4
     reusable_learning_limit: int = 4
     provider_max_concurrency: int = 4
+    island_policies: tuple[SearchIslandPolicy, ...] = field(
+        default_factory=lambda: (balanced_island_policy(),)
+    )
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -74,8 +188,21 @@ class SearchPolicy:
             value = getattr(self, field_name)
             if not isinstance(value, int) or value <= 0:
                 raise ArgusValidationError(f"{field_name} must be a positive integer.")
+        if not isinstance(self.island_policies, tuple) or not self.island_policies:
+            raise ArgusValidationError("island_policies must be a non-empty tuple.")
+        seen_island_ids: set[str] = set()
+        for index, island in enumerate(self.island_policies):
+            if not isinstance(island, SearchIslandPolicy):
+                raise ArgusValidationError(
+                    f"island_policies[{index}] must be a SearchIslandPolicy instance."
+                )
+            if island.island_id in seen_island_ids:
+                raise ArgusValidationError(
+                    f"island_policies contains duplicate island_id values: {island.island_id}."
+                )
+            seen_island_ids.add(island.island_id)
 
-    def to_dict(self) -> dict[str, int]:
+    def to_dict(self) -> dict[str, JSONValue]:
         return {
             "seed_target": self.seed_target,
             "stress_test_limit": self.stress_test_limit,
@@ -87,6 +214,7 @@ class SearchPolicy:
             "max_learning_notes": self.max_learning_notes,
             "reusable_learning_limit": self.reusable_learning_limit,
             "provider_max_concurrency": self.provider_max_concurrency,
+            "islands": [island.to_dict() for island in self.island_policies],
         }
 
 
@@ -119,6 +247,12 @@ class _CandidateAdmissionRequest:
 class _PreparedCandidateAdmission:
     novelty: NoveltyAssessment
     assessment: EvaluationAssessment
+
+
+@dataclass(frozen=True, slots=True)
+class _IslandNodeSelection:
+    island_id: str
+    node: Node
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +380,7 @@ class SearchRuntime:
                 root_node=root_node,
                 budget_spent=1,
                 step_count=1,
+                island_policies=self._policy.island_policies,
             )
             session.set_learning_notes([])
             session.set_reusable_learning_notes(reusable_learning_context.entries)
@@ -254,7 +389,7 @@ class SearchRuntime:
 
             if session.budget_spent < budget:
                 current_action = ActionType.GENERATE_SEED.value
-                self._generate_seed_nodes(session, routing_tracker)
+                self._generate_seed_nodes(session, budget, routing_tracker)
                 self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.RANK.value
@@ -430,46 +565,72 @@ class SearchRuntime:
     def _generate_seed_nodes(
         self,
         session: "_MutableSession",
+        budget: int,
         routing_tracker: "_RoutingTracker",
     ) -> None:
-        input_payload: dict[str, JSONValue] = {
-            "target_count": self._policy.seed_target,
-            "framing_candidate": session.root_node.candidate.to_dict(),
-            "learning_notes": [note.to_dict() for note in session.learning_notes],
-            "generation_policy": {
-                "diversity_requirement": (
-                    "Return materially distinct strategic directions, not paraphrases."
-                ),
-                "quality_requirement": (
-                    "Prefer executable mechanisms with explicit assumptions and failure modes."
-                ),
-            },
-        }
-        if session.reusable_learning_notes:
-            input_payload["reusable_learning_notes"] = [
-                note.to_prompt_dict() for note in session.reusable_learning_notes
-            ]
-        response = self._run_provider_action(
-            routing_tracker,
-            action_name=ActionType.GENERATE_SEED,
-            problem_spec=session.problem_spec,
-            input_payload=input_payload,
-            output_schema=candidate_batch_schema(),
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return
+
+        target_count_by_island = _allocate_targets(
+            self._policy.seed_target,
+            len(session.island_ids),
         )
-        session.consume_budget()
-        batch = response.payload
-        self._admit_candidate_batch(
-            session,
-            action_type=ActionType.GENERATE_SEED,
-            requests=[
-                _CandidateAdmissionRequest(
-                    candidate=candidate,
-                    parent_ids=(session.root_id,),
-                    batch_summary=batch.batch_summary,
+        island_requests: list[tuple[str, _ProviderActionRequest]] = []
+        for island_id, target_count in zip(session.island_ids[:remaining_budget], target_count_by_island):
+            if target_count <= 0:
+                continue
+            input_payload: dict[str, JSONValue] = {
+                "target_count": target_count,
+                "island": session.island_prompt(island_id),
+                "framing_candidate": session.root_node.candidate.to_dict(),
+                "learning_notes": [note.to_dict() for note in session.learning_notes],
+                "generation_policy": {
+                    "diversity_requirement": (
+                        "Return materially distinct strategic directions, not paraphrases."
+                    ),
+                    "quality_requirement": (
+                        "Prefer executable mechanisms with explicit assumptions and failure modes."
+                    ),
+                    "island_focus": session.island_policy(island_id).generation_focus,
+                },
+            }
+            if session.reusable_learning_notes:
+                input_payload["reusable_learning_notes"] = [
+                    note.to_prompt_dict() for note in session.reusable_learning_notes
+                ]
+            island_requests.append(
+                (
+                    island_id,
+                    _ProviderActionRequest(
+                        action_name=ActionType.GENERATE_SEED,
+                        problem_spec=session.problem_spec,
+                        input_payload=input_payload,
+                        output_schema=candidate_batch_schema(),
+                    ),
                 )
-                for candidate in batch.candidates
-            ],
+            )
+
+        responses = self._dispatch_provider_requests(
+            routing_tracker,
+            [request for _, request in island_requests],
         )
+        for (island_id, _), response in zip(island_requests, responses):
+            session.consume_budget()
+            batch = response.payload
+            self._admit_candidate_batch(
+                session,
+                island_id=island_id,
+                action_type=ActionType.GENERATE_SEED,
+                requests=[
+                    _CandidateAdmissionRequest(
+                        candidate=candidate,
+                        parent_ids=(session.root_id,),
+                        batch_summary=batch.batch_summary,
+                    )
+                    for candidate in batch.candidates
+                ],
+            )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _stress_test_frontier(
@@ -482,14 +643,17 @@ class SearchRuntime:
         if remaining_budget <= 0:
             return
 
-        selected_nodes = self._top_ranked_nodes(
+        selected_nodes = self._select_stage_nodes(
             session,
             limit=min(self._policy.stress_test_limit, remaining_budget),
+            stage_name=ActionType.STRESS_TEST,
         )
         requests: list[_ProviderActionRequest] = []
-        for node in selected_nodes:
+        for selection in selected_nodes:
+            node = selection.node
             input_payload: dict[str, JSONValue] = {
                 "node_id": node.node_id,
+                "island": session.island_prompt(selection.island_id),
                 "candidate": node.candidate.to_dict(),
                 "score": None if node.score is None else node.score.to_dict(),
                 "learning_notes": [note.to_dict() for note in session.learning_notes],
@@ -515,8 +679,9 @@ class SearchRuntime:
             )
 
         responses = self._dispatch_provider_requests(routing_tracker, requests)
-        for node, response in zip(selected_nodes, responses):
+        for selection, response in zip(selected_nodes, responses):
             session.consume_budget()
+            node = selection.node
             critique = response.payload
             routing_tracker.record_critique(
                 action_name=ActionType.STRESS_TEST.value,
@@ -543,14 +708,17 @@ class SearchRuntime:
         if remaining_budget <= 0:
             return
 
-        selected_nodes = self._top_ranked_nodes(
+        selected_nodes = self._select_stage_nodes(
             session,
             limit=min(self._policy.deepen_limit, remaining_budget),
+            stage_name=ActionType.DEEPEN,
         )
         requests: list[_ProviderActionRequest] = []
-        for node in selected_nodes:
+        for selection in selected_nodes:
+            node = selection.node
             input_payload: dict[str, JSONValue] = {
                 "node_id": node.node_id,
+                "island": session.island_prompt(selection.island_id),
                 "candidate": node.candidate.to_dict(),
                 "score": None if node.score is None else node.score.to_dict(),
                 "critique": None if node.critique is None else node.critique.to_dict(),
@@ -576,20 +744,22 @@ class SearchRuntime:
 
         responses = self._dispatch_provider_requests(routing_tracker, requests)
         admission_requests: list[_CandidateAdmissionRequest] = []
-        for node, response in zip(selected_nodes, responses):
+        for selection, response in zip(selected_nodes, responses):
             session.consume_budget()
             admission_requests.append(
                 _CandidateAdmissionRequest(
                     candidate=response.payload,
-                    parent_ids=(node.node_id,),
+                    parent_ids=(selection.node.node_id,),
                     batch_summary="Deepened a high-scoring survivor.",
                 )
             )
-        self._admit_candidate_batch(
-            session,
-            action_type=ActionType.DEEPEN,
-            requests=admission_requests,
-        )
+        for selection, admission_request in zip(selected_nodes, admission_requests):
+            self._admit_candidate_batch(
+                session,
+                island_id=selection.island_id,
+                action_type=ActionType.DEEPEN,
+                requests=[admission_request],
+            )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _mutate_survivors(
@@ -602,14 +772,17 @@ class SearchRuntime:
         if remaining_budget <= 0:
             return
 
-        selected_nodes = self._top_ranked_nodes(
+        selected_nodes = self._select_stage_nodes(
             session,
             limit=min(self._policy.mutate_limit, remaining_budget),
+            stage_name=ActionType.MUTATE,
         )
         requests: list[_ProviderActionRequest] = []
-        for node in selected_nodes:
+        for selection in selected_nodes:
+            node = selection.node
             input_payload: dict[str, JSONValue] = {
                 "node_id": node.node_id,
+                "island": session.island_prompt(selection.island_id),
                 "candidate": node.candidate.to_dict(),
                 "score": None if node.score is None else node.score.to_dict(),
                 "critique": None if node.critique is None else node.critique.to_dict(),
@@ -631,22 +804,21 @@ class SearchRuntime:
             )
 
         responses = self._dispatch_provider_requests(routing_tracker, requests)
-        admission_requests: list[_CandidateAdmissionRequest] = []
-        for node, response in zip(selected_nodes, responses):
+        for selection, response in zip(selected_nodes, responses):
             session.consume_budget()
-            for candidate in response.payload.candidates:
-                admission_requests.append(
+            self._admit_candidate_batch(
+                session,
+                island_id=selection.island_id,
+                action_type=ActionType.MUTATE,
+                requests=[
                     _CandidateAdmissionRequest(
                         candidate=candidate,
-                        parent_ids=(node.node_id,),
+                        parent_ids=(selection.node.node_id,),
                         batch_summary=response.payload.batch_summary,
                     )
-                )
-        self._admit_candidate_batch(
-            session,
-            action_type=ActionType.MUTATE,
-            requests=admission_requests,
-        )
+                    for candidate in response.payload.candidates
+                ],
+            )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _combine_survivors(
@@ -655,46 +827,59 @@ class SearchRuntime:
         budget: int,
         routing_tracker: "_RoutingTracker",
     ) -> None:
-        if self._policy.combine_limit <= 0 or session.budget_spent >= budget:
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if self._policy.combine_limit <= 0 or remaining_budget <= 0:
             return
-        ranked = self._top_ranked_nodes(session, limit=2)
-        if len(ranked) < 2:
-            return
-        input_payload: dict[str, JSONValue] = {
-            "primary_node_id": ranked[0].node_id,
-            "secondary_node_id": ranked[1].node_id,
-            "primary_candidate": ranked[0].candidate.to_dict(),
-            "secondary_candidate": ranked[1].candidate.to_dict(),
-            "combine_policy": {
-                "goal": (
-                    "Fuse compatible strengths only if the combined direction remains coherent and distinct."
-                ),
-            },
-        }
-        if session.reusable_learning_notes:
-            input_payload["reusable_learning_notes"] = [
-                note.to_prompt_dict() for note in session.reusable_learning_notes
-            ]
-        response = self._run_provider_action(
-            routing_tracker,
-            action_name=ActionType.COMBINE,
-            problem_spec=session.problem_spec,
-            input_payload=input_payload,
-            output_schema=candidate_batch_schema(),
-        )
-        session.consume_budget()
-        self._admit_candidate_batch(
+
+        selected_pairs = self._select_combine_pairs(
             session,
-            action_type=ActionType.COMBINE,
-            requests=[
-                _CandidateAdmissionRequest(
-                    candidate=candidate,
-                    parent_ids=(ranked[0].node_id, ranked[1].node_id),
-                    batch_summary=response.payload.batch_summary,
-                )
-                for candidate in response.payload.candidates
-            ],
+            limit=min(self._policy.combine_limit, remaining_budget),
         )
+        if not selected_pairs:
+            return
+        requests: list[_ProviderActionRequest] = []
+        for island_id, primary, secondary in selected_pairs:
+            input_payload: dict[str, JSONValue] = {
+                "island": session.island_prompt(island_id),
+                "primary_node_id": primary.node_id,
+                "secondary_node_id": secondary.node_id,
+                "primary_candidate": primary.candidate.to_dict(),
+                "secondary_candidate": secondary.candidate.to_dict(),
+                "combine_policy": {
+                    "goal": (
+                        "Fuse compatible strengths only if the combined direction remains coherent and distinct."
+                    ),
+                },
+            }
+            if session.reusable_learning_notes:
+                input_payload["reusable_learning_notes"] = [
+                    note.to_prompt_dict() for note in session.reusable_learning_notes
+                ]
+            requests.append(
+                _ProviderActionRequest(
+                    action_name=ActionType.COMBINE,
+                    problem_spec=session.problem_spec,
+                    input_payload=input_payload,
+                    output_schema=candidate_batch_schema(),
+                )
+            )
+
+        responses = self._dispatch_provider_requests(routing_tracker, requests)
+        for (island_id, primary, secondary), response in zip(selected_pairs, responses):
+            session.consume_budget()
+            self._admit_candidate_batch(
+                session,
+                island_id=island_id,
+                action_type=ActionType.COMBINE,
+                requests=[
+                    _CandidateAdmissionRequest(
+                        candidate=candidate,
+                        parent_ids=(primary.node_id, secondary.node_id),
+                        batch_summary=response.payload.batch_summary,
+                    )
+                    for candidate in response.payload.candidates
+                ],
+            )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _compress_learning(
@@ -720,6 +905,15 @@ class SearchRuntime:
         input_payload: dict[str, JSONValue] = {
             "archived_nodes": archived_nodes,
             "pruned_nodes": pruned_nodes,
+            "islands": [
+                {
+                    **session.island_prompt(island_id),
+                    "archive_count": len(session.islands[island_id].archive_ids),
+                    "frontier_count": len(session.islands[island_id].frontier_ids),
+                    "pruned_count": len(session.islands[island_id].pruned_ids),
+                }
+                for island_id in session.island_ids
+            ],
             "max_notes": self._policy.max_learning_notes,
             "compression_policy": {
                 "goal": "Extract reusable patterns, failure modes, and constraints from the current search state.",
@@ -826,6 +1020,7 @@ class SearchRuntime:
         self,
         session: "_MutableSession",
         *,
+        island_id: str | None,
         action_type: ActionType,
         candidate: Candidate,
         parent_ids: Sequence[str],
@@ -839,6 +1034,7 @@ class SearchRuntime:
         )
         return self._commit_candidate_admission(
             session,
+            island_id=island_id,
             action_type=action_type,
             candidate=candidate,
             parent_ids=parent_ids,
@@ -851,6 +1047,7 @@ class SearchRuntime:
         self,
         session: "_MutableSession",
         *,
+        island_id: str | None,
         action_type: ActionType,
         requests: Sequence[_CandidateAdmissionRequest],
     ) -> list[Node]:
@@ -884,6 +1081,7 @@ class SearchRuntime:
                 )
             node = self._commit_candidate_admission(
                 session,
+                island_id=island_id,
                 action_type=action_type,
                 candidate=request.candidate,
                 parent_ids=request.parent_ids,
@@ -924,6 +1122,7 @@ class SearchRuntime:
         self,
         session: "_MutableSession",
         *,
+        island_id: str | None,
         action_type: ActionType,
         candidate: Candidate,
         parent_ids: Sequence[str],
@@ -956,6 +1155,7 @@ class SearchRuntime:
             action_type=action_type,
             provider_name=self._provider.name,
             candidate=candidate,
+            island_id=island_id,
             score=assessment.score,
             novelty_score=novelty.novelty_score,
             lifecycle_status=lifecycle_status,
@@ -966,31 +1166,95 @@ class SearchRuntime:
         if lifecycle_status is NodeLifecycleStatus.REJECTED:
             return node
         if lifecycle_status is NodeLifecycleStatus.FAILED:
-            session.mark_pruned(node.node_id)
+            session.mark_pruned(node.node_id, island_id=island_id)
             return node
-        session.archive(node.node_id)
+        session.archive(node.node_id, island_id=island_id)
         return node
 
-    def _top_ranked_nodes(
+    def _select_stage_nodes(
         self,
         session: "_MutableSession",
         *,
         limit: int,
-    ) -> list[Node]:
-        eligible = [
-            session.nodes[node_id]
-            for node_id in session.frontier_ids
-            if _is_rankable(session.nodes[node_id])
-        ]
-        if not eligible:
-            eligible = [
-                node
-                for node_id, node in session.nodes.items()
-                if node_id in session.archive_ids and _is_rankable(node)
-            ]
-        if not eligible:
+        stage_name: ActionType,
+    ) -> list[_IslandNodeSelection]:
+        if limit <= 0:
             return []
-        return rank_nodes(eligible)[:limit]
+
+        phase_one: list[_IslandNodeSelection] = []
+        leftovers: list[_IslandNodeSelection] = []
+        for island_id in session.island_ids:
+            ranked = session.rank_island_nodes(island_id)
+            if not ranked:
+                continue
+            phase_one.append(_IslandNodeSelection(island_id=island_id, node=ranked[0]))
+            leftovers.extend(
+                _IslandNodeSelection(island_id=island_id, node=node)
+                for node in ranked[1:]
+            )
+
+        selected = sorted(
+            phase_one,
+            key=lambda item: (
+                _stage_priority_key(
+                    item.node,
+                    session.island_policy(item.island_id),
+                ),
+                -session.island_order(item.island_id),
+            ),
+            reverse=True,
+        )[:limit]
+        if len(selected) >= limit:
+            return selected
+
+        selected_ids = {(item.island_id, item.node.node_id) for item in selected}
+        remaining = [
+            item
+            for item in leftovers
+            if (item.island_id, item.node.node_id) not in selected_ids
+        ]
+        selected.extend(
+            sorted(
+                remaining,
+                key=lambda item: (
+                    _stage_priority_key(
+                        item.node,
+                        session.island_policy(item.island_id),
+                    ),
+                    -session.island_order(item.island_id),
+                ),
+                reverse=True,
+            )[: limit - len(selected)]
+        )
+        return selected
+
+    def _select_combine_pairs(
+        self,
+        session: "_MutableSession",
+        *,
+        limit: int,
+    ) -> list[tuple[str, Node, Node]]:
+        if limit <= 0:
+            return []
+
+        eligible_pairs: list[tuple[str, Node, Node]] = []
+        for island_id in session.island_ids:
+            ranked = [
+                node
+                for node in session.rank_island_nodes(island_id)
+                if node.node_id != session.root_id
+            ]
+            if len(ranked) < 2:
+                continue
+            eligible_pairs.append((island_id, ranked[0], ranked[1]))
+        return sorted(
+            eligible_pairs,
+            key=lambda item: (
+                _stage_priority_key(item[1], session.island_policy(item[0])),
+                -session.island_order(item[0]),
+            ),
+            reverse=True,
+        )[:limit]
 
     def _persist_running_snapshot(
         self,
@@ -1003,6 +1267,7 @@ class SearchRuntime:
             "archive_count": len(session.archive_ids),
             "frontier_count": len(session.frontier_ids),
             "pruned_count": len(session.pruned_ids),
+            "island_count": len(session.island_ids),
         }
         if frame_summary is not None:
             metadata_patch["frame_summary"] = list(frame_summary)
@@ -1132,6 +1397,7 @@ class SearchRuntime:
         )
         summary_markdown = _render_summary_markdown(
             problem_spec=state.problem_spec,
+            islands=state.islands,
             best=best,
             conservative=conservative,
             high_upside=high_upside,
@@ -1232,6 +1498,14 @@ class SearchRuntime:
             raise
 
 
+@dataclass(slots=True)
+class _MutableIslandState:
+    policy: SearchIslandPolicy
+    archive_ids: list[str]
+    frontier_ids: list[str]
+    pruned_ids: list[str]
+
+
 class _MutableSession:
     def __init__(
         self,
@@ -1240,6 +1514,7 @@ class _MutableSession:
         root_node: Node,
         budget_spent: int,
         step_count: int,
+        island_policies: Sequence[SearchIslandPolicy],
     ) -> None:
         self.problem_spec = problem_spec
         self.root_id = root_node.node_id
@@ -1248,6 +1523,15 @@ class _MutableSession:
         self.frontier_ids: list[str] = [root_node.node_id]
         self.pruned_ids: list[str] = []
         self.winner_ids: list[str] = []
+        self.islands: dict[str, _MutableIslandState] = {
+            policy.island_id: _MutableIslandState(
+                policy=policy,
+                archive_ids=[root_node.node_id],
+                frontier_ids=[root_node.node_id],
+                pruned_ids=[],
+            )
+            for policy in island_policies
+        }
         self.learning_notes: list[LearningNote] = []
         self.reusable_learning_notes: list[ReusableLearningNote] = []
         self.budget_spent = budget_spent
@@ -1257,6 +1541,19 @@ class _MutableSession:
     @property
     def root_node(self) -> Node:
         return self.nodes[self.root_id]
+
+    @property
+    def island_ids(self) -> list[str]:
+        return list(self.islands)
+
+    def island_order(self, island_id: str) -> int:
+        return self.island_ids.index(island_id)
+
+    def island_policy(self, island_id: str) -> SearchIslandPolicy:
+        return self.islands[island_id].policy
+
+    def island_prompt(self, island_id: str) -> dict[str, JSONValue]:
+        return self.island_policy(island_id).to_prompt_dict()
 
     def allocate_node_id(self) -> str:
         while True:
@@ -1278,11 +1575,15 @@ class _MutableSession:
     def replace_node(self, node: Node) -> None:
         self.nodes[node.node_id] = node
 
-    def archive(self, node_id: str) -> None:
+    def archive(self, node_id: str, *, island_id: str | None) -> None:
         _append_unique(self.archive_ids, node_id)
+        if island_id is not None:
+            _append_unique(self.islands[island_id].archive_ids, node_id)
 
-    def mark_pruned(self, node_id: str) -> None:
+    def mark_pruned(self, node_id: str, *, island_id: str | None) -> None:
         _append_unique(self.pruned_ids, node_id)
+        if island_id is not None:
+            _append_unique(self.islands[island_id].pruned_ids, node_id)
 
     def set_learning_notes(self, notes: Sequence[LearningNote]) -> None:
         self.learning_notes = list(notes)
@@ -1293,30 +1594,62 @@ class _MutableSession:
     ) -> None:
         self.reusable_learning_notes = list(notes)
 
-    def refresh_frontier(self, *, limit: int) -> None:
+    def rank_island_nodes(self, island_id: str) -> list[Node]:
+        island = self.islands[island_id]
         candidates = [
-            node
-            for node_id, node in self.nodes.items()
-            if node_id in self.archive_ids and _is_rankable(node)
+            self.nodes[node_id]
+            for node_id in island.frontier_ids
+            if node_id in self.nodes and _is_rankable(self.nodes[node_id])
         ]
         if not candidates:
-            self.frontier_ids = [self.root_id]
-            return
+            candidates = [
+                self.nodes[node_id]
+                for node_id in island.archive_ids
+                if node_id in self.nodes and _is_rankable(self.nodes[node_id])
+            ]
+        if not candidates:
+            return []
+        return _rank_nodes_for_island(candidates, island.policy)
 
-        ranked = rank_nodes(candidates)
-        frontier: list[str] = []
-        for node in ranked[:limit]:
-            _append_unique(frontier, node.node_id)
+    def refresh_frontier(self, *, limit: int) -> None:
+        per_island_limits = _allocate_targets(limit, len(self.island_ids))
+        self.frontier_ids = []
+        for island_id, island_limit in zip(self.island_ids, per_island_limits):
+            island = self.islands[island_id]
+            if island_limit <= 0:
+                island.frontier_ids = []
+                continue
 
-        most_novel = max(candidates, key=lambda node: (node.novelty_score, node.score.total_score))
-        _append_unique(frontier, most_novel.node_id)
+            candidates = [
+                self.nodes[node_id]
+                for node_id in island.archive_ids
+                if node_id in self.nodes and _is_rankable(self.nodes[node_id])
+            ]
+            if not candidates:
+                island.frontier_ids = [self.root_id]
+            else:
+                ranked = _rank_nodes_for_island(candidates, island.policy)
+                frontier: list[str] = []
+                for node in ranked[:island_limit]:
+                    _append_unique(frontier, node.node_id)
 
-        most_uncertain = min(
-            candidates,
-            key=lambda node: (node.score.confidence_estimate, -node.novelty_score),
-        )
-        _append_unique(frontier, most_uncertain.node_id)
-        self.frontier_ids = frontier[:limit]
+                most_novel = max(
+                    candidates,
+                    key=lambda node: (node.novelty_score, node.score.total_score),
+                )
+                _append_unique(frontier, most_novel.node_id)
+
+                most_uncertain = min(
+                    candidates,
+                    key=lambda node: (
+                        node.score.confidence_estimate,
+                        -node.novelty_score,
+                    ),
+                )
+                _append_unique(frontier, most_uncertain.node_id)
+                island.frontier_ids = frontier[:island_limit]
+            for node_id in island.frontier_ids:
+                _append_unique(self.frontier_ids, node_id)
 
         for node_id, node in list(self.nodes.items()):
             if node.lifecycle_status in {
@@ -1351,6 +1684,14 @@ class _MutableSession:
             frontier_ids=list(self.frontier_ids),
             pruned_ids=list(self.pruned_ids),
             winner_ids=list(self.winner_ids),
+            islands={
+                island_id: island.policy.to_search_island(
+                    archive_ids=island.archive_ids,
+                    frontier_ids=island.frontier_ids,
+                    pruned_ids=island.pruned_ids,
+                )
+                for island_id, island in self.islands.items()
+            },
             learning_notes=list(self.learning_notes),
             budget_spent=self.budget_spent,
             step_count=self.step_count,
@@ -1544,6 +1885,58 @@ class _RoutingTracker:
         )
 
 
+def _allocate_targets(total: int, count: int) -> list[int]:
+    if count <= 0:
+        return []
+    normalized_total = max(total, 0)
+    base, remainder = divmod(normalized_total, count)
+    return [base + (1 if index < remainder else 0) for index in range(count)]
+
+
+def _rank_nodes_for_island(
+    nodes: Sequence[Node],
+    island_policy: SearchIslandPolicy,
+) -> list[Node]:
+    if island_policy.selection_mode == "balanced":
+        return rank_nodes(nodes)
+    return sorted(
+        nodes,
+        key=lambda node: _stage_priority_key(node, island_policy),
+        reverse=True,
+    )
+
+
+def _stage_priority_key(
+    node: Node,
+    island_policy: SearchIslandPolicy,
+) -> tuple[float, ...]:
+    if node.score is None:
+        return (0.0, 0.0, 0.0, 0.0, 0.0)
+    if island_policy.selection_mode == "conservative":
+        return (
+            node.score.implementation_tractability,
+            node.score.plausibility,
+            node.score.adversarial_robustness,
+            node.score.confidence_estimate,
+            node.score.total_score,
+        )
+    if island_policy.selection_mode == "upside":
+        return (
+            node.score.upside,
+            node.novelty_score,
+            node.score.distinctiveness,
+            node.score.total_score,
+            node.score.confidence_estimate,
+        )
+    return (
+        node.score.total_score,
+        node.novelty_score,
+        node.score.adversarial_robustness,
+        node.score.usefulness,
+        node.score.confidence_estimate,
+    )
+
+
 def _node_snapshot_payload(node: Node) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "node_id": node.node_id,
@@ -1552,6 +1945,8 @@ def _node_snapshot_payload(node: Node) -> dict[str, JSONValue]:
         "novelty_score": node.novelty_score,
         "lifecycle_status": node.lifecycle_status.value,
     }
+    if node.island_id is not None:
+        payload["island_id"] = node.island_id
     if node.score is not None:
         payload["score"] = node.score.to_dict()
     if node.critique is not None:
@@ -1748,6 +2143,7 @@ def _build_next_experiments(best: Node) -> list[str]:
 def _render_summary_markdown(
     *,
     problem_spec: ProblemSpec,
+    islands: dict[str, SearchIsland],
     best: Node,
     conservative: Node,
     high_upside: Node,
@@ -1766,6 +2162,14 @@ def _render_summary_markdown(
         problem_spec.request,
         "",
     ]
+    if islands:
+        lines.append("## Search Islands")
+        for island in islands.values():
+            lines.append(
+                f"- {island.label} (`{island.island_id}`): {island.description} "
+                f"[archive={len(island.archive_ids)}, frontier={len(island.frontier_ids)}, pruned={len(island.pruned_ids)}]"
+            )
+        lines.append("")
     if problem_spec.constraints:
         lines.extend(["Constraints:"] + [f"- {item}" for item in problem_spec.constraints] + [""])
     if problem_spec.success_criteria:
@@ -1779,14 +2183,17 @@ def _render_summary_markdown(
         [
             "## Best Bet",
             f"{best.candidate.thesis} (`{best.node_id}`)",
+            f"- Island: {_node_island_label(best, islands)}",
             f"- Mechanism: {best.candidate.mechanism}",
             "",
             "## Conservative Option",
             f"{conservative.candidate.thesis} (`{conservative.node_id}`)",
+            f"- Island: {_node_island_label(conservative, islands)}",
             f"- Mechanism: {conservative.candidate.mechanism}",
             "",
             "## High-Upside Option",
             f"{high_upside.candidate.thesis} (`{high_upside.node_id}`)",
+            f"- Island: {_node_island_label(high_upside, islands)}",
             f"- Mechanism: {high_upside.candidate.mechanism}",
             "",
             "## Rejected But Insightful",
@@ -1794,7 +2201,9 @@ def _render_summary_markdown(
     )
     if rejected:
         for node in rejected:
-            lines.append(f"- `{node.node_id}`: {node.candidate.thesis}")
+            lines.append(
+                f"- `{node.node_id}` ({_node_island_label(node, islands)}): {node.candidate.thesis}"
+            )
     else:
         lines.append("- None.")
     lines.append("")
@@ -1858,6 +2267,13 @@ def _pairwise_selection_notes(records: Sequence[_PairwiseDecisionRecord]) -> lis
             fragments.append(f"Main risk: {record.assessment.decisive_risks[0]}")
         notes.append(" ".join(fragments))
     return notes
+
+
+def _node_island_label(node: Node, islands: dict[str, SearchIsland]) -> str:
+    if node.island_id is None:
+        return "Shared"
+    island = islands.get(node.island_id)
+    return island.label if island is not None else node.island_id
 
 
 def _normalize_non_empty_string(value: object, field_name: str) -> str:
