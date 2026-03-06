@@ -10,6 +10,7 @@ class ArgusConfig:
 
     root_dir: Path
     artifacts_dir: Path
+    runs_dir: Path
     agent_runs_dir: Path
     verify_dir: Path
     latest_agent_run_pointer: Path
@@ -21,6 +22,7 @@ class ArgusConfig:
         return cls(
             root_dir=root_dir,
             artifacts_dir=artifacts_dir,
+            runs_dir=artifacts_dir / "runs",
             agent_runs_dir=artifacts_dir / "agent_runs",
             verify_dir=artifacts_dir / "verify",
             latest_agent_run_pointer=artifacts_dir / "latest-run.txt",

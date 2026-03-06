@@ -8,6 +8,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from argus.cli import build_parser, main
+from argus.models import ProblemSpec
+from argus.storage import FileSystemStateStore
 
 
 class CliTests(unittest.TestCase):
@@ -75,6 +77,34 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertIn("No agent-run artifacts found.", stderr)
+
+    def test_inspect_argus_run_directory_reads_run_metadata(self) -> None:
+        with TemporaryRepoRoot() as root:
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            manifest = store.create_run(
+                problem_spec=ProblemSpec(
+                    request="Find the best retention strategy.",
+                    constraints=[],
+                    success_criteria=["Increase activation."],
+                    context={},
+                ),
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020456Z",
+            )
+            run_dir = store.root_dir / manifest.run_id
+
+            exit_code, stdout, _ = _run_cli(
+                ["--root", str(root), "inspect", str(run_dir), "--json"]
+            )
+
+        payload = json.loads(stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["kind"], "argus_run")
+        self.assertEqual(payload["metadata"]["run_id"], "run-20260306T020456Z")
+        self.assertEqual(payload["metadata"]["provider_name"], "codex")
+        self.assertIn("run.json", payload["recognized_artifacts"])
+        self.assertIn("problem-spec.json", payload["recognized_artifacts"])
 
 
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:

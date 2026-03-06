@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 
 from argus.config import ArgusConfig
 from argus.errors import ArgusUserError
+from argus.storage import RunManifest
 
 _RECOGNIZED_AGENT_RUN_FILES = {
     "codex-events.jsonl",
@@ -14,6 +16,15 @@ _RECOGNIZED_AGENT_RUN_FILES = {
     "previous-verify.txt",
     "prompt.md",
     "verify.txt",
+}
+
+_RECOGNIZED_ARGUS_RUN_FILES = {
+    "final-recommendation.json",
+    "learning-notes.json",
+    "problem-spec.json",
+    "run.json",
+    "state.json",
+    "summary.md",
 }
 
 
@@ -82,13 +93,31 @@ def inspect_artifact_path(target: Path) -> InspectionSummary:
         for path in target.rglob("*")
         if path.is_file()
     )
+    kind = "directory"
     metadata = _parse_metadata_file(target / "metadata.env")
+    run_manifest = _parse_run_manifest_file(target / "run.json")
+    if run_manifest is not None:
+        kind = "argus_run"
+        metadata = {
+            "budget": str(run_manifest.budget),
+            "created_at": run_manifest.created_at.isoformat().replace("+00:00", "Z"),
+            "provider_name": run_manifest.provider_name,
+            "run_id": run_manifest.run_id,
+            "status": run_manifest.status.value,
+            "updated_at": run_manifest.updated_at.isoformat().replace("+00:00", "Z"),
+        }
+    elif any(Path(entry).name in _RECOGNIZED_AGENT_RUN_FILES for entry in files):
+        kind = "agent_run"
+
     recognized_artifacts = sorted(
-        entry for entry in files if Path(entry).name in _RECOGNIZED_AGENT_RUN_FILES
+        entry
+        for entry in files
+        if Path(entry).name in _RECOGNIZED_AGENT_RUN_FILES
+        or Path(entry).name in _RECOGNIZED_ARGUS_RUN_FILES
     )
     return InspectionSummary(
         target=str(target),
-        kind="directory",
+        kind=kind,
         file_count=len(files),
         files=files,
         metadata=metadata,
@@ -144,3 +173,15 @@ def _parse_metadata_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         metadata[key] = value
     return metadata
+
+
+def _parse_run_manifest_file(path: Path) -> RunManifest | None:
+    if not path.is_file():
+        return None
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ArgusUserError(f"Invalid run metadata JSON at {path}: {exc}") from exc
+
+    return RunManifest.from_dict(payload)

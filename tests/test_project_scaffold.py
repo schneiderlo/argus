@@ -19,6 +19,7 @@ class ProjectScaffoldTests(unittest.TestCase):
 
         self.assertEqual(config.root_dir, root.resolve())
         self.assertEqual(config.artifacts_dir, root.resolve() / "artifacts")
+        self.assertEqual(config.runs_dir, root.resolve() / "artifacts" / "runs")
         self.assertEqual(config.agent_runs_dir, root.resolve() / "artifacts" / "agent_runs")
 
     def test_pyproject_declares_argus_console_script(self) -> None:

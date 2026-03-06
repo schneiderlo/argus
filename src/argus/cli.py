@@ -110,8 +110,8 @@ def _handle_run(args: argparse.Namespace, _: ArgusConfig) -> int:
 
     raise ArgusNotImplementedError(
         "Search execution is scaffolded but not wired yet. Remaining work items are "
-        "the typed domain models, filesystem state store, provider adapter, "
-        "deterministic evaluator, novelty filter, and search runtime."
+        "the provider adapter, deterministic evaluator, novelty filter, "
+        "search runtime, and final answer compilation."
     )
 
 

@@ -21,7 +21,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 - [x] Bootstrap the Python project with `uv`: create `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
 - [x] Implement the core typed domain models described in `specs/03-search-runtime.md` and `specs/04-evaluator-and-ranking.md`.
-- [ ] Implement a filesystem-backed state store for runs, nodes, learnings, scores, critiques, and final recommendations.
+- [x] Implement a filesystem-backed state store for runs, nodes, learnings, scores, critiques, and final recommendations.
 - [ ] Implement a Codex provider adapter that wraps `codex exec`, validates structured outputs, captures logs, and never lets the provider write directly to repository state outside the orchestrated workflow.
 - [ ] Implement the deterministic evaluator and novelty filter.
 - [ ] Implement the first working search loop with these actions: `frame_problem`, `generate_seed`, `mutate`, `combine`, `stress_test`, `deepen`, `rank`, and `compress_learning`.
@@ -47,4 +47,6 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Do not delete this file when work is complete. Turn it into a maintained project plan.
 - If you discover a mismatch between the specs and implementation reality, record it here and then resolve it explicitly.
 - The repository now includes typed domain models with explicit validation and deterministic JSON serialization in `src/argus/models/`.
-- `argus run` and `argus benchmark` still fail explicitly until the filesystem store, provider adapter, evaluator, novelty filter, search runtime, and benchmark harness are implemented.
+- The filesystem-backed state store now lives in `src/argus/storage/state_store.py` and persists runs under `artifacts/runs/<run_id>/` with split JSON artifacts for nodes, scores, critiques, learning notes, and final recommendations.
+- `argus inspect` recognizes persisted Argus run directories as well as Ralph-loop artifact directories.
+- `argus run` and `argus benchmark` still fail explicitly until the provider adapter, evaluator, novelty filter, search runtime, and benchmark harness are implemented.

@@ -1,0 +1,283 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from argus.errors import ArgusValidationError
+from argus.models import (
+    ActionType,
+    Candidate,
+    Critique,
+    FinalRecommendation,
+    LearningNote,
+    LearningNoteType,
+    Node,
+    NodeLifecycleStatus,
+    ProblemSpec,
+    ScoreVector,
+    SearchState,
+)
+from argus.storage import FileSystemStateStore, RunStatus
+
+
+class FileSystemStateStoreTests(unittest.TestCase):
+    def test_store_persists_snapshot_with_split_artifacts_and_replays_it(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            created_at = datetime(2026, 3, 6, 2, 4, 56, tzinfo=timezone.utc)
+            problem_spec = _sample_problem_spec()
+            state = _sample_search_state(problem_spec)
+            recommendation = _sample_final_recommendation()
+
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020456Z",
+                created_at=created_at,
+                metadata={"operator": "ralph"},
+            )
+            refreshed_manifest = store.save_snapshot(
+                manifest.run_id,
+                state=state,
+                final_recommendation=recommendation,
+                summary_markdown="Prefer the workflow-native bet.",
+                status=RunStatus.COMPLETED,
+                updated_at=created_at,
+                metadata_patch={"winner_count": 1},
+            )
+
+            run_dir = store.root_dir / manifest.run_id
+            self.assertTrue((run_dir / "run.json").is_file())
+            self.assertTrue((run_dir / "problem-spec.json").is_file())
+            self.assertTrue((run_dir / "state.json").is_file())
+            self.assertTrue((run_dir / "learning-notes.json").is_file())
+            self.assertTrue((run_dir / "final-recommendation.json").is_file())
+            self.assertTrue((run_dir / "summary.md").is_file())
+            self.assertTrue((run_dir / "nodes" / "node-0001.json").is_file())
+            self.assertTrue((run_dir / "scores" / "node-0001.json").is_file())
+            self.assertTrue((run_dir / "critiques" / "node-0001.json").is_file())
+
+            raw_node_payload = json.loads(
+                (run_dir / "nodes" / "node-0001.json").read_text(encoding="utf-8")
+            )
+            self.assertNotIn("score", raw_node_payload)
+            self.assertNotIn("critique", raw_node_payload)
+
+            loaded = store.load_run(manifest.run_id)
+
+        self.assertEqual(loaded.manifest, refreshed_manifest)
+        self.assertEqual(loaded.problem_spec, problem_spec)
+        self.assertEqual(loaded.state, state)
+        self.assertEqual(loaded.final_recommendation, recommendation)
+        self.assertEqual(loaded.summary_markdown, "Prefer the workflow-native bet.")
+        self.assertEqual(loaded.manifest.metadata["winner_count"], 1)
+
+    def test_save_snapshot_rejects_final_recommendations_with_unknown_node_ids(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            state = _sample_search_state(problem_spec)
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020457Z",
+            )
+
+            with self.assertRaises(ArgusValidationError):
+                store.save_snapshot(
+                    manifest.run_id,
+                    state=state,
+                    final_recommendation=FinalRecommendation(
+                        best_bet_node_id="node-9999",
+                        conservative_node_id=None,
+                        high_upside_node_id=None,
+                        rejected_but_insightful_ids=[],
+                        summary_markdown="Missing node.",
+                        next_experiments=["Fix the reference."],
+                        assumptions=[],
+                        failure_modes=[],
+                        reversal_conditions=[],
+                    ),
+                )
+
+    def test_save_snapshot_removes_stale_optional_artifacts(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020458Z",
+            )
+            state_with_attachments = _sample_search_state(problem_spec)
+            store.save_snapshot(
+                manifest.run_id,
+                state=state_with_attachments,
+                final_recommendation=_sample_final_recommendation(),
+                summary_markdown="Initial summary.",
+                status=RunStatus.RUNNING,
+            )
+
+            stripped_state = _sample_search_state(problem_spec, include_attachments=False)
+            store.save_snapshot(
+                manifest.run_id,
+                state=stripped_state,
+                final_recommendation=None,
+                summary_markdown=None,
+                status=RunStatus.RUNNING,
+            )
+
+            run_dir = store.root_dir / manifest.run_id
+            self.assertFalse((run_dir / "scores" / "node-0001.json").exists())
+            self.assertFalse((run_dir / "critiques" / "node-0001.json").exists())
+            self.assertFalse((run_dir / "final-recommendation.json").exists())
+            self.assertFalse((run_dir / "summary.md").exists())
+
+            loaded = store.load_run(manifest.run_id)
+
+        self.assertEqual(loaded.state, stripped_state)
+        self.assertIsNone(loaded.final_recommendation)
+        self.assertIsNone(loaded.summary_markdown)
+
+    def test_list_runs_returns_sorted_run_manifests(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-b",
+            )
+            store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-a",
+            )
+
+            manifests = store.list_runs()
+
+        self.assertEqual([manifest.run_id for manifest in manifests], ["run-a", "run-b"])
+
+
+def _sample_problem_spec() -> ProblemSpec:
+    return ProblemSpec(
+        request="Find the best retention strategy.",
+        constraints=["Stay self-serve.", "Preserve auditability."],
+        success_criteria=["Increase activation.", "Keep the workflow reproducible."],
+        context={"team": "growth"},
+    )
+
+
+def _sample_search_state(
+    problem_spec: ProblemSpec,
+    *,
+    include_attachments: bool = True,
+) -> SearchState:
+    root_node = Node(
+        node_id="node-0001",
+        parent_ids=[],
+        depth=0,
+        action_type=ActionType.FRAME_PROBLEM,
+        provider_name="codex",
+        candidate=_sample_candidate("Frame the search around workflow lock-in."),
+        score=_sample_score() if include_attachments else None,
+        critique=_sample_critique() if include_attachments else None,
+        novelty_score=0.63,
+        lifecycle_status=NodeLifecycleStatus.ADMITTED,
+        metadata={"step": 1},
+        created_at=datetime(2026, 3, 6, 2, 4, 56, tzinfo=timezone.utc),
+    )
+    survivor_node = Node(
+        node_id="node-0002",
+        parent_ids=["node-0001"],
+        depth=1,
+        action_type=ActionType.DEEPEN,
+        provider_name="codex",
+        candidate=_sample_candidate("Bias the product toward team habits, not dashboards."),
+        novelty_score=0.72,
+        lifecycle_status=NodeLifecycleStatus.ARCHIVED,
+        metadata={"step": 2},
+        created_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
+    )
+    return SearchState(
+        problem_spec=problem_spec,
+        root_id="node-0001",
+        nodes={
+            "node-0001": root_node,
+            "node-0002": survivor_node,
+        },
+        archive_ids=["node-0001", "node-0002"],
+        frontier_ids=["node-0002"],
+        pruned_ids=[],
+        winner_ids=["node-0002"],
+        learning_notes=[
+            LearningNote(
+                note_type=LearningNoteType.WINNING_PATTERN,
+                text="Workflow-native ideas beat generic engagement loops.",
+                source_node_ids=["node-0001", "node-0002"],
+            )
+        ],
+        budget_spent=2,
+        step_count=2,
+    )
+
+
+def _sample_candidate(thesis: str) -> Candidate:
+    return Candidate(
+        thesis=thesis,
+        mechanism="Tie the product to repeated operational rituals.",
+        assumptions=["Users value lower coordination overhead."],
+        strengths=["Creates a durable habit."],
+        failure_modes=["Could increase onboarding friction."],
+        unknowns=["How much setup work users will tolerate."],
+        implementation_shape="Deterministic scoring plus persisted run state.",
+        evidence=["The spec requires evaluator-first logic and replayable runs."],
+    )
+
+
+def _sample_score() -> ScoreVector:
+    return ScoreVector(
+        hard_constraint_pass=True,
+        hard_constraint_reasons=[],
+        distinctiveness=0.67,
+        usefulness=0.82,
+        specificity=0.74,
+        plausibility=0.78,
+        implementation_tractability=0.79,
+        upside=0.71,
+        adversarial_robustness=0.69,
+        evidence_quality=0.63,
+        total_score=5.83,
+        confidence_estimate=0.77,
+    )
+
+
+def _sample_critique() -> Critique:
+    return Critique(
+        hidden_dependencies=["Needs strong artifact inspection to stay debuggable."],
+        kill_shots=["Falls apart if runs cannot be replayed from disk."],
+        sharp_edges=["Can drift if stale score files survive snapshot updates."],
+        summary="Operationally sound once persistence is authoritative.",
+    )
+
+
+def _sample_final_recommendation() -> FinalRecommendation:
+    return FinalRecommendation(
+        best_bet_node_id="node-0002",
+        conservative_node_id="node-0001",
+        high_upside_node_id="node-0002",
+        rejected_but_insightful_ids=[],
+        summary_markdown="Prefer the workflow-native bet.",
+        next_experiments=["Interview five current users.", "Prototype the audit trail."],
+        assumptions=["Teams prefer lower coordination cost over feature breadth."],
+        failure_modes=["Setup friction could limit adoption."],
+        reversal_conditions=["If interviews show low willingness to change habits."],
+    )
