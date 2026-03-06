@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 import json
+import math
 from pathlib import Path
 
 from argus.errors import ArgusUserError, ArgusValidationError
@@ -1218,7 +1219,13 @@ def _normalize_json_object(value: object, field_name: str) -> dict[str, JSONValu
 
 
 def _normalize_json_value(value: object, field_name: str) -> JSONValue:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ArgusValidationError(
+                f"{field_name} must be JSON-serializable and finite."
+            )
         return value
     if isinstance(value, Mapping):
         return _normalize_json_object(value, field_name)

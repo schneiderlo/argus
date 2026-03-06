@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from argus.benchmarks import BenchmarkFamily, BenchmarkHarness, BenchmarkStatus, load_benchmark_cases
+from argus.errors import ArgusValidationError
 from argus.search import SearchPolicy
 from argus.storage import FileSystemStateStore
 from tests.search_fixtures import SearchFixtureProvider
@@ -85,6 +86,42 @@ class BenchmarkHarnessTests(unittest.TestCase):
                 (root / "artifacts" / "benchmarks" / "latest.txt").read_text(encoding="utf-8").strip(),
                 str(second.session_dir),
             )
+
+    def test_harness_rejects_duplicate_provider_names_in_sequence(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider_a = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "a",
+                name="fixture",
+            )
+            provider_b = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "b",
+                name="fixture",
+            )
+
+            with self.assertRaises(ArgusValidationError):
+                BenchmarkHarness(
+                    providers=[provider_a, provider_b],
+                    state_store=FileSystemStateStore(root / "artifacts" / "runs"),
+                    cases_dir=root / "benchmarks" / "cases",
+                    output_root=root / "artifacts" / "benchmarks",
+                )
+
+    def test_harness_rejects_provider_mapping_with_mismatched_key(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                name="fixture",
+            )
+
+            with self.assertRaises(ArgusValidationError):
+                BenchmarkHarness(
+                    providers={"codex": provider},
+                    state_store=FileSystemStateStore(root / "artifacts" / "runs"),
+                    cases_dir=root / "benchmarks" / "cases",
+                    output_root=root / "artifacts" / "benchmarks",
+                )
 
 
 def _write_benchmark_case_fixture(path: Path) -> None:

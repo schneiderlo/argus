@@ -14,6 +14,7 @@ from argus.benchmarks.models import (
     BenchmarkRunManifest,
     BenchmarkStatus,
 )
+from argus.errors import ArgusValidationError
 from argus.models import FinalRecommendation, ProblemSpec, SearchState
 from argus.providers import Provider
 from argus.search import SearchPolicy, SearchRuntime
@@ -65,19 +66,31 @@ class BenchmarkHarness:
     ) -> dict[str, Provider]:
         normalized: dict[str, Provider] = {}
         if providers is not None:
-            provider_items: Sequence[tuple[str, Provider]] | Mapping[str, Provider]
+            provider_items: Sequence[tuple[str, Provider]]
             if isinstance(providers, Mapping):
-                provider_items = providers
+                provider_items = list(providers.items())
             else:
                 provider_items = [(pool_provider.name, pool_provider) for pool_provider in providers]
-            for provider_name, pool_provider in dict(provider_items).items():
-                if not hasattr(pool_provider, "name") or not callable(getattr(pool_provider, "run_action", None)):
-                    raise TypeError("providers entries must implement the Provider protocol.")
+            for provider_name, pool_provider in provider_items:
+                if not hasattr(pool_provider, "name") or not callable(
+                    getattr(pool_provider, "run_action", None)
+                ):
+                    raise ArgusValidationError(
+                        "providers entries must implement the Provider protocol."
+                    )
+                if provider_name in normalized:
+                    raise ArgusValidationError(
+                        f"providers contains duplicate provider names: {provider_name}."
+                    )
+                if provider_name != pool_provider.name:
+                    raise ArgusValidationError(
+                        "providers keys must match each provider's name."
+                    )
                 normalized[provider_name] = pool_provider
         if provider is not None:
             normalized.setdefault(provider.name, provider)
         if not normalized:
-            raise TypeError("BenchmarkHarness requires at least one provider.")
+            raise ArgusValidationError("BenchmarkHarness requires at least one provider.")
         return normalized
 
     def run(self, *, case_name: str | None = None) -> BenchmarkRunResult:

@@ -373,6 +373,19 @@ class FileSystemStateStoreTests(unittest.TestCase):
 
         self.assertEqual([manifest.run_id for manifest in manifests], ["run-a", "run-b"])
 
+    def test_create_run_rejects_non_finite_metadata_values(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+
+            with self.assertRaises(ArgusValidationError):
+                store.create_run(
+                    problem_spec=_sample_problem_spec(),
+                    provider_name="codex",
+                    budget=12,
+                    run_id="run-non-finite-metadata",
+                    metadata={"bad_float": float("nan")},
+                )
+
 
 def _sample_problem_spec() -> ProblemSpec:
     return ProblemSpec(
