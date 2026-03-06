@@ -26,6 +26,7 @@ class CliTests(unittest.TestCase):
             "Search execution is scaffolded but not wired yet.",
             stderr,
         )
+        self.assertNotIn("provider adapter", stderr)
 
     def test_inspect_latest_agent_run_reads_pointer_and_metadata(self) -> None:
         with TemporaryRepoRoot() as root:

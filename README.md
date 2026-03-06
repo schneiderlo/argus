@@ -74,9 +74,10 @@ Current implementation status:
 - `argus inspect` works today for persisted Ralph-loop artifact directories and for Argus run directories under `artifacts/runs/`.
 - The core typed domain models now exist in `src/argus/models/` with explicit validation and deterministic `to_dict`/`from_dict` round-tripping.
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
+- A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
 - `argus run` and `argus benchmark` still fail explicitly until the remaining runtime items are implemented.
 
-The remaining work is the actual Argus runtime: provider integration, evaluation, novelty filtering, search control flow, final compilation, and benchmarks.
+The remaining work is the actual Argus runtime: evaluation, novelty filtering, search control flow, final compilation, and benchmarks.
 
 Process guardrails:
 
