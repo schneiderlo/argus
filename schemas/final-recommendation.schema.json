@@ -10,7 +10,10 @@
     "high_upside_node_id",
     "rejected_but_insightful_ids",
     "summary_markdown",
-    "next_experiments"
+    "next_experiments",
+    "assumptions",
+    "failure_modes",
+    "reversal_conditions"
   ],
   "properties": {
     "best_bet_node_id": {
@@ -46,7 +49,27 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "failure_modes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reversal_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     }
   }
 }
-

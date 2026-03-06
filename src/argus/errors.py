@@ -9,5 +9,9 @@ class ArgusUserError(ArgusError):
     """Raised when the user input or requested artifact path is invalid."""
 
 
+class ArgusValidationError(ArgusError):
+    """Raised when structured data fails explicit validation."""
+
+
 class ArgusNotImplementedError(ArgusError):
     """Raised when the scaffolded CLI reaches a feature not yet implemented."""

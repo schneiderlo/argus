@@ -69,12 +69,13 @@ Each iteration does the following:
 
 The repository now contains the Python project scaffold described in `specs/02-system-architecture.md`: `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
 
-Current CLI behavior:
+Current implementation status:
 
 - `argus inspect` works today for persisted Ralph-loop artifact directories and metadata files.
-- `argus run` and `argus benchmark` fail explicitly until the remaining fix-plan items are implemented.
+- The core typed domain models now exist in `src/argus/models/` with explicit validation and deterministic `to_dict`/`from_dict` round-tripping.
+- `argus run` and `argus benchmark` still fail explicitly until the remaining runtime items are implemented.
 
-The remaining work is the actual Argus runtime: typed domain models, filesystem-backed state, provider integration, evaluation, novelty filtering, search control flow, final compilation, and benchmarks.
+The remaining work is the actual Argus runtime: filesystem-backed state, provider integration, evaluation, novelty filtering, search control flow, final compilation, and benchmarks.
 
 Process guardrails:
 
