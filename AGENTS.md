@@ -30,6 +30,7 @@ Read in this order:
 8. Keep docs in sync with reality. If the implementation changes the operator workflow or system architecture, update the relevant files in `specs/`, `README.md`, and `PROMPT.md`.
 9. Favor a clean Python implementation with typed models and deterministic file-based state over cleverness.
 10. If you change Python dependencies or project metadata, update `uv.lock` in the same increment and commit it.
+11. Do not reintroduce cheap lexical heuristics as the main evaluator or novelty layer. Use provider-backed structured judgment; keep deterministic logic limited to guardrails and validation.
 
 ## Coding Direction
 
@@ -40,7 +41,7 @@ The target application described by the specs is a Python 3.12 project with:
 - typed domain models for problem specs, candidates, critique objects, score vectors, nodes, learning notes, and final recommendations
 - a local filesystem state store
 - a provider abstraction with Codex as the first-class provider
-- evaluator-first search with novelty filtering and archived stepping stones
+- evaluator-first search with provider-backed semantic judgment, novelty filtering, and archived stepping stones
 
 ## Ralph Loop Behavior
 

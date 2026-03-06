@@ -14,7 +14,7 @@ Before any weighted score is calculated, a candidate must be checked against har
 
 ## Score Dimensions
 
-The initial deterministic evaluator must produce a vector with these dimensions:
+The initial provider-backed evaluator must produce a vector with these dimensions:
 
 - distinctiveness
 - usefulness
@@ -25,7 +25,7 @@ The initial deterministic evaluator must produce a vector with these dimensions:
 - adversarial robustness
 - evidence quality
 
-The weighting can evolve, but the first version must be explicit in code and covered by tests.
+The weighting and rubric can evolve, but the first version must be explicit in code, schema-validated, and covered by tests.
 
 ## Ranking Behavior
 
@@ -61,7 +61,10 @@ Provider-routing rewards should be derived from downstream usefulness, not provi
 - survivors after stress testing
 - nodes that contribute to the final winner set
 
+## Novelty
+
+Novelty must be judged semantically, not primarily through lexical overlap. Cheap deterministic similarity checks are acceptable only as prefilters or guardrails. The decision about whether two candidates are materially the same should come from a provider-backed structured novelty assessment.
+
 ## Benchmark Requirements
 
 The evaluator must be benchmarked against stored prompts. Benchmark cases must cover multiple problem families and record structured outputs so regressions can be detected.
-

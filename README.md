@@ -75,7 +75,7 @@ Current implementation status:
 - The core typed domain models now exist in `src/argus/models/` with explicit validation and deterministic `to_dict`/`from_dict` round-tripping.
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
-- A deterministic evaluator and text-similarity novelty filter now exist in `src/argus/eval/`; they produce explicit score vectors, hard-constraint failures, ranked node ordering, and configurable duplicate detection over stable candidate projections.
+- A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors and novelty judgments instead of relying on hand-written lexical heuristics.
 - `argus run` and `argus benchmark` still fail explicitly until the remaining runtime items are implemented.
 
 The remaining work is the actual Argus runtime: search control flow, final compilation, and benchmarks.
@@ -86,3 +86,4 @@ Process guardrails:
 - `uv.lock` is expected to stay committed and in sync with `pyproject.toml`; verification should fail rather than rewriting the lockfile during a normal loop iteration.
 - Python cache directories and bytecode files are ignored so loop runs do not dirty the tree with generated junk.
 - A successful iteration is expected to end in a clean, committed repository state.
+- The main evaluator and novelty layer are provider-backed and semantic. Deterministic logic is acceptable only for safety rails, validation, and cheap prefilters.

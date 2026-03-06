@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from argus.errors import ArgusValidationError
 from argus.eval import (
-    DEFAULT_EVALUATOR_WEIGHTS,
-    DeterministicEvaluator,
-    NoveltyConfig,
-    TextNoveltyFilter,
+    AgenticEvaluator,
+    AgenticNoveltyFilter,
+    EvaluationAssessment,
+    NoveltyAssessment,
     rank_nodes,
 )
 from argus.models import (
@@ -17,102 +19,43 @@ from argus.models import (
     Node,
     NodeLifecycleStatus,
     ProblemSpec,
+    ScoreVector,
 )
+from argus.providers import ProviderArtifacts, ProviderResponse
+
+_DEFAULT_SCORE = object()
 
 
-class EvaluatorTests(unittest.TestCase):
-    def test_evaluator_scores_supported_candidate_with_explicit_weights(self) -> None:
-        evaluator = DeterministicEvaluator()
-
-        score = evaluator.evaluate(
-            _problem_spec(),
-            _strong_candidate(),
-            novelty_score=0.81,
+class AgenticEvaluatorTests(unittest.TestCase):
+    def test_agentic_evaluator_delegates_to_provider_with_structured_rubric(self) -> None:
+        assessment = EvaluationAssessment(
+            score=_strong_score(),
+            summary="This candidate directly addresses the brief.",
+            strengths=["Strong fit to the local-first workflow requirement."],
+            weaknesses=["Could still feel heavy during setup."],
+            open_questions=["How much setup will self-serve teams tolerate?"],
         )
+        with TemporaryDirectory() as directory:
+            provider = FakeProvider(Path(directory), {"evaluate_candidate": assessment})
+            evaluator = AgenticEvaluator(provider=provider)
 
-        self.assertTrue(score.hard_constraint_pass)
-        self.assertEqual(score.hard_constraint_reasons, [])
-        self.assertGreater(score.usefulness, 0.75)
-        self.assertGreater(score.implementation_tractability, 0.9)
-        self.assertAlmostEqual(
-            score.total_score,
-            round(
-                score.distinctiveness * DEFAULT_EVALUATOR_WEIGHTS.distinctiveness
-                + score.usefulness * DEFAULT_EVALUATOR_WEIGHTS.usefulness
-                + score.specificity * DEFAULT_EVALUATOR_WEIGHTS.specificity
-                + score.plausibility * DEFAULT_EVALUATOR_WEIGHTS.plausibility
-                + score.implementation_tractability
-                * DEFAULT_EVALUATOR_WEIGHTS.implementation_tractability
-                + score.upside * DEFAULT_EVALUATOR_WEIGHTS.upside
-                + score.adversarial_robustness
-                * DEFAULT_EVALUATOR_WEIGHTS.adversarial_robustness
-                + score.evidence_quality * DEFAULT_EVALUATOR_WEIGHTS.evidence_quality,
-                4,
-            ),
-        )
-        self.assertGreater(score.confidence_estimate, 0.6)
+            result = evaluator.evaluate(
+                _problem_spec(),
+                _strong_candidate(),
+                novelty_score=0.72,
+            )
 
-    def test_evaluator_flags_hard_constraint_violation_and_zeroes_total(self) -> None:
-        evaluator = DeterministicEvaluator()
+        self.assertEqual(result, assessment)
+        self.assertEqual(provider.calls[0]["action_name"], "evaluate_candidate")
+        self.assertEqual(provider.calls[0]["input_payload"]["novelty_score"], 0.72)
+        self.assertIn("rubric", provider.calls[0]["input_payload"])
 
-        score = evaluator.evaluate(
-            _problem_spec(),
-            Candidate(
-                thesis="Use a white-glove sales team to sell consulting packages.",
-                mechanism="Add account executives who run custom onboarding workshops for each buyer.",
-                assumptions=["Enterprise deals will pay for bespoke support."],
-                strengths=["Could raise contract value."],
-                failure_modes=["Requires a field team."],
-                unknowns=["How large can the sales motion grow?"],
-                evidence=["Some enterprise buyers like hands-on onboarding."],
-            ),
-            novelty_score=0.2,
-        )
-
-        self.assertFalse(score.hard_constraint_pass)
-        self.assertIn(
-            "Candidate appears to violate constraint: No sales-assisted onboarding.",
-            score.hard_constraint_reasons,
-        )
-        self.assertEqual(score.total_score, 0.0)
-        self.assertLess(score.confidence_estimate, 0.5)
-
-    def test_rank_nodes_orders_passing_nodes_ahead_of_failed_nodes(self) -> None:
-        evaluator = DeterministicEvaluator()
-        strong_score = evaluator.evaluate(_problem_spec(), _strong_candidate(), novelty_score=0.81)
-        weaker_score = evaluator.evaluate(_problem_spec(), _weaker_candidate(), novelty_score=0.43)
-        failed_score = evaluator.evaluate(
-            _problem_spec(),
-            Candidate(
-                thesis="Use a services-heavy launch plan.",
-                mechanism="Hire consultants to onboard every team manually and customize the workflow.",
-                assumptions=["Hands-on setup will fix adoption."],
-                strengths=["Lets the team control every rollout."],
-                failure_modes=["Services costs scale badly."],
-                unknowns=["How many consultants would be required?"],
-                evidence=["Enterprise buyers sometimes accept support-heavy onboarding."],
-            ),
-            novelty_score=0.33,
-        )
-
+    def test_rank_nodes_orders_by_score_then_confidence(self) -> None:
         ranked = rank_nodes(
             [
-                _node("node-003", _weaker_candidate(), weaker_score, novelty_score=0.43),
-                _node("node-002", _strong_candidate(), strong_score, novelty_score=0.81),
-                _node(
-                    "node-001",
-                    Candidate(
-                        thesis="Use a services-heavy launch plan.",
-                        mechanism="Hire consultants to onboard every team manually and customize the workflow.",
-                        assumptions=["Hands-on setup will fix adoption."],
-                        strengths=["Lets the team control every rollout."],
-                        failure_modes=["Services costs scale badly."],
-                        unknowns=["How many consultants would be required?"],
-                        evidence=["Enterprise buyers sometimes accept support-heavy onboarding."],
-                    ),
-                    failed_score,
-                    novelty_score=0.33,
-                ),
+                _node("node-001", total_score=4.5, confidence=0.60, novelty_score=0.6),
+                _node("node-002", total_score=5.1, confidence=0.74, novelty_score=0.4),
+                _node("node-003", total_score=5.1, confidence=0.68, novelty_score=0.8),
             ]
         )
 
@@ -120,50 +63,133 @@ class EvaluatorTests(unittest.TestCase):
 
     def test_rank_nodes_requires_scores(self) -> None:
         with self.assertRaises(ArgusValidationError):
-            rank_nodes([_node("node-999", _strong_candidate(), None, novelty_score=0.6)])
+            rank_nodes([_node("node-999", score=None, novelty_score=0.6)])
 
 
-class NoveltyFilterTests(unittest.TestCase):
-    def test_novelty_filter_rejects_near_duplicate_candidate(self) -> None:
-        novelty_filter = TextNoveltyFilter()
-        archive = [
-            _node(
-                "node-0001",
-                _strong_candidate(),
-                None,
-                novelty_score=0.55,
-                lifecycle_status=NodeLifecycleStatus.ARCHIVED,
+class AgenticNoveltyFilterTests(unittest.TestCase):
+    def test_agentic_novelty_filter_short_circuits_for_empty_archive(self) -> None:
+        with TemporaryDirectory() as directory:
+            provider = FakeProvider(Path(directory), {})
+            novelty_filter = AgenticNoveltyFilter(provider=provider)
+
+            assessment = novelty_filter.assess(
+                problem_spec=_problem_spec(),
+                candidate=_strong_candidate(),
+                archive_nodes=[],
             )
-        ]
-
-        assessment = novelty_filter.assess(_near_duplicate_candidate(), archive)
-
-        self.assertFalse(assessment.is_novel)
-        self.assertEqual(assessment.nearest_neighbor_id, "node-0001")
-        self.assertGreaterEqual(
-            assessment.max_similarity,
-            NoveltyConfig().similarity_threshold,
-        )
-        self.assertLess(assessment.novelty_score, 0.25)
-
-    def test_novelty_filter_accepts_distinct_candidate(self) -> None:
-        novelty_filter = TextNoveltyFilter()
-        archive = [
-            _node(
-                "node-0001",
-                _strong_candidate(),
-                None,
-                novelty_score=0.55,
-                lifecycle_status=NodeLifecycleStatus.ARCHIVED,
-            )
-        ]
-
-        assessment = novelty_filter.assess(_distinct_candidate(), archive)
 
         self.assertTrue(assessment.is_novel)
-        self.assertEqual(assessment.nearest_neighbor_id, "node-0001")
-        self.assertLess(assessment.max_similarity, 0.4)
-        self.assertGreater(assessment.novelty_score, 0.6)
+        self.assertEqual(assessment.novelty_score, 1.0)
+        self.assertEqual(provider.calls, [])
+
+    def test_agentic_novelty_filter_delegates_semantic_judgment_to_provider(self) -> None:
+        assessment = NoveltyAssessment(
+            novelty_score=0.18,
+            max_similarity=0.82,
+            nearest_neighbor_id="node-0001",
+            similarity_threshold=0.8,
+            is_novel=False,
+            summary="This is mostly a rephrasing of the archived workflow-native idea.",
+            duplicate_signals=["Same underlying mechanism.", "Similar rollout plan."],
+        )
+        with TemporaryDirectory() as directory:
+            provider = FakeProvider(Path(directory), {"assess_novelty": assessment})
+            novelty_filter = AgenticNoveltyFilter(provider=provider)
+
+            result = novelty_filter.assess(
+                problem_spec=_problem_spec(),
+                candidate=_near_duplicate_candidate(),
+                archive_nodes=[_node("node-0001", novelty_score=0.55)],
+            )
+
+        self.assertEqual(result, assessment)
+        self.assertEqual(provider.calls[0]["action_name"], "assess_novelty")
+        self.assertEqual(
+            provider.calls[0]["input_payload"]["archive_candidates"][0]["node_id"],
+            "node-0001",
+        )
+
+
+class SchemaValidationTests(unittest.TestCase):
+    def test_evaluation_assessment_rejects_unknown_keys(self) -> None:
+        with self.assertRaises(ArgusValidationError):
+            EvaluationAssessment.from_dict(
+                {
+                    "score": _strong_score().to_dict(),
+                    "summary": "ok",
+                    "strengths": [],
+                    "weaknesses": [],
+                    "open_questions": [],
+                    "unexpected": True,
+                }
+            )
+
+    def test_novelty_assessment_rejects_blank_summary(self) -> None:
+        with self.assertRaises(ArgusValidationError):
+            NoveltyAssessment.from_dict(
+                {
+                    "novelty_score": 0.8,
+                    "max_similarity": 0.2,
+                    "nearest_neighbor_id": None,
+                    "similarity_threshold": 0.8,
+                    "is_novel": True,
+                    "summary": "   ",
+                    "duplicate_signals": [],
+                }
+            )
+
+
+class FakeProvider:
+    name = "fake"
+
+    def __init__(self, root_dir: Path, responses: dict[str, object]) -> None:
+        self.root_dir = root_dir
+        self.responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    def run_action(
+        self,
+        *,
+        action_name: ActionType | str,
+        problem_spec: ProblemSpec,
+        input_payload: dict[str, object],
+        output_schema,
+    ):
+        self.calls.append(
+            {
+                "action_name": action_name.value if isinstance(action_name, ActionType) else action_name,
+                "problem_spec": problem_spec,
+                "input_payload": input_payload,
+            }
+        )
+        normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
+        payload = self.responses[normalized_action]
+        artifacts_dir = self.root_dir / normalized_action
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        artifacts = ProviderArtifacts(
+            invocation_id=normalized_action,
+            invocation_dir=artifacts_dir,
+            prompt_path=artifacts_dir / "prompt.md",
+            schema_path=artifacts_dir / "schema.json",
+            last_message_path=artifacts_dir / "last-message.json",
+            response_path=artifacts_dir / "response.json",
+            stdout_path=artifacts_dir / "stdout.jsonl",
+            stderr_path=artifacts_dir / "stderr.txt",
+            metadata_path=artifacts_dir / "metadata.json",
+            sandbox_dir=artifacts_dir / "workspace",
+            failure_path=artifacts_dir / "failure.json",
+        )
+        return ProviderResponse(
+            provider_name=self.name,
+            action_name=normalized_action,
+            payload=payload,
+            raw_payload=payload.to_dict(),
+            prompt_sha256="fake",
+            artifacts=artifacts,
+            exit_status=0,
+            timestamp=datetime(2026, 3, 6, 3, 33, 40, tzinfo=timezone.utc),
+            model="fake-model",
+        )
 
 
 def _problem_spec() -> ProblemSpec:
@@ -182,9 +208,8 @@ def _strong_candidate() -> Candidate:
     return Candidate(
         thesis="Ship a workflow-native local-first engine that compounds team knowledge.",
         mechanism=(
-            "Persist every decision branch on-device, score each branch against "
-            "retention signals, and roll out a self-serve pilot that measures "
-            "workflow lock-in before deeper expansion."
+            "Persist every decision branch on-device, score each branch against retention "
+            "signals, and roll out a self-serve pilot that measures workflow lock-in."
         ),
         assumptions=[
             "Teams will configure a lightweight workflow if the output quality is durable."
@@ -210,8 +235,8 @@ def _near_duplicate_candidate() -> Candidate:
     return Candidate(
         thesis="Build a workflow-native local-first engine for product teams.",
         mechanism=(
-            "Persist every decision branch on device, score branches against "
-            "retention, and ship a self-serve pilot before expansion."
+            "Persist every decision branch on device, score branches against retention, "
+            "and ship a self-serve pilot before expansion."
         ),
         assumptions=["Teams will accept lightweight workflow setup for stronger outputs."],
         strengths=["Creates workflow lock-in for product teams."],
@@ -222,59 +247,61 @@ def _near_duplicate_candidate() -> Candidate:
     )
 
 
-def _weaker_candidate() -> Candidate:
-    return Candidate(
-        thesis="Offer reusable workflow templates with lighter customization.",
-        mechanism=(
-            "Ship a local-first template library, let teams copy proven decision "
-            "flows, and instrument activation before adding deeper workflow scoring."
-        ),
-        assumptions=["Teams prefer lighter setup over bespoke workflows."],
-        strengths=["Improves activation while staying self-serve."],
-        failure_modes=["Could create weaker lock-in than deeper workflow capture."],
-        unknowns=["Whether templates alone can materially improve retention."],
-        implementation_shape=(
-            "Launch with five templates, track reuse, and deepen only the templates "
-            "that change retention."
-        ),
-        evidence=["Template reuse can shorten setup time for self-serve teams."],
-    )
-
-
-def _distinct_candidate() -> Candidate:
-    return Candidate(
-        thesis="Turn the engine into a facilitator for live strategy workshops.",
-        mechanism=(
-            "Generate timed prompts for a moderator, capture spoken objections, and "
-            "export workshop summaries for later review."
-        ),
-        assumptions=["Teams prefer synchronous sessions over persistent workflows."],
-        strengths=["Fits teams that already plan together live."],
-        failure_modes=["Does not create durable workflow lock-in."],
-        unknowns=["Whether asynchronous users would return later."],
-        implementation_shape="Start with a lightweight meeting mode and transcript export.",
-        evidence=["Some teams already run strategy workshops in a shared call."],
+def _strong_score() -> ScoreVector:
+    return ScoreVector(
+        hard_constraint_pass=True,
+        hard_constraint_reasons=[],
+        distinctiveness=0.72,
+        usefulness=0.84,
+        specificity=0.81,
+        plausibility=0.79,
+        implementation_tractability=0.77,
+        upside=0.83,
+        adversarial_robustness=0.69,
+        evidence_quality=0.74,
+        total_score=5.19,
+        confidence_estimate=0.82,
     )
 
 
 def _node(
     node_id: str,
-    candidate: Candidate,
-    score,
     *,
+    total_score: float | None = None,
+    confidence: float = 0.5,
     novelty_score: float,
-    lifecycle_status: NodeLifecycleStatus = NodeLifecycleStatus.ADMITTED,
+    score: ScoreVector | object | None = _DEFAULT_SCORE,
 ) -> Node:
+    if score is _DEFAULT_SCORE:
+        resolved_score: ScoreVector | None = ScoreVector(
+            hard_constraint_pass=True,
+            hard_constraint_reasons=[],
+            distinctiveness=0.5,
+            usefulness=0.6,
+            specificity=0.6,
+            plausibility=0.6,
+            implementation_tractability=0.6,
+            upside=0.6,
+            adversarial_robustness=0.6,
+            evidence_quality=0.6,
+            total_score=0.0 if total_score is None else total_score,
+            confidence_estimate=confidence,
+        )
+    elif score is None or isinstance(score, ScoreVector):
+        resolved_score = score
+    else:
+        raise TypeError("score must be a ScoreVector, None, or the default sentinel.")
+
     return Node(
         node_id=node_id,
         parent_ids=[],
         depth=0,
         action_type=ActionType.GENERATE_SEED,
         provider_name="codex",
-        candidate=candidate,
-        score=score,
+        candidate=_strong_candidate(),
+        score=resolved_score,
         novelty_score=novelty_score,
-        lifecycle_status=lifecycle_status,
+        lifecycle_status=NodeLifecycleStatus.ADMITTED,
         metadata={},
-        created_at=datetime(2026, 3, 6, 2, 4, 56, tzinfo=timezone.utc),
+        created_at=datetime(2026, 3, 6, 3, 33, 40, tzinfo=timezone.utc),
     )

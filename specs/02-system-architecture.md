@@ -84,7 +84,7 @@ Providers must not directly own global application state.
 
 ### Evaluator
 
-The evaluator must be deterministic first. Pairwise or LLM-assisted judging can be layered on later, but the first version must not depend on an opaque model-based rubric just to function.
+The main evaluator must be provider-backed and schema-validated from the start. Deterministic logic is still useful, but only for validation guardrails, explicit hard checks, and other cheap safety rails. It must not be the primary quality judge for strategic ranking.
 
 ### Provider Layer
 

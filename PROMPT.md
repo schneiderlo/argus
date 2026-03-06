@@ -24,6 +24,7 @@ Execution rules:
 10. If you change Python dependencies or project metadata, update `uv.lock` in the same increment.
 11. If verification still fails, use that output to drive the next increment and document the remaining gap in `fix_plan.md`.
 12. If you change the operator workflow, update `README.md`, `AGENTS.md`, and this prompt if needed.
+13. Do not use cheap keyword or lexical heuristics as the primary evaluator or novelty layer. Use provider-backed structured judgment, and keep deterministic logic limited to guardrails and validation.
 
 Product target:
 
@@ -31,6 +32,7 @@ Product target:
 - Treat idea generation as search over structured candidate states, not as a one-shot answer.
 - Preserve archived stepping stones and reject near-duplicates.
 - Use evaluator-first logic, not style-first logic.
+- Prefer provider-backed semantic judgment over hand-written lexical scoring.
 - Produce final outputs that include a best bet, a conservative bet, a high-upside bet, rejected alternatives worth noting, and next experiments.
 
 Quality bar:

@@ -1,19 +1,12 @@
-"""Deterministic evaluation and novelty filtering helpers."""
+"""Provider-backed evaluation and novelty helpers."""
 
-from argus.eval.evaluator import (
-    DEFAULT_EVALUATOR_WEIGHTS,
-    DeterministicEvaluator,
-    EvaluatorWeights,
-    rank_nodes,
-)
-from argus.eval.novelty import NoveltyAssessment, NoveltyConfig, TextNoveltyFilter
+from argus.eval.evaluator import AgenticEvaluator, EvaluationAssessment, rank_nodes
+from argus.eval.novelty import AgenticNoveltyFilter, NoveltyAssessment
 
 __all__ = [
-    "DEFAULT_EVALUATOR_WEIGHTS",
-    "DeterministicEvaluator",
-    "EvaluatorWeights",
+    "AgenticEvaluator",
+    "AgenticNoveltyFilter",
+    "EvaluationAssessment",
     "NoveltyAssessment",
-    "NoveltyConfig",
-    "TextNoveltyFilter",
     "rank_nodes",
 ]

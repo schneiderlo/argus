@@ -42,8 +42,7 @@ Argus reaches its first meaningful milestone when the repository contains:
 - typed domain models matching the core spec objects
 - a filesystem-backed run state store
 - a working Codex provider wrapper using `codex exec`
-- a deterministic evaluator and novelty filter
+- a provider-backed evaluator and semantic novelty judge
 - a simple search loop that can frame, generate, score, stress-test, deepen, and compile results
 - tests covering the critical control flow
 - benchmark fixtures and a harness skeleton
-
