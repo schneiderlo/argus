@@ -30,8 +30,10 @@
       }
     },
     "context": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "required": []
     }
   }
 }
-

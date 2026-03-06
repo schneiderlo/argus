@@ -207,7 +207,12 @@ def _problem_spec_schema() -> dict[str, JSONValue]:
             "request": {"type": "string", "minLength": 1},
             "constraints": _string_array_schema(),
             "success_criteria": _string_array_schema(),
-            "context": {"type": "object"},
+            "context": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+                "required": [],
+            },
         },
     }
 
@@ -223,6 +228,7 @@ def _candidate_schema() -> dict[str, JSONValue]:
             "strengths",
             "failure_modes",
             "unknowns",
+            "implementation_shape",
             "evidence",
         ],
         "properties": {
@@ -232,7 +238,10 @@ def _candidate_schema() -> dict[str, JSONValue]:
             "strengths": _string_array_schema(),
             "failure_modes": _string_array_schema(),
             "unknowns": _string_array_schema(),
-            "implementation_shape": {"type": "string", "minLength": 1},
+            "implementation_shape": {
+                "type": ["string", "null"],
+                "minLength": 1,
+            },
             "evidence": _string_array_schema(),
         },
     }

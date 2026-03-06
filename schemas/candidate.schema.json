@@ -11,6 +11,7 @@
     "strengths",
     "failure_modes",
     "unknowns",
+    "implementation_shape",
     "evidence"
   ],
   "properties": {
@@ -51,7 +52,11 @@
       }
     },
     "implementation_shape": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
     },
     "evidence": {
       "type": "array",
@@ -62,4 +67,3 @@
     }
   }
 }
-

@@ -1,4 +1,7 @@
 artifacts/agent_runs/
+artifacts/benchmarks/
+artifacts/provider_invocations/
+artifacts/runs/
 artifacts/verify/latest.txt
 artifacts/verify/latest-success.txt
 artifacts/latest-run.txt

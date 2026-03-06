@@ -20,9 +20,28 @@ from argus.providers import (
     ProviderInvocationError,
     StructuredOutputSchema,
 )
+from argus.search.contracts import problem_frame_schema
 
 
 class CodexProviderTests(unittest.TestCase):
+    def test_problem_frame_schema_marks_candidate_implementation_shape_as_required_nullable(self) -> None:
+        schema = problem_frame_schema().json_schema
+        framing_candidate = schema["properties"]["framing_candidate"]
+        self.assertIn("implementation_shape", framing_candidate["required"])
+        self.assertEqual(
+            framing_candidate["properties"]["implementation_shape"]["type"],
+            ["string", "null"],
+        )
+        self.assertEqual(
+            schema["properties"]["problem_spec"]["properties"]["context"],
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+                "required": [],
+            },
+        )
+
     def test_run_action_materializes_prompt_and_validates_structured_output(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(
