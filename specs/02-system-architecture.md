@@ -37,6 +37,7 @@ The CLI entrypoint must be named `argus`. Initial subcommands should include:
 
 - `argus run` to execute a search for a single request
 - `argus benchmark` to execute stored benchmark cases
+- `argus feedback` to ingest shipped experiment outcomes for persisted run nodes
 - `argus inspect` to inspect persisted run artifacts
 
 ### Models
@@ -63,6 +64,7 @@ Storage must be filesystem-backed at first. It must persist:
 - score vectors
 - critiques
 - learning notes
+- outcome feedback records linked to persisted runs and nodes
 - reusable cross-run learning memory with provenance
 - benchmark outputs
 - final compiled recommendations

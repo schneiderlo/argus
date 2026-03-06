@@ -41,6 +41,7 @@ Product target:
 - Prefer provider-backed semantic judgment over hand-written lexical scoring.
 - Treat evaluator prompt quality and benchmarked judgment quality as first-class product work, not prompt polish.
 - Reduce runtime latency through safe bounded concurrency when independent provider calls dominate wall-clock time.
+- Let shipped outcome feedback flow back into persisted reusable memory so future evaluation can learn from real experiments.
 - Produce final outputs that include a best bet, a conservative bet, a high-upside bet, rejected alternatives worth noting, and next experiments.
 
 Quality bar:

@@ -14,6 +14,8 @@ from argus.models import (
     LearningMemory,
     LearningNote,
     Node,
+    OutcomeFeedback,
+    OutcomeFeedbackLedger,
     ProblemSpec,
     ProviderRoutingStats,
     SearchIsland,
@@ -41,6 +43,7 @@ class RunManifest:
     state_path: str | None = None
     learning_notes_path: str | None = None
     reusable_learning_path: str | None = None
+    outcome_feedback_path: str | None = None
     final_recommendation_path: str | None = None
     summary_path: str | None = None
     nodes_dir: str = "nodes"
@@ -103,6 +106,14 @@ class RunManifest:
         )
         object.__setattr__(
             self,
+            "outcome_feedback_path",
+            _normalize_optional_relative_path(
+                self.outcome_feedback_path,
+                "outcome_feedback_path",
+            ),
+        )
+        object.__setattr__(
+            self,
             "final_recommendation_path",
             _normalize_optional_relative_path(
                 self.final_recommendation_path,
@@ -139,6 +150,7 @@ class RunManifest:
             "state_path": self.state_path,
             "learning_notes_path": self.learning_notes_path,
             "reusable_learning_path": self.reusable_learning_path,
+            "outcome_feedback_path": self.outcome_feedback_path,
             "final_recommendation_path": self.final_recommendation_path,
             "summary_path": self.summary_path,
             "nodes_dir": self.nodes_dir,
@@ -172,7 +184,7 @@ class RunManifest:
                 "metadata",
                 "error",
             },
-            optional={"reusable_learning_path"},
+            optional={"reusable_learning_path", "outcome_feedback_path"},
         )
         return cls(
             run_id=data["run_id"],
@@ -186,6 +198,7 @@ class RunManifest:
             state_path=data["state_path"],
             learning_notes_path=data["learning_notes_path"],
             reusable_learning_path=data.get("reusable_learning_path"),
+            outcome_feedback_path=data.get("outcome_feedback_path"),
             final_recommendation_path=data["final_recommendation_path"],
             summary_path=data["summary_path"],
             nodes_dir=data["nodes_dir"],
@@ -334,6 +347,7 @@ class PersistedRun:
     problem_spec: ProblemSpec
     state: SearchState | None = None
     reusable_learning_context: LearningMemory | None = None
+    outcome_feedback: OutcomeFeedbackLedger | None = None
     final_recommendation: FinalRecommendation | None = None
     summary_markdown: str | None = None
     routing_summary: ProviderRoutingStats | None = None
@@ -341,6 +355,7 @@ class PersistedRun:
 
 class FileSystemStateStore:
     _LEARNING_MEMORY_PATH = "learning-memory.json"
+    _OUTCOME_FEEDBACK_LEDGER_PATH = "outcome-feedback-ledger.json"
     _ROUTING_SUMMARY_PATH = "routing-summary.json"
     _ROUTING_STATS_PATH = "provider-routing-stats.json"
 
@@ -505,6 +520,11 @@ class FileSystemStateStore:
             reusable_learning_context = LearningMemory.from_dict(
                 self._read_json_required(run_dir / manifest.reusable_learning_path)
             )
+        outcome_feedback: OutcomeFeedbackLedger | None = None
+        if manifest.outcome_feedback_path is not None:
+            outcome_feedback = OutcomeFeedbackLedger.from_dict(
+                self._read_json_required(run_dir / manifest.outcome_feedback_path)
+            )
         final_recommendation: FinalRecommendation | None = None
         if manifest.final_recommendation_path is not None:
             if state is None:
@@ -536,6 +556,7 @@ class FileSystemStateStore:
             problem_spec=problem_spec,
             state=state,
             reusable_learning_context=reusable_learning_context,
+            outcome_feedback=outcome_feedback,
             final_recommendation=final_recommendation,
             summary_markdown=summary_markdown,
             routing_summary=routing_summary,
@@ -612,6 +633,12 @@ class FileSystemStateStore:
             return LearningMemory.empty()
         return LearningMemory.from_dict(self._read_json_required(path))
 
+    def load_outcome_feedback_ledger(self) -> OutcomeFeedbackLedger:
+        path = self.root_dir / self._OUTCOME_FEEDBACK_LEDGER_PATH
+        if not path.is_file():
+            return OutcomeFeedbackLedger.empty()
+        return OutcomeFeedbackLedger.from_dict(self._read_json_required(path))
+
     def save_learning_memory(self, memory: LearningMemory) -> LearningMemory:
         if not isinstance(memory, LearningMemory):
             raise ArgusValidationError(
@@ -621,6 +648,19 @@ class FileSystemStateStore:
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self._write_json(self.root_dir / self._LEARNING_MEMORY_PATH, memory.to_dict())
         return memory
+
+    def save_outcome_feedback_ledger(
+        self,
+        ledger: OutcomeFeedbackLedger,
+    ) -> OutcomeFeedbackLedger:
+        if not isinstance(ledger, OutcomeFeedbackLedger):
+            raise ArgusValidationError(
+                "ledger must be an OutcomeFeedbackLedger instance, "
+                f"got {type(ledger).__name__}."
+            )
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        self._write_json(self.root_dir / self._OUTCOME_FEEDBACK_LEDGER_PATH, ledger.to_dict())
+        return ledger
 
     def merge_learning_memory(
         self,
@@ -645,6 +685,70 @@ class FileSystemStateStore:
             observed_at=updated_at,
         )
         return self.save_learning_memory(merged)
+
+    def record_outcome_feedback(
+        self,
+        feedback: OutcomeFeedback,
+    ) -> tuple[RunManifest, OutcomeFeedbackLedger, LearningMemory]:
+        if not isinstance(feedback, OutcomeFeedback):
+            raise ArgusValidationError(
+                "feedback must be an OutcomeFeedback instance, "
+                f"got {type(feedback).__name__}."
+            )
+        persisted_run = self.load_run(feedback.run_id)
+        if persisted_run.state is None:
+            raise ArgusValidationError(
+                f"Run {feedback.run_id!r} has no persisted state to attach feedback to."
+            )
+        if feedback.node_id not in persisted_run.state.nodes:
+            raise ArgusValidationError(
+                f"Run {feedback.run_id!r} does not contain node {feedback.node_id!r}."
+            )
+        node = persisted_run.state.nodes[feedback.node_id]
+        if node.candidate.thesis != feedback.candidate_thesis:
+            raise ArgusValidationError(
+                "feedback candidate_thesis must match the persisted node thesis."
+            )
+        if persisted_run.problem_spec.request != feedback.problem_statement:
+            raise ArgusValidationError(
+                "feedback problem_statement must match the persisted run problem."
+            )
+
+        manifest, run_dir = self._load_manifest(feedback.run_id)
+        run_feedback = (
+            OutcomeFeedbackLedger.empty()
+            if persisted_run.outcome_feedback is None
+            else persisted_run.outcome_feedback
+        ).append(feedback)
+        outcome_feedback_path = self._write_optional_json(
+            run_dir,
+            "outcome-feedback.json",
+            run_feedback.to_dict(),
+        )
+
+        merged_metadata = dict(manifest.metadata)
+        merged_metadata.update(
+            {
+                "last_outcome_feedback_id": feedback.feedback_id,
+                "last_outcome_status": feedback.outcome_status.value,
+                "outcome_feedback_count": len(run_feedback.entries),
+            }
+        )
+        refreshed_manifest = replace(
+            manifest,
+            updated_at=max(manifest.updated_at, feedback.recorded_at),
+            outcome_feedback_path=outcome_feedback_path,
+            metadata=merged_metadata,
+        )
+        self._write_manifest(run_dir, refreshed_manifest)
+
+        aggregate_feedback = self.save_outcome_feedback_ledger(
+            self.load_outcome_feedback_ledger().append(feedback)
+        )
+        merged_memory = self.save_learning_memory(
+            self.load_learning_memory().merge_outcome_feedback(feedback)
+        )
+        return refreshed_manifest, aggregate_feedback, merged_memory
 
     def merge_provider_routing_stats(
         self,

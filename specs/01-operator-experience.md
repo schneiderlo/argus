@@ -29,6 +29,8 @@ The operator must be able to steer the system by editing:
 
 The operator should not need to edit the loop runner for normal steering.
 
+The operator must also be able to feed back shipped experiment results without hand-editing stored ledgers. The repository should therefore expose a CLI workflow such as `argus feedback ...` that records typed outcome evidence against a persisted run/node and folds the derived learnings back into reusable memory.
+
 ## Required Artifacts Per Iteration
 
 Each run iteration must produce a dedicated folder under `artifacts/agent_runs/` that stores:
@@ -62,4 +64,3 @@ The operator should be able to inspect the repository and understand:
 - what the last few loop iterations attempted
 
 That means the docs, fix plan, and artifact layout must remain readable and current.
-

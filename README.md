@@ -48,6 +48,14 @@ uv run argus benchmark
 uv run argus benchmark --case technical-architecture-local-first
 ```
 
+Record shipped outcome feedback against a persisted run/node and feed it back into reusable memory:
+
+```bash
+uv run argus feedback run-20260306T020456Z --node node-0007 --outcome validated \
+  --summary "Teams kept returning because weekly review prep got faster." \
+  --winning-pattern "Teams accept setup work when the audit trail saves recurring review time."
+```
+
 Run one Ralph-loop iteration:
 
 ```bash
@@ -102,9 +110,10 @@ Current implementation status:
 - The search runtime now also supports configurable multi-island search through `SearchPolicy.island_policies`, with per-island archive/frontier/pruned state persisted in each run and final summaries that label which island produced each selected bet.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn from admitted nodes, strong scores, useful critiques, and winner contributions.
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, and each `argus run` snapshots the imported reusable subset it used at `artifacts/runs/<run_id>/reusable-learning-context.json` before feeding those priors back into later framing, generation, evaluation, ranking, and critique steps.
+- `argus feedback` now records typed shipped-outcome evidence per run node, persists per-run and aggregate feedback ledgers, and folds outcome-backed learnings into the shared reusable-memory ledger so future evaluation can weight shipped evidence above search-only priors.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The largest remaining implementation gap is outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
+Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
 
 Process guardrails:
 

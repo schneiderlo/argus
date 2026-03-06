@@ -12,11 +12,14 @@ from argus.models import (
     Candidate,
     Critique,
     FinalRecommendation,
+    LearningEvidenceSource,
     LearningMemory,
     LearningNote,
     LearningNoteType,
     Node,
     NodeLifecycleStatus,
+    OutcomeFeedback,
+    OutcomeFeedbackStatus,
     ProblemSpec,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
@@ -273,6 +276,66 @@ class FileSystemStateStoreTests(unittest.TestCase):
         self.assertEqual(entry.observation_count, 2)
         self.assertEqual(entry.source_run_ids, ["run-20260306T020501Z", "run-20260306T020502Z"])
         self.assertEqual(entry.last_seen_at, datetime(2026, 3, 6, 2, 25, 0, tzinfo=timezone.utc))
+
+    def test_record_outcome_feedback_persists_run_and_global_artifacts(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            state = _sample_search_state(problem_spec)
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020503Z",
+            )
+            store.save_snapshot(
+                manifest.run_id,
+                state=state,
+                final_recommendation=_sample_final_recommendation(),
+                summary_markdown="Prefer the workflow-native bet.",
+                status=RunStatus.COMPLETED,
+            )
+            feedback = OutcomeFeedback(
+                feedback_id="feedback-20260306T023000Z",
+                run_id=manifest.run_id,
+                node_id="node-0002",
+                candidate_thesis=state.nodes["node-0002"].candidate.thesis,
+                problem_statement=problem_spec.request,
+                outcome_status=OutcomeFeedbackStatus.VALIDATED,
+                summary="Teams stuck with the workflow because weekly review prep became faster.",
+                learning_notes=[
+                    LearningNote(
+                        note_type=LearningNoteType.WINNING_PATTERN,
+                        text="Teams will accept setup work when the audit trail saves recurring review time.",
+                        source_node_ids=["node-0002"],
+                    )
+                ],
+                evidence=["Pilot teams completed three weekly reviews without churn."],
+                experiment_label="weekly-review-pilot",
+                recorded_at=datetime(2026, 3, 6, 2, 30, 0, tzinfo=timezone.utc),
+            )
+
+            refreshed_manifest, aggregate_feedback, merged_memory = store.record_outcome_feedback(
+                feedback
+            )
+            loaded = store.load_run(manifest.run_id)
+            run_dir = store.root_dir / manifest.run_id
+            run_feedback_exists = (run_dir / "outcome-feedback.json").is_file()
+            aggregate_feedback_exists = (
+                store.root_dir / "outcome-feedback-ledger.json"
+            ).is_file()
+
+        self.assertEqual(refreshed_manifest.outcome_feedback_path, "outcome-feedback.json")
+        self.assertTrue(run_feedback_exists)
+        self.assertTrue(aggregate_feedback_exists)
+        self.assertEqual(len(aggregate_feedback.entries), 1)
+        self.assertIsNotNone(loaded.outcome_feedback)
+        self.assertEqual(loaded.outcome_feedback.entries[0], feedback)
+        self.assertEqual(len(merged_memory.entries), 1)
+        self.assertEqual(
+            merged_memory.entries[0].evidence_sources,
+            [LearningEvidenceSource.OUTCOME_FEEDBACK],
+        )
 
     def test_list_runs_returns_sorted_run_manifests(self) -> None:
         with TemporaryDirectory() as directory:

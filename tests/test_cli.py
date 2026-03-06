@@ -11,9 +11,16 @@ from unittest.mock import patch
 from argus.cli import _build_provider, build_parser, main
 from argus.config import ArgusConfig
 from argus.errors import ArgusUserError
-from argus.models import ProblemSpec
+from argus.models import (
+    ActionType,
+    Candidate,
+    Node,
+    NodeLifecycleStatus,
+    ProblemSpec,
+    SearchState,
+)
 from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider
-from argus.storage import FileSystemStateStore
+from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import SearchFixtureProvider
 
 
@@ -21,7 +28,7 @@ class CliTests(unittest.TestCase):
     def test_parser_exposes_expected_subcommands(self) -> None:
         parser = build_parser()
         subcommands = parser._subparsers._group_actions[0].choices
-        self.assertEqual(set(subcommands), {"run", "benchmark", "inspect"})
+        self.assertEqual(set(subcommands), {"run", "benchmark", "feedback", "inspect"})
 
     def test_build_provider_supports_codex_gemini_and_opencode(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -183,6 +190,57 @@ class CliTests(unittest.TestCase):
         self.assertIn("run.json", payload["recognized_artifacts"])
         self.assertIn("problem-spec.json", payload["recognized_artifacts"])
 
+    def test_feedback_command_persists_outcome_feedback_and_learning_memory(self) -> None:
+        with TemporaryRepoRoot() as root:
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            manifest = store.create_run(
+                problem_spec=ProblemSpec(
+                    request="Find the best retention strategy.",
+                    constraints=["Stay self-serve."],
+                    success_criteria=["Increase activation."],
+                    context={},
+                ),
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020600Z",
+            )
+            store.save_snapshot(
+                manifest.run_id,
+                state=_feedback_ready_state(),
+                status=RunStatus.COMPLETED,
+            )
+
+            exit_code, stdout, stderr = _run_cli(
+                [
+                    "--root",
+                    str(root),
+                    "feedback",
+                    manifest.run_id,
+                    "--node",
+                    "node-0002",
+                    "--outcome",
+                    "validated",
+                    "--summary",
+                    "Pilot teams kept returning because weekly review prep got faster.",
+                    "--winning-pattern",
+                    "Teams accept setup work when the audit trail saves recurring review time.",
+                    "--evidence",
+                    "4 of 5 pilot teams completed three weekly review cycles.",
+                ]
+            )
+
+            run_dir = store.root_dir / manifest.run_id
+            run_feedback_exists = (run_dir / "outcome-feedback.json").is_file()
+            learning_memory_exists = (store.root_dir / "learning-memory.json").is_file()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("feedback_id=feedback-", stdout)
+        self.assertIn("outcome=validated", stdout)
+        self.assertIn("learning_notes=1", stdout)
+        self.assertTrue(run_feedback_exists)
+        self.assertTrue(learning_memory_exists)
+
 
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:
     stdout_buffer = io.StringIO()
@@ -231,3 +289,67 @@ def _write_benchmark_case_fixture(path: Path) -> None:
         "tags": ["fixture", "retention"],
     }
     (path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _feedback_ready_state() -> SearchState:
+    problem_spec = ProblemSpec(
+        request="Find the best retention strategy.",
+        constraints=["Stay self-serve."],
+        success_criteria=["Increase activation."],
+        context={},
+    )
+    root_node = Node(
+        node_id="node-0001",
+        parent_ids=[],
+        depth=0,
+        action_type=ActionType.FRAME_PROBLEM,
+        provider_name="codex",
+        candidate=Candidate(
+            thesis="Frame the search around workflow-native retention.",
+            mechanism="Bias the search toward repeatable operational rituals instead of decorative engagement loops.",
+            assumptions=["Teams value repeated review workflows."],
+            strengths=["Keeps the search grounded."],
+            failure_modes=["Could overfit to existing habits."],
+            unknowns=["How much setup teams will tolerate."],
+            evidence=["The brief prioritizes activation over decorative usage."],
+        ),
+        novelty_score=1.0,
+        lifecycle_status=NodeLifecycleStatus.ADMITTED,
+        metadata={},
+        created_at="2026-03-06T02:06:00Z",
+    )
+    candidate_node = Node(
+        node_id="node-0002",
+        parent_ids=["node-0001"],
+        depth=1,
+        action_type=ActionType.DEEPEN,
+        provider_name="codex",
+        candidate=Candidate(
+            thesis="Workflow-native archive with weekly reviews",
+            mechanism="Turn weekly review prep into a durable ritual by persisting the audit trail teams already need.",
+            assumptions=["Teams already run weekly reviews."],
+            strengths=["Creates a recurring retention hook."],
+            failure_modes=["May add setup work before value is visible."],
+            unknowns=["How quickly teams trust the audit trail."],
+            evidence=["The product needs repeatable reasons to return."],
+        ),
+        novelty_score=0.78,
+        lifecycle_status=NodeLifecycleStatus.ADMITTED,
+        metadata={},
+        created_at="2026-03-06T02:08:00Z",
+    )
+    return SearchState(
+        problem_spec=problem_spec,
+        root_id="node-0001",
+        nodes={
+            "node-0001": root_node,
+            "node-0002": candidate_node,
+        },
+        archive_ids=["node-0001", "node-0002"],
+        frontier_ids=["node-0002"],
+        pruned_ids=[],
+        winner_ids=[],
+        learning_notes=[],
+        budget_spent=2,
+        step_count=2,
+    )

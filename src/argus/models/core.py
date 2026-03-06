@@ -43,6 +43,18 @@ class LearningNoteType(StrEnum):
     SUMMARY = "summary"
 
 
+class LearningEvidenceSource(StrEnum):
+    SEARCH_RUN = "search_run"
+    OUTCOME_FEEDBACK = "outcome_feedback"
+
+
+class OutcomeFeedbackStatus(StrEnum):
+    VALIDATED = "validated"
+    MIXED = "mixed"
+    INVALIDATED = "invalidated"
+    INCONCLUSIVE = "inconclusive"
+
+
 @dataclass(frozen=True, slots=True)
 class ProblemSpec:
     request: str
@@ -501,10 +513,121 @@ class LearningNote:
 
 
 @dataclass(frozen=True, slots=True)
+class OutcomeFeedback:
+    feedback_id: str
+    run_id: str
+    node_id: str
+    candidate_thesis: str
+    problem_statement: str
+    outcome_status: OutcomeFeedbackStatus
+    summary: str
+    learning_notes: list[LearningNote] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+    experiment_label: str | None = None
+    recorded_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "feedback_id", _normalize_non_empty_string(self.feedback_id, "feedback_id"))
+        object.__setattr__(self, "run_id", _normalize_non_empty_string(self.run_id, "run_id"))
+        object.__setattr__(self, "node_id", _normalize_non_empty_string(self.node_id, "node_id"))
+        object.__setattr__(
+            self,
+            "candidate_thesis",
+            _normalize_non_empty_string(self.candidate_thesis, "candidate_thesis"),
+        )
+        object.__setattr__(
+            self,
+            "problem_statement",
+            _normalize_non_empty_string(self.problem_statement, "problem_statement"),
+        )
+        object.__setattr__(
+            self,
+            "outcome_status",
+            _normalize_enum(self.outcome_status, OutcomeFeedbackStatus, "outcome_status"),
+        )
+        object.__setattr__(self, "summary", _normalize_non_empty_string(self.summary, "summary"))
+        object.__setattr__(
+            self,
+            "learning_notes",
+            _normalize_outcome_feedback_learning_notes(
+                self.learning_notes,
+                node_id=self.node_id,
+            ),
+        )
+        object.__setattr__(self, "evidence", _normalize_string_list(self.evidence, "evidence"))
+        object.__setattr__(
+            self,
+            "experiment_label",
+            _normalize_optional_string(self.experiment_label, "experiment_label"),
+        )
+        object.__setattr__(
+            self,
+            "recorded_at",
+            _normalize_datetime(self.recorded_at, "recorded_at"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "feedback_id": self.feedback_id,
+            "run_id": self.run_id,
+            "node_id": self.node_id,
+            "candidate_thesis": self.candidate_thesis,
+            "problem_statement": self.problem_statement,
+            "outcome_status": self.outcome_status.value,
+            "summary": self.summary,
+            "learning_notes": [note.to_dict() for note in self.learning_notes],
+            "evidence": list(self.evidence),
+            "recorded_at": _dump_datetime(self.recorded_at),
+        }
+        if self.experiment_label is not None:
+            payload["experiment_label"] = self.experiment_label
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "OutcomeFeedback":
+        data = _validate_payload_keys(
+            payload,
+            field_name="OutcomeFeedback",
+            required={
+                "feedback_id",
+                "run_id",
+                "node_id",
+                "candidate_thesis",
+                "problem_statement",
+                "outcome_status",
+                "summary",
+                "learning_notes",
+                "evidence",
+                "recorded_at",
+            },
+            optional={"experiment_label"},
+        )
+        return cls(
+            feedback_id=data["feedback_id"],
+            run_id=data["run_id"],
+            node_id=data["node_id"],
+            candidate_thesis=data["candidate_thesis"],
+            problem_statement=data["problem_statement"],
+            outcome_status=data["outcome_status"],
+            summary=data["summary"],
+            learning_notes=[
+                LearningNote.from_dict(item)
+                for item in _normalize_sequence(data["learning_notes"], "learning_notes")
+            ],
+            evidence=data["evidence"],
+            experiment_label=data.get("experiment_label"),
+            recorded_at=data["recorded_at"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReusableLearningNote:
     note_id: str
     note_type: LearningNoteType
     text: str
+    evidence_sources: list[LearningEvidenceSource] = field(
+        default_factory=lambda: [LearningEvidenceSource.SEARCH_RUN]
+    )
     source_run_ids: list[str] = field(default_factory=list)
     source_node_refs: list[str] = field(default_factory=list)
     problem_statements: list[str] = field(default_factory=list)
@@ -520,6 +643,11 @@ class ReusableLearningNote:
             _normalize_enum(self.note_type, LearningNoteType, "note_type"),
         )
         object.__setattr__(self, "text", _normalize_non_empty_string(self.text, "text"))
+        object.__setattr__(
+            self,
+            "evidence_sources",
+            _normalize_learning_evidence_sources(self.evidence_sources, "evidence_sources"),
+        )
         object.__setattr__(
             self,
             "source_run_ids",
@@ -558,6 +686,7 @@ class ReusableLearningNote:
             "note_id": self.note_id,
             "note_type": self.note_type.value,
             "text": self.text,
+            "evidence_sources": [source.value for source in self.evidence_sources],
             "source_run_ids": list(self.source_run_ids),
             "source_node_refs": list(self.source_node_refs),
             "problem_statements": list(self.problem_statements),
@@ -582,11 +711,13 @@ class ReusableLearningNote:
                 "first_seen_at",
                 "last_seen_at",
             },
+            optional={"evidence_sources"},
         )
         return cls(
             note_id=data["note_id"],
             note_type=data["note_type"],
             text=data["text"],
+            evidence_sources=data.get("evidence_sources", [LearningEvidenceSource.SEARCH_RUN.value]),
             source_run_ids=data["source_run_ids"],
             source_node_refs=data["source_node_refs"],
             problem_statements=data["problem_statements"],
@@ -603,6 +734,7 @@ class ReusableLearningNote:
         problem_spec: ProblemSpec,
         note: LearningNote,
         observed_at: datetime | None = None,
+        evidence_source: LearningEvidenceSource = LearningEvidenceSource.SEARCH_RUN,
     ) -> "ReusableLearningNote":
         if not isinstance(problem_spec, ProblemSpec):
             raise ArgusValidationError(
@@ -622,6 +754,7 @@ class ReusableLearningNote:
             note_id=_build_reusable_learning_note_id(note.note_type, note.text),
             note_type=note.note_type,
             text=note.text,
+            evidence_sources=[evidence_source],
             source_run_ids=[normalized_run_id],
             source_node_refs=[
                 f"{normalized_run_id}:{node_id}" for node_id in note.source_node_ids
@@ -630,6 +763,37 @@ class ReusableLearningNote:
             observation_count=1,
             first_seen_at=timestamp,
             last_seen_at=timestamp,
+        )
+
+    @classmethod
+    def from_outcome_feedback(
+        cls,
+        *,
+        feedback: OutcomeFeedback,
+        note: LearningNote,
+    ) -> "ReusableLearningNote":
+        if not isinstance(feedback, OutcomeFeedback):
+            raise ArgusValidationError(
+                "feedback must be an OutcomeFeedback instance, "
+                f"got {type(feedback).__name__}."
+            )
+        if not isinstance(note, LearningNote):
+            raise ArgusValidationError(
+                f"note must be a LearningNote instance, got {type(note).__name__}."
+            )
+        return cls(
+            note_id=_build_reusable_learning_note_id(note.note_type, note.text),
+            note_type=note.note_type,
+            text=note.text,
+            evidence_sources=[LearningEvidenceSource.OUTCOME_FEEDBACK],
+            source_run_ids=[feedback.run_id],
+            source_node_refs=[
+                f"{feedback.run_id}:{node_id}" for node_id in note.source_node_ids
+            ],
+            problem_statements=[feedback.problem_statement],
+            observation_count=1,
+            first_seen_at=feedback.recorded_at,
+            last_seen_at=feedback.recorded_at,
         )
 
     def merge(self, other: "ReusableLearningNote") -> "ReusableLearningNote":
@@ -646,6 +810,10 @@ class ReusableLearningNote:
             note_id=self.note_id,
             note_type=self.note_type,
             text=self.text,
+            evidence_sources=_merge_unique_enums(
+                self.evidence_sources,
+                other.evidence_sources,
+            ),
             source_run_ids=_merge_unique_strings(self.source_run_ids, other.source_run_ids),
             source_node_refs=_merge_unique_strings(
                 self.source_node_refs,
@@ -665,6 +833,7 @@ class ReusableLearningNote:
             "note_id": self.note_id,
             "note_type": self.note_type.value,
             "text": self.text,
+            "evidence_sources": [source.value for source in self.evidence_sources],
             "observation_count": self.observation_count,
             "source_run_ids": list(self.source_run_ids[:3]),
             "problem_statements": list(self.problem_statements[:2]),
@@ -780,6 +949,35 @@ class LearningMemory:
             )
         )
 
+    def merge_outcome_feedback(
+        self,
+        feedback: OutcomeFeedback,
+    ) -> "LearningMemory":
+        if not isinstance(feedback, OutcomeFeedback):
+            raise ArgusValidationError(
+                "feedback must be an OutcomeFeedback instance, "
+                f"got {type(feedback).__name__}."
+            )
+        observed_entries: dict[str, ReusableLearningNote] = {}
+        for note in feedback.learning_notes:
+            entry = ReusableLearningNote.from_outcome_feedback(
+                feedback=feedback,
+                note=note,
+            )
+            if entry.note_id in observed_entries:
+                observed_entries[entry.note_id] = observed_entries[entry.note_id].merge(entry)
+            else:
+                observed_entries[entry.note_id] = entry
+        if not observed_entries:
+            return self
+        return self.merge(
+            LearningMemory(
+                entries=_sort_reusable_learning_entries(observed_entries.values()),
+                schema_version=self.schema_version,
+                updated_at=feedback.recorded_at,
+            )
+        )
+
     def select_for_problem(
         self,
         problem_spec: ProblemSpec,
@@ -809,6 +1007,7 @@ class LearningMemory:
             key=lambda entry: (
                 1 if overlap_by_note_id[entry.note_id] > 0 else 0,
                 overlap_by_note_id[entry.note_id],
+                _reusable_learning_evidence_priority(entry),
                 entry.observation_count,
                 _reusable_learning_type_priority(entry.note_type),
                 entry.last_seen_at,
@@ -819,6 +1018,90 @@ class LearningMemory:
         selected = ordered[:normalized_limit]
         return LearningMemory(
             entries=selected,
+            schema_version=self.schema_version,
+            updated_at=self.updated_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeFeedbackLedger:
+    entries: list[OutcomeFeedback] = field(default_factory=list)
+    schema_version: int = 1
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "entries",
+            _normalize_outcome_feedback_entries(self.entries, "entries"),
+        )
+        object.__setattr__(
+            self,
+            "schema_version",
+            _normalize_positive_int(self.schema_version, "schema_version"),
+        )
+        object.__setattr__(
+            self,
+            "updated_at",
+            _normalize_datetime(self.updated_at, "updated_at"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "entries": [entry.to_dict() for entry in self.entries],
+            "schema_version": self.schema_version,
+            "updated_at": _dump_datetime(self.updated_at),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "OutcomeFeedbackLedger":
+        data = _validate_payload_keys(
+            payload,
+            field_name="OutcomeFeedbackLedger",
+            required={"entries", "schema_version", "updated_at"},
+        )
+        return cls(
+            entries=[
+                OutcomeFeedback.from_dict(item)
+                for item in _normalize_sequence(data["entries"], "entries")
+            ],
+            schema_version=data["schema_version"],
+            updated_at=data["updated_at"],
+        )
+
+    @classmethod
+    def empty(cls) -> "OutcomeFeedbackLedger":
+        return cls(entries=[])
+
+    def append(self, feedback: OutcomeFeedback) -> "OutcomeFeedbackLedger":
+        if not isinstance(feedback, OutcomeFeedback):
+            raise ArgusValidationError(
+                "feedback must be an OutcomeFeedback instance, "
+                f"got {type(feedback).__name__}."
+            )
+        existing = {entry.feedback_id for entry in self.entries}
+        if feedback.feedback_id in existing:
+            raise ArgusValidationError(
+                f"Outcome feedback already exists: {feedback.feedback_id}."
+            )
+        ordered = sorted(
+            [*self.entries, feedback],
+            key=lambda entry: (entry.recorded_at, entry.feedback_id),
+        )
+        return OutcomeFeedbackLedger(
+            entries=ordered,
+            schema_version=self.schema_version,
+            updated_at=feedback.recorded_at
+            if not self.entries
+            else max(self.updated_at, feedback.recorded_at),
+        )
+
+    def for_run(self, run_id: str) -> "OutcomeFeedbackLedger":
+        normalized_run_id = _normalize_non_empty_string(run_id, "run_id")
+        return OutcomeFeedbackLedger(
+            entries=[
+                entry for entry in self.entries if entry.run_id == normalized_run_id
+            ],
             schema_version=self.schema_version,
             updated_at=self.updated_at,
         )
@@ -1422,6 +1705,43 @@ def _normalize_learning_notes(value: object) -> list[LearningNote]:
     return normalized
 
 
+def _normalize_outcome_feedback_learning_notes(
+    value: object,
+    *,
+    node_id: str,
+) -> list[LearningNote]:
+    normalized = _normalize_learning_notes(value)
+    if not normalized:
+        raise ArgusValidationError("learning_notes must contain at least one note.")
+    for note in normalized:
+        if node_id not in note.source_node_ids:
+            raise ArgusValidationError(
+                "Each outcome-feedback learning note must cite the referenced node_id."
+            )
+    return normalized
+
+
+def _normalize_learning_evidence_sources(
+    value: object,
+    field_name: str,
+) -> list[LearningEvidenceSource]:
+    if not _is_sequence(value):
+        raise ArgusValidationError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    normalized: list[LearningEvidenceSource] = []
+    seen: set[LearningEvidenceSource] = set()
+    for index, item in enumerate(value):
+        source = _normalize_enum(item, LearningEvidenceSource, f"{field_name}[{index}]")
+        if source in seen:
+            continue
+        seen.add(source)
+        normalized.append(source)
+    if not normalized:
+        raise ArgusValidationError(f"{field_name} must contain at least one value.")
+    return normalized
+
+
 def _normalize_reusable_learning_entries(
     value: object,
     field_name: str,
@@ -1447,6 +1767,31 @@ def _normalize_reusable_learning_entries(
     return normalized
 
 
+def _normalize_outcome_feedback_entries(
+    value: object,
+    field_name: str,
+) -> list[OutcomeFeedback]:
+    if not _is_sequence(value):
+        raise ArgusValidationError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    normalized: list[OutcomeFeedback] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(value):
+        if not isinstance(entry, OutcomeFeedback):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be an OutcomeFeedback instance, "
+                f"got {type(entry).__name__}."
+            )
+        if entry.feedback_id in seen:
+            raise ArgusValidationError(
+                f"{field_name} contains duplicate feedback_id values: {entry.feedback_id}."
+            )
+        seen.add(entry.feedback_id)
+        normalized.append(entry)
+    return normalized
+
+
 def _build_reusable_learning_note_id(
     note_type: LearningNoteType,
     text: str,
@@ -1467,18 +1812,35 @@ def _merge_unique_strings(left: Sequence[str], right: Sequence[str]) -> list[str
     return merged
 
 
+def _merge_unique_enums[T: StrEnum](left: Sequence[T], right: Sequence[T]) -> list[T]:
+    merged: list[T] = []
+    for value in [*left, *right]:
+        if value not in merged:
+            merged.append(value)
+    return merged
+
+
 def _sort_reusable_learning_entries(
     entries: Sequence[ReusableLearningNote],
 ) -> list[ReusableLearningNote]:
     return sorted(
         entries,
         key=lambda entry: (
+            _reusable_learning_evidence_priority(entry),
             entry.observation_count,
             _reusable_learning_type_priority(entry.note_type),
             entry.last_seen_at,
             entry.note_id,
         ),
         reverse=True,
+    )
+
+
+def _reusable_learning_evidence_priority(entry: ReusableLearningNote) -> int:
+    return (
+        2
+        if LearningEvidenceSource.OUTCOME_FEEDBACK in entry.evidence_sources
+        else 1
     )
 
 

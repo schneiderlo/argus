@@ -21,6 +21,10 @@ _RECOGNIZED_AGENT_RUN_FILES = {
 _RECOGNIZED_ARGUS_RUN_FILES = {
     "final-recommendation.json",
     "learning-notes.json",
+    "learning-memory.json",
+    "outcome-feedback-ledger.json",
+    "outcome-feedback.json",
+    "provider-routing-stats.json",
     "problem-spec.json",
     "reusable-learning-context.json",
     "routing-summary.json",

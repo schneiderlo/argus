@@ -209,6 +209,7 @@ class CodexProviderTests(unittest.TestCase):
                             "note_id": "learning-abc123",
                             "note_type": "winning_pattern",
                             "text": "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+                            "evidence_sources": ["outcome_feedback"],
                             "observation_count": 2,
                             "source_run_ids": ["run-a", "run-b"],
                             "problem_statements": ["Find the best retention strategy."],
@@ -223,6 +224,7 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("Hard-constraint gate: set score.hard_constraint_pass=false", prompt_text)
         self.assertIn("Anti-style rule: do not reward polish, buzzwords, generic optimism", prompt_text)
         self.assertIn("Reusable priors: when reusable_learning_notes are present", prompt_text)
+        self.assertIn("outcome_feedback", prompt_text)
 
     def test_run_action_materializes_action_specific_novelty_prompt(self) -> None:
         with TemporaryDirectory() as directory:
@@ -300,6 +302,49 @@ class CodexProviderTests(unittest.TestCase):
             "Prefer operational clarity, tractability, plausibility, robustness, and confidence over raw upside.",
             prompt_text,
         )
+
+    def test_run_action_pairwise_prompt_mentions_outcome_feedback_priors(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_pairwise_ranking_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.RANK,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "objective": {
+                        "name": "best_overall",
+                        "description": "Choose the strongest overall recommendation.",
+                    },
+                    "left": _comparison_payload("node-left"),
+                    "right": _comparison_payload("node-right"),
+                    "reusable_learning_notes": [
+                        {
+                            "note_id": "learning-outcome-1",
+                            "note_type": "failure_pattern",
+                            "text": "Setup-heavy plans fail when the first audit artifact arrives too late.",
+                            "evidence_sources": ["outcome_feedback"],
+                            "observation_count": 1,
+                            "source_run_ids": ["run-outcome"],
+                            "problem_statements": ["Find the best retention strategy."],
+                        }
+                    ],
+                },
+                output_schema=pairwise_ranking_assessment_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("outcome_feedback", prompt_text)
 
     def test_run_action_allocates_unique_artifact_dirs_under_concurrency(self) -> None:
         with TemporaryDirectory() as directory:

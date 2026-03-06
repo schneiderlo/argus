@@ -9,11 +9,15 @@ A completed `argus run` must persist:
 - score vectors
 - critiques
 - learning notes
+- per-run outcome feedback artifacts when experiment results are later ingested
 - any imported reusable-learning context used to steer the run
 - the final recommendation object
 - a readable markdown summary for humans
 
-The repository should also persist a root-level reusable learning-memory ledger so future non-benchmark runs can reuse compressed patterns with provenance.
+The repository should also persist:
+
+- a root-level reusable learning-memory ledger so future non-benchmark runs can reuse compressed patterns with provenance
+- a root-level outcome-feedback ledger so shipped experiment results remain auditable and reusable across runs
 
 ## Final Recommendation Requirements
 

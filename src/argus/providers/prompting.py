@@ -104,7 +104,7 @@ def _evaluate_candidate_instructions(
     ]
     if _has_reusable_learning_notes(input_payload):
         instructions.append(
-            "Reusable priors: when reusable_learning_notes are present, treat them as archived observations about past winning patterns, failure modes, and constraints. Use them to pressure-test the candidate, but never let them override the current problem spec."
+            "Reusable priors: when reusable_learning_notes are present, treat them as archived observations about past winning patterns, failure modes, and constraints. Notes tagged with evidence_sources containing outcome_feedback are stronger real-world evidence from shipped experiments and should weigh more heavily than search-only priors, but never override the current problem spec."
         )
     return instructions
 
@@ -146,7 +146,7 @@ def _pairwise_rank_instructions(input_payload: Mapping[str, JSONValue]) -> list[
         )
     if _has_reusable_learning_notes(input_payload):
         instructions.append(
-            "Reusable priors: when reusable_learning_notes are present, use them as prior evidence about patterns that succeeded or failed before, but keep the winner grounded in the current problem and objective."
+            "Reusable priors: when reusable_learning_notes are present, use them as prior evidence about patterns that succeeded or failed before. Notes tagged with evidence_sources containing outcome_feedback reflect shipped outcomes and should carry more weight than search-only learnings, but keep the winner grounded in the current problem and objective."
         )
     return instructions
 
@@ -162,7 +162,7 @@ def _default_action_instructions(
     ]
     if _has_reusable_learning_notes(input_payload):
         instructions.append(
-            "Reusable priors: use reusable_learning_notes as compact prior art from earlier Argus runs. Apply them as guardrails and pattern memory, but do not cargo-cult them when the current problem points elsewhere."
+            "Reusable priors: use reusable_learning_notes as compact prior art from earlier Argus runs. If a note is tagged with evidence_sources containing outcome_feedback, treat it as stronger observed evidence from shipped experiments. Apply all priors as guardrails and pattern memory, but do not cargo-cult them when the current problem points elsewhere."
         )
     return instructions
 

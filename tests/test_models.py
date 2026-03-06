@@ -9,11 +9,15 @@ from argus.models import (
     Candidate,
     Critique,
     FinalRecommendation,
+    LearningEvidenceSource,
     LearningMemory,
     LearningNote,
     LearningNoteType,
     Node,
     NodeLifecycleStatus,
+    OutcomeFeedback,
+    OutcomeFeedbackLedger,
+    OutcomeFeedbackStatus,
     ProblemSpec,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
@@ -285,6 +289,83 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(
             selected.entries[0].text,
             "Workflow-native, auditable mechanisms outperform generic chat-shaped ideas.",
+        )
+        self.assertEqual(
+            workflow_entry.evidence_sources,
+            [LearningEvidenceSource.SEARCH_RUN],
+        )
+
+    def test_outcome_feedback_round_trips_through_ledger(self) -> None:
+        feedback = OutcomeFeedback(
+            feedback_id="feedback-20260306T021500Z",
+            run_id="run-20260306T020500Z",
+            node_id="node-0007",
+            candidate_thesis="Workflow-native archive with weekly decision reviews",
+            problem_statement="Find the best retention strategy for a workflow-heavy product.",
+            outcome_status=OutcomeFeedbackStatus.VALIDATED,
+            summary="The pilot retained teams because the archive made weekly reviews faster.",
+            learning_notes=[
+                LearningNote(
+                    note_type=LearningNoteType.WINNING_PATTERN,
+                    text="Teams accept setup work when the audit trail immediately improves recurring reviews.",
+                    source_node_ids=["node-0007"],
+                )
+            ],
+            evidence=["Pilot cohort retained 4 of 5 teams after three weeks."],
+            experiment_label="weekly-review-pilot",
+            recorded_at=datetime(2026, 3, 6, 2, 15, 0, tzinfo=timezone.utc),
+        )
+
+        payload = OutcomeFeedbackLedger.empty().append(feedback).to_dict()
+        restored = OutcomeFeedbackLedger.from_dict(payload)
+
+        self.assertEqual(len(restored.entries), 1)
+        self.assertEqual(restored.entries[0], feedback)
+
+    def test_learning_memory_prioritizes_outcome_backed_notes_when_overlap_ties(self) -> None:
+        problem = ProblemSpec(
+            request="Audit trail setup artifact",
+            constraints=[],
+            success_criteria=[],
+            context={},
+        )
+        memory = LearningMemory.empty().merge_observations(
+            run_id="run-search",
+            problem_spec=problem,
+            notes=[
+                LearningNote(
+                    note_type=LearningNoteType.SUMMARY,
+                    text="Audit trail setup artifact",
+                    source_node_ids=["node-0001"],
+                )
+            ],
+            observed_at=datetime(2026, 3, 6, 2, 5, 0, tzinfo=timezone.utc),
+        )
+        feedback = OutcomeFeedback(
+            feedback_id="feedback-20260306T021600Z",
+            run_id="run-search",
+            node_id="node-0002",
+            candidate_thesis="Audit-first workflow",
+            problem_statement=problem.request,
+            outcome_status=OutcomeFeedbackStatus.MIXED,
+            summary="The audit artifact helped, but the initial setup still needed coaching.",
+            learning_notes=[
+                LearningNote(
+                    note_type=LearningNoteType.SUMMARY,
+                    text="Artifact setup audit trail",
+                    source_node_ids=["node-0002"],
+                )
+            ],
+            evidence=[],
+            recorded_at=datetime(2026, 3, 6, 2, 16, 0, tzinfo=timezone.utc),
+        )
+
+        selected = memory.merge_outcome_feedback(feedback).select_for_problem(problem, limit=1)
+
+        self.assertEqual(len(selected.entries), 1)
+        self.assertEqual(
+            selected.entries[0].evidence_sources,
+            [LearningEvidenceSource.OUTCOME_FEEDBACK],
         )
 
     def test_provider_routing_stats_round_trip_with_derived_averages(self) -> None:

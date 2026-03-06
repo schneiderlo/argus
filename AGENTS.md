@@ -42,6 +42,7 @@ The target application described by the specs is a Python 3.12 project with:
 - a local filesystem state store
 - a provider abstraction with Codex as the first-class provider
 - evaluator-first search with provider-backed semantic judgment, novelty filtering, and archived stepping stones
+- outcome-feedback ingestion that folds shipped experiment results back into reusable learning memory with provenance
 
 ## Ralph Loop Behavior
 

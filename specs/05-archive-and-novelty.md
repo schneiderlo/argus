@@ -47,6 +47,16 @@ Reusable learning notes should survive beyond a single run. The first durable ve
 
 Deterministic retrieval is acceptable for selecting a bounded subset of stored learnings, but it must remain a retrieval layer only, not a replacement for provider-backed evaluation or novelty judgment.
 
+## Outcome Feedback Ingestion
+
+Argus must support a typed outcome-feedback path for shipped experiments. That ingestion path should:
+
+- record which persisted run and node the outcome applies to
+- persist the raw outcome summary and supporting evidence for audit
+- let the operator attach explicit reusable learnings such as winning patterns, failure patterns, constraints, or routing hints
+- merge those learnings into the shared reusable-learning memory with provenance that marks them as outcome-backed rather than search-only
+- make future framing, evaluation, ranking, and critique prompts able to treat outcome-backed learnings as stronger priors than purely internal search observations
+
 ## Replay And Audit
 
 An operator must be able to inspect a run and answer:
