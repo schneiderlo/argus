@@ -25,6 +25,9 @@ Execution rules:
 11. If verification still fails, use that output to drive the next increment and document the remaining gap in `fix_plan.md`.
 12. If you change the operator workflow, update `README.md`, `AGENTS.md`, and this prompt if needed.
 13. Do not use cheap keyword or lexical heuristics as the primary evaluator or novelty layer. Use provider-backed structured judgment, and keep deterministic logic limited to guardrails and validation.
+14. Do not treat evaluator quality as complete just because provider plumbing exists. If the Codex-facing judge prompt for evaluation, novelty, or pairwise ranking is still generic or under-specified, harden that before adding more search sophistication.
+15. For evaluation actions, prefer action-specific prompts over one generic wrapper. The prompt should explicitly encode the rubric, hard constraints, adversarial checks, duplicate criteria, and what evidence the judge must rely on.
+16. Add benchmark-style tests that can fail when the evaluator makes bad decisions, not only when schemas or wiring break.
 
 Product target:
 
@@ -33,6 +36,7 @@ Product target:
 - Preserve archived stepping stones and reject near-duplicates.
 - Use evaluator-first logic, not style-first logic.
 - Prefer provider-backed semantic judgment over hand-written lexical scoring.
+- Treat evaluator prompt quality and benchmarked judgment quality as first-class product work, not prompt polish.
 - Produce final outputs that include a best bet, a conservative bet, a high-upside bet, rejected alternatives worth noting, and next experiments.
 
 Quality bar:

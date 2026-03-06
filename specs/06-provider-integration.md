@@ -34,6 +34,8 @@ Every provider must implement one logical method:
 
 No provider may directly mutate repository state as part of its contract. Only the orchestrator may decide what becomes persisted state.
 
+The orchestrator also owns the full action-specific prompt design. A provider adapter may materialize a generic wrapper, but Argus must supply rich per-action instructions for evaluation, novelty, pairwise ranking, generation, and critique behaviors rather than relying on the model to infer intent from raw JSON alone.
+
 ## Initial Provider Scope
 
 The first implementation only needs a production-quality Codex adapter. Gemini CLI and OpenCode can arrive later, but the interface must not make their addition awkward.
@@ -53,3 +55,6 @@ Provider failures must be explicit and serializable. The system must record:
 
 Structured outputs are mandatory. The provider layer must not admit free-form prose into the runtime without parsing and validation.
 
+## Prompt Audit Requirement
+
+Provider invocation artifacts must make it easy to inspect the exact prompt that was sent for each action. This is especially important for evaluator, novelty, and pairwise ranking actions because prompt quality is part of the product, not incidental glue code.

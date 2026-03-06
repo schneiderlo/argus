@@ -93,7 +93,7 @@ Current implementation status:
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn from admitted nodes, strong scores, useful critiques, and winner contributions.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The main remaining work is persisted cross-run learning compression.
+The biggest remaining product risk is evaluator quality. The runtime and provider plumbing exist, but the Codex-facing evaluator prompts still need to be hardened into rich action-specific judge prompts and backed by stronger judgment-quality benchmarks. Persisted cross-run learning compression also remains open.
 
 Process guardrails:
 
