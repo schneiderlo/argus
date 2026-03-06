@@ -20,7 +20,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 ## Highest Priority
 
 - [x] Replace the thin generic evaluator and novelty prompts with action-specific judge prompts that encode the real rubric, hard-constraint handling, adversarial checks, duplicate criteria, and output expectations directly in the provider prompt materialized for Codex.
-- [ ] Add evaluator-quality benchmark fixtures and tests that catch obvious ranking, hard-constraint, pairwise-comparison, and novelty failures instead of only checking schema/plumbing behavior.
+- [x] Add evaluator-quality benchmark fixtures and tests that catch obvious ranking, hard-constraint, pairwise-comparison, and novelty failures instead of only checking schema/plumbing behavior.
 - [x] Bootstrap the Python project with `uv`: create `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
 - [x] Implement the core typed domain models described in `specs/03-search-runtime.md` and `specs/04-evaluator-and-ranking.md`.
 - [x] Implement a filesystem-backed state store for runs, nodes, learnings, scores, critiques, and final recommendations.
@@ -54,6 +54,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - `argus inspect` recognizes persisted Argus run directories as well as Ralph-loop artifact directories.
 - The evaluator and novelty layer in `src/argus/eval/` now use provider-backed structured judgment rather than lexical heuristics.
 - The evaluator/provider wiring now materializes action-specific judge prompts for evaluation, novelty, and pairwise ranking. Evaluator-quality benchmark assertions are now the top priority before additional search sophistication.
+- Evaluator-quality benchmark fixtures now live under `benchmarks/evaluator_cases/`, with typed loaders in `src/argus/benchmarks/evaluator_dataset.py` and data-driven tests in `tests/test_evaluator_benchmarks.py` covering hard-constraint failures, semantic novelty duplicates vs distinct shared-vocabulary ideas, pairwise objective-specific winner flips, and score-based finalist ordering.
 - Codex prompt materialization now lives in `src/argus/providers/prompting.py` and gives `evaluate_candidate`, `assess_novelty`, and pairwise `rank` dedicated instructions covering authoritative evidence, hard constraints, adversarial checks, duplicate criteria, objective-specific ranking tradeoffs, and output expectations.
 - The first working search runtime now lives in `src/argus/search/`; `argus run` frames the problem, generates and filters seeds, stress-tests and deepens survivors, compresses learnings, and persists a compiled final recommendation under `artifacts/runs/<run_id>/`.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` records replayable benchmark sessions under `artifacts/benchmarks/<session_id>/` with per-case snapshots plus manifest-level output digests for change detection.

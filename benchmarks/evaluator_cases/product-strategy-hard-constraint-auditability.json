@@ -1,0 +1,71 @@
+{
+  "case_id": "product-strategy-hard-constraint-auditability",
+  "title": "Reject white-glove retention plans that violate self-serve and auditability constraints",
+  "family": "product_strategy",
+  "kind": "hard_constraint",
+  "problem_spec": {
+    "request": "Find the best retention strategy for a workflow-heavy B2B product that wants a stronger moat without becoming enterprise-only.",
+    "constraints": [
+      "Stay self-serve for teams under 50 seats.",
+      "Keep every recommendation auditable from stored artifacts."
+    ],
+    "success_criteria": [
+      "Increase repeated weekly use by team leads.",
+      "Create a retention mechanism that gets stronger as real work accumulates."
+    ],
+    "context": {
+      "company_stage": "series_a",
+      "product_type": "workflow-heavy B2B SaaS"
+    }
+  },
+  "candidate": {
+    "thesis": "Deliver a high-touch retention consulting layer",
+    "mechanism": "Assign a customer-success strategist to configure each team's workflow, review usage every week, and hand-build executive recaps that persuade leadership to renew.",
+    "assumptions": [
+      "Teams will accept a services-heavy rollout if the strategic advice feels premium."
+    ],
+    "strengths": [
+      "Can produce tailored guidance for each account."
+    ],
+    "failure_modes": [
+      "Requires manual setup and recurring analyst labor."
+    ],
+    "unknowns": [
+      "Can the product retain teams once the human consultant steps back?"
+    ],
+    "implementation_shape": "Pilot with customer-success pods and bespoke reporting playbooks.",
+    "evidence": [
+      "The idea could improve retention for a few high-touch accounts, but only through services."
+    ]
+  },
+  "expected_assessment": {
+    "score": {
+      "hard_constraint_pass": false,
+      "hard_constraint_reasons": [
+        "Depends on sales-assisted onboarding instead of a self-serve motion.",
+        "Relies on bespoke human reporting rather than auditable product artifacts."
+      ],
+      "distinctiveness": 0.34,
+      "usefulness": 0.28,
+      "specificity": 0.62,
+      "plausibility": 0.57,
+      "implementation_tractability": 0.31,
+      "upside": 0.36,
+      "adversarial_robustness": 0.22,
+      "evidence_quality": 0.29,
+      "total_score": 2.99,
+      "confidence_estimate": 0.85
+    },
+    "summary": "The plan is concrete, but it fails the self-serve and auditability requirements that define the actual product brief.",
+    "strengths": [
+      "The rollout mechanics are explicit."
+    ],
+    "weaknesses": [
+      "Violates the self-serve constraint.",
+      "Produces service output instead of durable product artifacts."
+    ],
+    "open_questions": [
+      "Is there any version of the retention insight that can be productized without human operators?"
+    ]
+  }
+}

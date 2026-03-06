@@ -1,0 +1,138 @@
+{
+  "case_id": "monetization-pairwise-conservative-option",
+  "title": "Prefer the packaging expansion for the conservative monetization choice",
+  "family": "monetization",
+  "kind": "pairwise",
+  "problem_spec": {
+    "request": "Recommend the best monetization strategy for a prosumer product moving upmarket into teams without killing the simplicity that made it spread initially.",
+    "constraints": [
+      "Maintain a credible self-serve entry point.",
+      "Do not depend on enterprise procurement for the next 12 months."
+    ],
+    "success_criteria": [
+      "Increase revenue per active team.",
+      "Preserve organic adoption and avoid pricing confusion."
+    ],
+    "context": {
+      "current_model": "flat monthly subscription",
+      "market": "prosumer-to-team"
+    }
+  },
+  "objective": {
+    "name": "conservative_option",
+    "description": "Choose the safer monetization move that can raise team revenue without undermining self-serve adoption."
+  },
+  "left": {
+    "node_id": "pricing-left",
+    "candidate": {
+      "thesis": "Introduce a team workspace bundle above the self-serve core",
+      "mechanism": "Keep the individual self-serve plan intact, then sell teams a clearer bundle with shared workspaces, approval controls, and admin reporting that compounds existing usage instead of hiding the core behind a paywall.",
+      "assumptions": [
+        "Teams will pay more for collaboration and control once the individual workflow already proves value."
+      ],
+      "strengths": [
+        "Preserves the existing self-serve wedge.",
+        "Explains the upgrade path clearly."
+      ],
+      "failure_modes": [
+        "May leave some upside on the table if team willingness to pay is higher than expected."
+      ],
+      "unknowns": [
+        "Which bundle line items matter most to the first team buyers?"
+      ],
+      "implementation_shape": "Launch one higher-priced team tier with clear collaboration value and simple upgrade messaging.",
+      "evidence": [
+        "The brief wants more revenue per active team without pricing confusion."
+      ]
+    },
+    "score": {
+      "hard_constraint_pass": true,
+      "hard_constraint_reasons": [],
+      "distinctiveness": 0.63,
+      "usefulness": 0.88,
+      "specificity": 0.86,
+      "plausibility": 0.89,
+      "implementation_tractability": 0.9,
+      "upside": 0.66,
+      "adversarial_robustness": 0.84,
+      "evidence_quality": 0.81,
+      "total_score": 6.47,
+      "confidence_estimate": 0.87
+    },
+    "novelty_score": 0.58,
+    "critique": {
+      "hidden_dependencies": [
+        "Requires strong messaging so the team bundle feels additive rather than punitive."
+      ],
+      "kill_shots": [
+        "Fails if the collaboration features are too weak to justify the step-up."
+      ],
+      "sharp_edges": [
+        "Could plateau if the team tier is underpriced."
+      ],
+      "summary": "The package is safe and clear, but its upside ceiling depends on strong team feature value."
+    }
+  },
+  "right": {
+    "node_id": "pricing-right",
+    "candidate": {
+      "thesis": "Launch benchmark-backed outcome pricing for team plans",
+      "mechanism": "Charge teams based on measurable workflow outcomes and include benchmark comparisons that prove the product's impact, creating a larger price envelope when the product materially improves team performance.",
+      "assumptions": [
+        "Teams will trust benchmark-backed pricing and accept more variable spend in exchange for clearer ROI."
+      ],
+      "strengths": [
+        "Could unlock a much larger willingness to pay if the ROI story lands."
+      ],
+      "failure_modes": [
+        "Outcome pricing can confuse buyers and create trust risk early."
+      ],
+      "unknowns": [
+        "Which benchmark signal is credible enough to anchor the pricing model?"
+      ],
+      "implementation_shape": "Pilot variable pricing with a narrow set of benchmark-backed enterprise-style cohorts.",
+      "evidence": [
+        "The business wants higher team revenue, but the brief also warns against harming organic adoption."
+      ]
+    },
+    "score": {
+      "hard_constraint_pass": true,
+      "hard_constraint_reasons": [],
+      "distinctiveness": 0.86,
+      "usefulness": 0.75,
+      "specificity": 0.72,
+      "plausibility": 0.54,
+      "implementation_tractability": 0.43,
+      "upside": 0.94,
+      "adversarial_robustness": 0.49,
+      "evidence_quality": 0.61,
+      "total_score": 5.34,
+      "confidence_estimate": 0.61
+    },
+    "novelty_score": 0.88,
+    "critique": {
+      "hidden_dependencies": [
+        "Needs trusted benchmarks and a pricing story that self-serve buyers can understand."
+      ],
+      "kill_shots": [
+        "Can damage adoption if users see the pricing as unpredictable or manipulative."
+      ],
+      "sharp_edges": [
+        "Variable pricing is hard to explain in a product-led motion."
+      ],
+      "summary": "The model is bold, but it adds pricing complexity and trust risk early."
+    }
+  },
+  "expected_assessment": {
+    "winner": "left",
+    "summary": "The team workspace bundle is the safer option because it increases team revenue through clearer packaging while preserving the self-serve entry point and minimizing pricing confusion.",
+    "decisive_advantages": [
+      "Higher tractability and plausibility in a product-led motion.",
+      "Lower risk of damaging organic adoption with complex pricing."
+    ],
+    "decisive_risks": [
+      "May not capture the full long-term revenue ceiling."
+    ],
+    "confidence": 0.84
+  }
+}

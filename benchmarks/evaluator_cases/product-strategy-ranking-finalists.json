@@ -1,0 +1,184 @@
+{
+  "case_id": "product-strategy-ranking-finalists",
+  "title": "Keep hard-failing finalists behind viable finalists even if their raw total is higher",
+  "family": "product_strategy",
+  "kind": "ranking",
+  "problem_spec": {
+    "request": "Find the best retention strategy for a workflow-heavy B2B product that wants a stronger moat without becoming enterprise-only.",
+    "constraints": [
+      "Stay self-serve for teams under 50 seats.",
+      "Keep every recommendation auditable from stored artifacts."
+    ],
+    "success_criteria": [
+      "Increase repeated weekly use by team leads.",
+      "Create a retention mechanism that gets stronger as real work accumulates."
+    ],
+    "context": {
+      "company_stage": "series_a",
+      "product_type": "workflow-heavy B2B SaaS"
+    }
+  },
+  "nodes": [
+    {
+      "node_id": "rank-001",
+      "candidate": {
+        "thesis": "Workflow-native decision archive with guided onboarding",
+        "mechanism": "Preserve every serious decision branch, attach reusable playbooks to those artifacts, and preload the first ritual so teams feel retained value before deep configuration.",
+        "assumptions": [
+          "Teams will accept light workflow setup if the artifact value appears immediately."
+        ],
+        "strengths": [
+          "Balances moat strength with easier activation."
+        ],
+        "failure_modes": [
+          "Needs disciplined onboarding defaults."
+        ],
+        "unknowns": [
+          "Which ritual best demonstrates retained value in week one?"
+        ],
+        "implementation_shape": "Launch with one preloaded weekly ritual and expand after usage proves out.",
+        "evidence": [
+          "The brief rewards retained workflow value and self-serve adoption."
+        ]
+      },
+      "score": {
+        "hard_constraint_pass": true,
+        "hard_constraint_reasons": [],
+        "distinctiveness": 0.82,
+        "usefulness": 0.92,
+        "specificity": 0.9,
+        "plausibility": 0.87,
+        "implementation_tractability": 0.84,
+        "upside": 0.88,
+        "adversarial_robustness": 0.8,
+        "evidence_quality": 0.82,
+        "total_score": 6.76,
+        "confidence_estimate": 0.89
+      },
+      "novelty_score": 0.73
+    },
+    {
+      "node_id": "rank-002",
+      "candidate": {
+        "thesis": "Workflow-native decision archive with benchmark layer",
+        "mechanism": "Start from the retained decision archive, then add trusted peer benchmarks once enough internal workflow data exists to support credible comparisons.",
+        "assumptions": [
+          "Teams will share benchmark data after the private archive already proves value."
+        ],
+        "strengths": [
+          "Raises the upside ceiling beyond the private archive alone."
+        ],
+        "failure_modes": [
+          "Adds more trust and sequencing risk."
+        ],
+        "unknowns": [
+          "How quickly can benchmark participation become credible?"
+        ],
+        "implementation_shape": "Private archive first, benchmark cohort second.",
+        "evidence": [
+          "The brief allows bold extensions if the tradeoffs remain explicit."
+        ]
+      },
+      "score": {
+        "hard_constraint_pass": true,
+        "hard_constraint_reasons": [],
+        "distinctiveness": 0.88,
+        "usefulness": 0.92,
+        "specificity": 0.84,
+        "plausibility": 0.78,
+        "implementation_tractability": 0.71,
+        "upside": 0.94,
+        "adversarial_robustness": 0.72,
+        "evidence_quality": 0.78,
+        "total_score": 6.76,
+        "confidence_estimate": 0.81
+      },
+      "novelty_score": 0.91
+    },
+    {
+      "node_id": "rank-003",
+      "candidate": {
+        "thesis": "Operational checklist companion",
+        "mechanism": "Convert strong decisions into auditable checklists embedded in one recurring team workflow, then expand only if the retained checklist artifacts change behavior.",
+        "assumptions": [
+          "Teams will adopt a narrower workflow wedge if it saves recurring coordination time."
+        ],
+        "strengths": [
+          "Very tractable and easy to trial."
+        ],
+        "failure_modes": [
+          "Could create a weaker moat than archive-centric approaches."
+        ],
+        "unknowns": [
+          "Will the narrow wedge feel differentiated enough?"
+        ],
+        "implementation_shape": "Launch in one workflow first and measure repeated use.",
+        "evidence": [
+          "The brief values auditable artifacts and retained workflow habits."
+        ]
+      },
+      "score": {
+        "hard_constraint_pass": true,
+        "hard_constraint_reasons": [],
+        "distinctiveness": 0.59,
+        "usefulness": 0.84,
+        "specificity": 0.82,
+        "plausibility": 0.88,
+        "implementation_tractability": 0.91,
+        "upside": 0.61,
+        "adversarial_robustness": 0.83,
+        "evidence_quality": 0.77,
+        "total_score": 6.19,
+        "confidence_estimate": 0.9
+      },
+      "novelty_score": 0.54
+    },
+    {
+      "node_id": "rank-004",
+      "candidate": {
+        "thesis": "White-glove retention concierge",
+        "mechanism": "Use a dedicated strategist to configure each account, hand-build reports, and manually run the retention ritual for them.",
+        "assumptions": [
+          "High-touch services can substitute for product retention in the early market."
+        ],
+        "strengths": [
+          "Could show strong results for a few accounts quickly."
+        ],
+        "failure_modes": [
+          "Violates self-serve and auditability constraints."
+        ],
+        "unknowns": [
+          "Can any product value survive after the services layer is removed?"
+        ],
+        "implementation_shape": "Start with a consulting-heavy customer-success motion.",
+        "evidence": [
+          "Services may improve retention for some accounts, but not within the actual brief."
+        ]
+      },
+      "score": {
+        "hard_constraint_pass": false,
+        "hard_constraint_reasons": [
+          "Depends on a services-heavy rollout instead of self-serve adoption.",
+          "Produces bespoke human outputs instead of auditable product artifacts."
+        ],
+        "distinctiveness": 0.41,
+        "usefulness": 0.38,
+        "specificity": 0.72,
+        "plausibility": 0.64,
+        "implementation_tractability": 0.36,
+        "upside": 0.52,
+        "adversarial_robustness": 0.21,
+        "evidence_quality": 0.31,
+        "total_score": 7.15,
+        "confidence_estimate": 0.94
+      },
+      "novelty_score": 0.29
+    }
+  ],
+  "expected_rank_order": [
+    "rank-001",
+    "rank-002",
+    "rank-003",
+    "rank-004"
+  ]
+}

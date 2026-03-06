@@ -1,0 +1,138 @@
+{
+  "case_id": "technical-architecture-pairwise-best-overall",
+  "title": "Choose the replayable local-first architecture over the hosted-control-plane alternative",
+  "family": "technical_architecture",
+  "kind": "pairwise",
+  "problem_spec": {
+    "request": "Design the best architecture for a local-first decision engine that orchestrates model calls, persists search state to disk, and needs a clean path to later sync across machines.",
+    "constraints": [
+      "The first release must run locally on developer laptops.",
+      "State must stay replayable and inspectable with normal filesystem tools."
+    ],
+    "success_criteria": [
+      "Keep the first milestone simple enough to ship in weeks.",
+      "Preserve a credible path to collaboration and replay later."
+    ],
+    "context": {
+      "language": "python",
+      "team_size": "small"
+    }
+  },
+  "objective": {
+    "name": "best_overall",
+    "description": "Choose the architecture that best balances local-first constraints, replayability, tractability, and future sync headroom."
+  },
+  "left": {
+    "node_id": "arch-left",
+    "candidate": {
+      "thesis": "Filesystem-backed append-only run journal with deferred sync",
+      "mechanism": "Keep run state in explicit JSON artifacts on disk, append immutable step records locally, and add a later sync adapter that ships those artifacts between machines without changing the first local runtime.",
+      "assumptions": [
+        "A small team can ship explicit filesystem state faster than a full networked control plane."
+      ],
+      "strengths": [
+        "Matches the local-first constraint directly.",
+        "Keeps replay and inspection cheap."
+      ],
+      "failure_modes": [
+        "Future sync needs careful conflict policy."
+      ],
+      "unknowns": [
+        "Which artifact granularity makes later sync easiest?"
+      ],
+      "implementation_shape": "Start with explicit JSON files and immutable run logs, then layer sync metadata later.",
+      "evidence": [
+        "The brief prioritizes local execution, replayability, and inspectable state."
+      ]
+    },
+    "score": {
+      "hard_constraint_pass": true,
+      "hard_constraint_reasons": [],
+      "distinctiveness": 0.78,
+      "usefulness": 0.9,
+      "specificity": 0.88,
+      "plausibility": 0.87,
+      "implementation_tractability": 0.89,
+      "upside": 0.74,
+      "adversarial_robustness": 0.82,
+      "evidence_quality": 0.83,
+      "total_score": 6.71,
+      "confidence_estimate": 0.88
+    },
+    "novelty_score": 0.69,
+    "critique": {
+      "hidden_dependencies": [
+        "Eventually needs a clear merge strategy once multiple machines edit the same run."
+      ],
+      "kill_shots": [
+        "Breaks down if artifact structure becomes too ad hoc for later sync."
+      ],
+      "sharp_edges": [
+        "Can accumulate too many small files without disciplined layout."
+      ],
+      "summary": "The architecture is strong, but future sync needs intentional boundaries."
+    }
+  },
+  "right": {
+    "node_id": "arch-right",
+    "candidate": {
+      "thesis": "Hosted orchestration control plane with local cache replicas",
+      "mechanism": "Centralize run orchestration in a hosted service, mirror snapshots to local caches for speed, and treat the laptop client as a synchronized replica of the control plane.",
+      "assumptions": [
+        "The team can stand up reliable hosted orchestration early without slowing the first milestone."
+      ],
+      "strengths": [
+        "Offers a clean eventual collaboration story if the service exists."
+      ],
+      "failure_modes": [
+        "Adds operational surface area before the first local product is proven."
+      ],
+      "unknowns": [
+        "How much hosted complexity appears before the local experience is stable?"
+      ],
+      "implementation_shape": "Build the service first, then keep local caches in sync with it.",
+      "evidence": [
+        "A central service could help collaboration later, but it is not required by the first milestone."
+      ]
+    },
+    "score": {
+      "hard_constraint_pass": true,
+      "hard_constraint_reasons": [],
+      "distinctiveness": 0.71,
+      "usefulness": 0.73,
+      "specificity": 0.74,
+      "plausibility": 0.58,
+      "implementation_tractability": 0.41,
+      "upside": 0.81,
+      "adversarial_robustness": 0.47,
+      "evidence_quality": 0.62,
+      "total_score": 5.07,
+      "confidence_estimate": 0.64
+    },
+    "novelty_score": 0.77,
+    "critique": {
+      "hidden_dependencies": [
+        "Requires service reliability, authentication, and sync semantics before the first release is usable."
+      ],
+      "kill_shots": [
+        "Misses the small-team simplicity target if hosted orchestration becomes the critical path."
+      ],
+      "sharp_edges": [
+        "Can obscure filesystem replay if the real state of record lives remotely."
+      ],
+      "summary": "The hosted-first plan adds future-oriented upside, but it weakens the first milestone."
+    }
+  },
+  "expected_assessment": {
+    "winner": "left",
+    "summary": "The append-only filesystem journal wins because it directly satisfies the local-first and replayability constraints while still leaving a disciplined path to later sync.",
+    "decisive_advantages": [
+      "Better first-milestone tractability without compromising inspectable state.",
+      "Stronger evidence that the runtime can stay local and replayable from day one."
+    ],
+    "decisive_risks": [
+      "Later sync still needs a merge policy."
+    ],
+    "confidence": 0.86
+  }
+}

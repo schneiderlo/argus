@@ -1,0 +1,78 @@
+{
+  "case_id": "growth-novelty-referral-duplicate",
+  "title": "Reject referral-loop paraphrases that keep the same trigger and adoption motion",
+  "family": "growth",
+  "kind": "novelty",
+  "problem_spec": {
+    "request": "Design the strongest growth loop for a collaborative analytics product that already has healthy activation but weak referral and expansion behavior.",
+    "constraints": [
+      "Do not assume a paid acquisition budget increase.",
+      "Avoid tactics that would erode trust with power users."
+    ],
+    "success_criteria": [
+      "Increase qualified account expansion from existing teams.",
+      "Create a growth loop that compounds through product usage."
+    ],
+    "context": {
+      "current_channel": "product-led",
+      "motion": "bottom-up expansion"
+    }
+  },
+  "candidate": {
+    "thesis": "Prompt users to invite collaborators when a scorecard reaches a milestone",
+    "mechanism": "Detect when a team publishes a high-value scorecard, then ask the owner to invite cross-functional peers into the same scorecard so the expansion loop grows from shared visibility.",
+    "assumptions": [
+      "Teams naturally widen usage when a scorecard becomes the source of truth."
+    ],
+    "strengths": [
+      "Piggybacks on proven in-product moments."
+    ],
+    "failure_modes": [
+      "Could feel repetitive if the trigger is overused."
+    ],
+    "unknowns": [
+      "Which milestone produces the strongest accepted invites?"
+    ],
+    "implementation_shape": "Add invite prompts at scorecard publication and major milestone moments.",
+    "evidence": [
+      "The product already has healthy activation, so the leverage point is expansion from existing usage."
+    ]
+  },
+  "archive_candidates": [
+    {
+      "node_id": "archive-growth-001",
+      "candidate": {
+        "thesis": "Use scorecard completion as the team invite trigger",
+        "mechanism": "When a shared analytics scorecard is completed, nudge the owner to bring adjacent teammates into that same artifact so the loop compounds through collaboration on the scorecard itself.",
+        "assumptions": [
+          "Cross-functional peers join when a finished scorecard becomes operationally important."
+        ],
+        "strengths": [
+          "Builds expansion from active product use."
+        ],
+        "failure_modes": [
+          "Invite fatigue can reduce trust if the trigger fires too broadly."
+        ],
+        "unknowns": [
+          "How narrow does the trigger need to stay trusted?"
+        ],
+        "implementation_shape": "Instrument completion-based invite prompts inside the scorecard workflow.",
+        "evidence": [
+          "The strongest growth loop likely builds on current activation rather than paid acquisition."
+        ]
+      }
+    }
+  ],
+  "expected_assessment": {
+    "novelty_score": 0.17,
+    "max_similarity": 0.9,
+    "nearest_neighbor_id": "archive-growth-001",
+    "similarity_threshold": 0.8,
+    "is_novel": false,
+    "summary": "This keeps the same scorecard milestone trigger, invite motion, and collaboration-based expansion loop as the archived idea.",
+    "duplicate_signals": [
+      "Same trigger moment: a scorecard reaching a high-value milestone.",
+      "Same core loop: prompt the owner to invite more teammates into the same artifact."
+    ]
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "case_id": "ux-novelty-shared-vocabulary",
+  "title": "Preserve novel UX directions that share workflow vocabulary but change the mechanism",
+  "family": "ux",
+  "kind": "novelty",
+  "problem_spec": {
+    "request": "Propose the best UX direction for a workflow where requests move between requester, reviewer, and operator, but handoffs currently feel opaque and error-prone.",
+    "constraints": [
+      "Keep the product usable on desktop and tablet.",
+      "Do not require a full navigation rewrite in the first release."
+    ],
+    "success_criteria": [
+      "Reduce uncertainty during handoff-heavy tasks.",
+      "Make the next required action obvious without flattening the workflow into a chat feed."
+    ],
+    "context": {
+      "actors": [
+        "requester",
+        "reviewer",
+        "operator"
+      ],
+      "workflow": "multi-step approval"
+    }
+  },
+  "candidate": {
+    "thesis": "Add a baton timeline that travels with each request",
+    "mechanism": "Represent the handoff as a persistent baton card that shows current owner, next expected action, blocking reason, and the full state-transition timeline inside the existing request detail panel.",
+    "assumptions": [
+      "Users need ownership and blocking state more than another inbox view."
+    ],
+    "strengths": [
+      "Makes the current owner and next action explicit at every handoff."
+    ],
+    "failure_modes": [
+      "Can become noisy if the baton state is not tightly scoped."
+    ],
+    "unknowns": [
+      "How much timeline detail helps before the panel feels overloaded?"
+    ],
+    "implementation_shape": "Ship the baton card inside the existing detail panel on desktop and tablet first.",
+    "evidence": [
+      "The brief asks for clearer handoffs without collapsing the workflow into chat."
+    ]
+  },
+  "archive_candidates": [
+    {
+      "node_id": "archive-ux-001",
+      "candidate": {
+        "thesis": "Create a shared approval inbox with stronger next-action cues",
+        "mechanism": "Keep the current workflow structure, but add an inbox-style queue that highlights urgency, owner, and next step so teams can process handoffs faster from a central view.",
+        "assumptions": [
+          "A clearer queue is the main missing piece in the handoff workflow."
+        ],
+        "strengths": [
+          "Improves scanability across many requests."
+        ],
+        "failure_modes": [
+          "May still hide the deeper state transitions once a user opens an item."
+        ],
+        "unknowns": [
+          "Will a shared queue be enough without better in-flow context?"
+        ],
+        "implementation_shape": "Layer an approval inbox on top of the existing navigation.",
+        "evidence": [
+          "The product already has multiple actors and handoffs, so queue clarity matters."
+        ]
+      }
+    }
+  ],
+  "expected_assessment": {
+    "novelty_score": 0.84,
+    "max_similarity": 0.46,
+    "nearest_neighbor_id": "archive-ux-001",
+    "similarity_threshold": 0.8,
+    "is_novel": true,
+    "summary": "Both ideas talk about handoffs and next actions, but the candidate changes the mechanism from a central queue to an in-context baton timeline attached to each request.",
+    "duplicate_signals": [
+      "Shared vocabulary around handoffs, owners, and next actions."
+    ]
+  }
+}
