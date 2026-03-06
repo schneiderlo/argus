@@ -90,9 +90,10 @@ Current implementation status:
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors and novelty judgments instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
+- Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn from admitted nodes, strong scores, useful critiques, and winner contributions.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The remaining work is provider-routing statistics, persisted cross-run learning compression, and pairwise ranking support.
+The remaining work is persisted cross-run learning compression and pairwise ranking support.
 
 Process guardrails:
 

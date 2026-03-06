@@ -35,7 +35,9 @@ class CliTests(unittest.TestCase):
                     ]
                 )
 
-            runs = sorted((root / "artifacts" / "runs").iterdir())
+            runs = sorted(
+                path for path in (root / "artifacts" / "runs").iterdir() if path.is_dir()
+            )
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             self.assertIn("Argus Recommendation", stdout)
@@ -43,6 +45,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("best_bet=", stdout)
             self.assertEqual(len(runs), 1)
             self.assertTrue((runs[0] / "final-recommendation.json").is_file())
+            self.assertTrue((runs[0] / "routing-summary.json").is_file())
             self.assertTrue((runs[0] / "summary.md").is_file())
 
     def test_benchmark_command_executes_selected_case_and_persists_session(self) -> None:

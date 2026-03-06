@@ -17,6 +17,8 @@ from argus.models import (
     Node,
     NodeLifecycleStatus,
     ProblemSpec,
+    ProviderRoutingStats,
+    ProviderRoutingStatsEntry,
     ScoreVector,
     SearchState,
 )
@@ -144,6 +146,58 @@ class FileSystemStateStoreTests(unittest.TestCase):
         self.assertEqual(loaded.state, stripped_state)
         self.assertIsNone(loaded.final_recommendation)
         self.assertIsNone(loaded.summary_markdown)
+
+    def test_store_persists_run_routing_summary_and_merges_aggregate_stats(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            state = _sample_search_state(problem_spec)
+            routing_summary = ProviderRoutingStats(
+                entries=[
+                    ProviderRoutingStatsEntry(
+                        provider_name="codex",
+                        action_name="generate_seed",
+                        run_count=1,
+                        invocation_count=1,
+                        provider_failure_count=0,
+                        candidate_count=2,
+                        scored_node_count=2,
+                        admitted_count=2,
+                        rejected_count=0,
+                        hard_fail_count=0,
+                        strong_score_count=1,
+                        stress_test_survivor_count=1,
+                        winner_count=1,
+                        winner_contribution_count=1,
+                        critique_count=0,
+                        useful_critique_count=0,
+                        learning_note_count=0,
+                        accumulated_score=11.34,
+                        total_reward=6.0,
+                        last_run_id="run-20260306T020459Z",
+                        last_updated_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
+                    )
+                ],
+                updated_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
+            )
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020459Z",
+            )
+
+            store.save_snapshot(
+                manifest.run_id,
+                state=state,
+                routing_summary=routing_summary,
+                status=RunStatus.RUNNING,
+            )
+            aggregate = store.merge_provider_routing_stats(routing_summary)
+            loaded = store.load_run(manifest.run_id)
+
+        self.assertEqual(loaded.routing_summary, routing_summary)
+        self.assertEqual(aggregate, routing_summary)
 
     def test_list_runs_returns_sorted_run_manifests(self) -> None:
         with TemporaryDirectory() as directory:

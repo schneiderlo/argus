@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -16,6 +17,8 @@ from argus.models import (
     Node,
     NodeLifecycleStatus,
     ProblemSpec,
+    ProviderRoutingStats,
+    ProviderRoutingStatsEntry,
     SearchState,
 )
 from argus.providers import Provider
@@ -152,9 +155,10 @@ class SearchRuntime:
         )
 
         session: _MutableSession | None = None
+        routing_tracker = _RoutingTracker(default_provider_name=self._provider.name)
         current_action = ActionType.FRAME_PROBLEM.value
         try:
-            frame = self._frame_problem(initial_problem_spec, budget)
+            frame = self._frame_problem(initial_problem_spec, budget, routing_tracker)
             root_node = self._build_framing_node(frame)
             session = _MutableSession(
                 problem_spec=frame.problem_spec,
@@ -168,7 +172,7 @@ class SearchRuntime:
 
             if session.budget_spent < budget:
                 current_action = ActionType.GENERATE_SEED.value
-                self._generate_seed_nodes(session)
+                self._generate_seed_nodes(session, routing_tracker)
                 self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.RANK.value
@@ -176,7 +180,7 @@ class SearchRuntime:
             session.refresh_frontier(limit=self._policy.frontier_limit)
 
             current_action = ActionType.STRESS_TEST.value
-            self._stress_test_frontier(session, budget)
+            self._stress_test_frontier(session, budget, routing_tracker)
             self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.RANK.value
@@ -184,7 +188,7 @@ class SearchRuntime:
             session.refresh_frontier(limit=self._policy.frontier_limit)
 
             current_action = ActionType.DEEPEN.value
-            self._deepen_frontier(session, budget)
+            self._deepen_frontier(session, budget, routing_tracker)
             self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.RANK.value
@@ -192,14 +196,14 @@ class SearchRuntime:
             session.refresh_frontier(limit=self._policy.frontier_limit)
 
             current_action = ActionType.MUTATE.value
-            self._mutate_survivors(session, budget)
+            self._mutate_survivors(session, budget, routing_tracker)
 
             current_action = ActionType.COMBINE.value
-            self._combine_survivors(session, budget)
+            self._combine_survivors(session, budget, routing_tracker)
             self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.COMPRESS_LEARNING.value
-            self._compress_learning(session, budget)
+            self._compress_learning(session, budget, routing_tracker)
 
             current_action = ActionType.RANK.value
             session.record_internal_step()
@@ -212,18 +216,24 @@ class SearchRuntime:
                 ]
             )
             final_state = session.snapshot()
+            routing_summary = routing_tracker.build_summary(
+                state=final_state,
+                run_id=manifest.run_id,
+            )
             summary_markdown = recommendation.summary_markdown
             refreshed_manifest = self._state_store.save_snapshot(
                 manifest.run_id,
                 state=final_state,
                 final_recommendation=recommendation,
                 summary_markdown=summary_markdown,
+                routing_summary=routing_summary,
                 status=RunStatus.COMPLETED,
                 metadata_patch={
                     "best_bet_node_id": recommendation.best_bet_node_id,
                     "winner_count": len(final_state.winner_ids),
                 },
             )
+            self._state_store.merge_provider_routing_stats(routing_summary)
             return SearchRunResult(
                 run_path=self._state_store.root_dir / refreshed_manifest.run_id,
                 manifest=refreshed_manifest,
@@ -236,7 +246,17 @@ class SearchRuntime:
                 "failure_type": type(exc).__name__,
                 "failed_action": current_action,
             }
+            failed_state = None if session is None else session.snapshot()
+            routing_summary = routing_tracker.build_summary(
+                state=failed_state,
+                run_id=manifest.run_id,
+            )
             if session is None:
+                if routing_summary.entries:
+                    self._state_store.save_provider_routing_summary(
+                        manifest.run_id,
+                        routing_summary,
+                    )
                 self._state_store.update_manifest_status(
                     manifest.run_id,
                     status=RunStatus.FAILED,
@@ -246,15 +266,24 @@ class SearchRuntime:
             else:
                 self._state_store.save_snapshot(
                     manifest.run_id,
-                    state=session.snapshot(),
+                    state=failed_state,
+                    routing_summary=routing_summary,
                     status=RunStatus.FAILED,
                     error=str(exc),
                     metadata_patch=failure_metadata,
                 )
+            if routing_summary.entries:
+                self._state_store.merge_provider_routing_stats(routing_summary)
             raise
 
-    def _frame_problem(self, problem_spec: ProblemSpec, budget: int) -> ProblemFrame:
-        response = self._provider.run_action(
+    def _frame_problem(
+        self,
+        problem_spec: ProblemSpec,
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> ProblemFrame:
+        response = self._run_provider_action(
+            routing_tracker,
             action_name=ActionType.FRAME_PROBLEM,
             problem_spec=problem_spec,
             input_payload={
@@ -294,8 +323,13 @@ class SearchRuntime:
             created_at=_utcnow(),
         )
 
-    def _generate_seed_nodes(self, session: "_MutableSession") -> None:
-        response = self._provider.run_action(
+    def _generate_seed_nodes(
+        self,
+        session: "_MutableSession",
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
+        response = self._run_provider_action(
+            routing_tracker,
             action_name=ActionType.GENERATE_SEED,
             problem_spec=session.problem_spec,
             input_payload={
@@ -325,11 +359,17 @@ class SearchRuntime:
             )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
-    def _stress_test_frontier(self, session: "_MutableSession", budget: int) -> None:
+    def _stress_test_frontier(
+        self,
+        session: "_MutableSession",
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
         for node in self._top_ranked_nodes(session, limit=self._policy.stress_test_limit):
             if session.budget_spent >= budget:
                 break
-            response = self._provider.run_action(
+            response = self._run_provider_action(
+                routing_tracker,
                 action_name=ActionType.STRESS_TEST,
                 problem_spec=session.problem_spec,
                 input_payload={
@@ -349,6 +389,11 @@ class SearchRuntime:
             )
             session.consume_budget()
             critique = response.payload
+            routing_tracker.record_critique(
+                action_name=ActionType.STRESS_TEST.value,
+                provider_name=self._provider.name,
+                useful=_is_useful_critique(critique),
+            )
             updated = replace(
                 node,
                 critique=critique,
@@ -359,11 +404,17 @@ class SearchRuntime:
             )
             session.replace_node(updated)
 
-    def _deepen_frontier(self, session: "_MutableSession", budget: int) -> None:
+    def _deepen_frontier(
+        self,
+        session: "_MutableSession",
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
         for node in self._top_ranked_nodes(session, limit=self._policy.deepen_limit):
             if session.budget_spent >= budget:
                 break
-            response = self._provider.run_action(
+            response = self._run_provider_action(
+                routing_tracker,
                 action_name=ActionType.DEEPEN,
                 problem_spec=session.problem_spec,
                 input_payload={
@@ -390,12 +441,18 @@ class SearchRuntime:
             )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
-    def _mutate_survivors(self, session: "_MutableSession", budget: int) -> None:
+    def _mutate_survivors(
+        self,
+        session: "_MutableSession",
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
         mutations = 0
         for node in self._top_ranked_nodes(session, limit=self._policy.mutate_limit):
             if mutations >= self._policy.mutate_limit or session.budget_spent >= budget:
                 break
-            response = self._provider.run_action(
+            response = self._run_provider_action(
+                routing_tracker,
                 action_name=ActionType.MUTATE,
                 problem_spec=session.problem_spec,
                 input_payload={
@@ -421,13 +478,19 @@ class SearchRuntime:
                 )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
-    def _combine_survivors(self, session: "_MutableSession", budget: int) -> None:
+    def _combine_survivors(
+        self,
+        session: "_MutableSession",
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
         if self._policy.combine_limit <= 0 or session.budget_spent >= budget:
             return
         ranked = self._top_ranked_nodes(session, limit=2)
         if len(ranked) < 2:
             return
-        response = self._provider.run_action(
+        response = self._run_provider_action(
+            routing_tracker,
             action_name=ActionType.COMBINE,
             problem_spec=session.problem_spec,
             input_payload={
@@ -454,7 +517,12 @@ class SearchRuntime:
             )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
-    def _compress_learning(self, session: "_MutableSession", budget: int) -> None:
+    def _compress_learning(
+        self,
+        session: "_MutableSession",
+        budget: int,
+        routing_tracker: "_RoutingTracker",
+    ) -> None:
         if session.budget_spent >= budget:
             return
 
@@ -469,7 +537,8 @@ class SearchRuntime:
         if not archived_nodes and not pruned_nodes:
             return
 
-        response = self._provider.run_action(
+        response = self._run_provider_action(
+            routing_tracker,
             action_name=ActionType.COMPRESS_LEARNING,
             problem_spec=session.problem_spec,
             input_payload={
@@ -484,8 +553,41 @@ class SearchRuntime:
         )
         session.consume_budget()
         compression = response.payload
+        routing_tracker.record_learning_notes(
+            action_name=ActionType.COMPRESS_LEARNING.value,
+            provider_name=self._provider.name,
+            count=len(compression.notes),
+        )
         session.set_learning_notes(compression.notes[: self._policy.max_learning_notes])
         session.refresh_frontier(limit=self._policy.frontier_limit)
+
+    def _run_provider_action(
+        self,
+        routing_tracker: "_RoutingTracker",
+        *,
+        action_name: ActionType | str,
+        problem_spec: ProblemSpec,
+        input_payload,
+        output_schema,
+    ):
+        normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
+        routing_tracker.record_invocation(
+            action_name=normalized_action,
+            provider_name=self._provider.name,
+        )
+        try:
+            return self._provider.run_action(
+                action_name=action_name,
+                problem_spec=problem_spec,
+                input_payload=input_payload,
+                output_schema=output_schema,
+            )
+        except Exception:
+            routing_tracker.record_provider_failure(
+                action_name=normalized_action,
+                provider_name=self._provider.name,
+            )
+            raise
 
     def _admit_candidate(
         self,
@@ -794,6 +896,188 @@ class _MutableSession:
         )
 
 
+@dataclass(slots=True)
+class _RoutingAccumulator:
+    run_count: int = 0
+    invocation_count: int = 0
+    provider_failure_count: int = 0
+    candidate_count: int = 0
+    scored_node_count: int = 0
+    admitted_count: int = 0
+    rejected_count: int = 0
+    hard_fail_count: int = 0
+    strong_score_count: int = 0
+    stress_test_survivor_count: int = 0
+    winner_count: int = 0
+    winner_contribution_count: int = 0
+    critique_count: int = 0
+    useful_critique_count: int = 0
+    learning_note_count: int = 0
+    accumulated_score: float = 0.0
+
+    def total_reward(self) -> float:
+        return (
+            self.admitted_count * 1.0
+            + self.strong_score_count * 0.75
+            + self.stress_test_survivor_count * 1.25
+            + self.winner_contribution_count * 2.0
+            + self.useful_critique_count * 1.0
+            + self.learning_note_count * 0.25
+            - self.rejected_count * 0.5
+            - self.hard_fail_count * 1.0
+            - self.provider_failure_count * 2.0
+        )
+
+
+class _RoutingTracker:
+    def __init__(self, *, default_provider_name: str) -> None:
+        self._default_provider_name = _normalize_non_empty_string(
+            default_provider_name,
+            "default_provider_name",
+        )
+        self._invocations: dict[tuple[str, str], int] = defaultdict(int)
+        self._provider_failures: dict[tuple[str, str], int] = defaultdict(int)
+        self._critiques: dict[tuple[str, str], tuple[int, int]] = {}
+        self._learning_note_counts: dict[tuple[str, str], int] = defaultdict(int)
+
+    def record_invocation(self, *, action_name: str, provider_name: str | None = None) -> None:
+        self._invocations[self._key(action_name, provider_name)] += 1
+
+    def record_provider_failure(
+        self,
+        *,
+        action_name: str,
+        provider_name: str | None = None,
+    ) -> None:
+        self._provider_failures[self._key(action_name, provider_name)] += 1
+
+    def record_critique(
+        self,
+        *,
+        action_name: str,
+        provider_name: str | None = None,
+        useful: bool,
+    ) -> None:
+        key = self._key(action_name, provider_name)
+        critique_count, useful_count = self._critiques.get(key, (0, 0))
+        self._critiques[key] = (
+            critique_count + 1,
+            useful_count + (1 if useful else 0),
+        )
+
+    def record_learning_notes(
+        self,
+        *,
+        action_name: str,
+        provider_name: str | None = None,
+        count: int,
+    ) -> None:
+        if not isinstance(count, int) or count < 0:
+            raise ArgusValidationError("count must be a non-negative integer.")
+        self._learning_note_counts[self._key(action_name, provider_name)] += count
+
+    def build_summary(
+        self,
+        *,
+        state: SearchState | None,
+        run_id: str,
+    ) -> ProviderRoutingStats:
+        normalized_run_id = _normalize_non_empty_string(run_id, "run_id")
+        updated_at = _utcnow()
+        accumulators: dict[tuple[str, str], _RoutingAccumulator] = defaultdict(_RoutingAccumulator)
+        for key in self._all_keys(state):
+            accumulators[key].run_count = 1
+
+        for key, count in self._invocations.items():
+            accumulators[key].invocation_count += count
+        for key, count in self._provider_failures.items():
+            accumulators[key].provider_failure_count += count
+        for key, (critique_count, useful_count) in self._critiques.items():
+            accumulators[key].critique_count += critique_count
+            accumulators[key].useful_critique_count += useful_count
+        for key, count in self._learning_note_counts.items():
+            accumulators[key].learning_note_count += count
+
+        if state is not None:
+            winner_contributors = _winner_contributor_ids(state)
+            stress_test_survivors = _stress_test_survivor_ids(state, winner_contributors)
+            for node in state.nodes.values():
+                key = (node.provider_name, node.action_type.value)
+                accumulator = accumulators[key]
+                accumulator.candidate_count += 1
+                if node.score is not None:
+                    accumulator.scored_node_count += 1
+                    accumulator.accumulated_score += node.score.total_score
+                    if node.score.hard_constraint_pass and node.score.total_score >= _STRONG_SCORE_THRESHOLD:
+                        accumulator.strong_score_count += 1
+                if _was_admitted(node, state):
+                    accumulator.admitted_count += 1
+                elif node.lifecycle_status is NodeLifecycleStatus.REJECTED:
+                    accumulator.rejected_count += 1
+                elif (
+                    node.lifecycle_status is NodeLifecycleStatus.FAILED
+                    or (node.score is not None and not node.score.hard_constraint_pass)
+                ):
+                    accumulator.hard_fail_count += 1
+                if node.node_id in stress_test_survivors:
+                    accumulator.stress_test_survivor_count += 1
+                if node.node_id in state.winner_ids:
+                    accumulator.winner_count += 1
+                if node.node_id in winner_contributors:
+                    accumulator.winner_contribution_count += 1
+
+        entries = [
+            ProviderRoutingStatsEntry(
+                provider_name=provider_name,
+                action_name=action_name,
+                run_count=accumulator.run_count,
+                invocation_count=accumulator.invocation_count,
+                provider_failure_count=accumulator.provider_failure_count,
+                candidate_count=accumulator.candidate_count,
+                scored_node_count=accumulator.scored_node_count,
+                admitted_count=accumulator.admitted_count,
+                rejected_count=accumulator.rejected_count,
+                hard_fail_count=accumulator.hard_fail_count,
+                strong_score_count=accumulator.strong_score_count,
+                stress_test_survivor_count=accumulator.stress_test_survivor_count,
+                winner_count=accumulator.winner_count,
+                winner_contribution_count=accumulator.winner_contribution_count,
+                critique_count=accumulator.critique_count,
+                useful_critique_count=accumulator.useful_critique_count,
+                learning_note_count=accumulator.learning_note_count,
+                accumulated_score=round(accumulator.accumulated_score, 6),
+                total_reward=round(accumulator.total_reward(), 6),
+                last_run_id=normalized_run_id,
+                last_updated_at=updated_at,
+            )
+            for (provider_name, action_name), accumulator in sorted(accumulators.items())
+        ]
+        return ProviderRoutingStats(entries=entries, updated_at=updated_at)
+
+    def _all_keys(self, state: SearchState | None) -> set[tuple[str, str]]:
+        keys = set(self._invocations)
+        keys.update(self._provider_failures)
+        keys.update(self._critiques)
+        keys.update(self._learning_note_counts)
+        if state is not None:
+            for node in state.nodes.values():
+                keys.add((node.provider_name, node.action_type.value))
+        return keys
+
+    def _key(
+        self,
+        action_name: str,
+        provider_name: str | None,
+    ) -> tuple[str, str]:
+        return (
+            _normalize_non_empty_string(
+                provider_name or self._default_provider_name,
+                "provider_name",
+            ),
+            _normalize_non_empty_string(action_name, "action_name"),
+        )
+
+
 def _node_snapshot_payload(node: Node) -> dict[str, JSONValue]:
     payload: dict[str, JSONValue] = {
         "node_id": node.node_id,
@@ -821,6 +1105,58 @@ def _evaluation_metadata(assessment: object) -> dict[str, JSONValue]:
         "strengths": list(assessment.strengths),
         "weaknesses": list(assessment.weaknesses),
         "open_questions": list(assessment.open_questions),
+    }
+
+
+_STRONG_SCORE_THRESHOLD = 6.0
+
+
+def _is_useful_critique(critique: object) -> bool:
+    from argus.models import Critique
+
+    if not isinstance(critique, Critique):
+        raise ArgusValidationError("critique must be a Critique instance.")
+    return bool(
+        critique.hidden_dependencies
+        or critique.kill_shots
+        or critique.sharp_edges
+    )
+
+
+def _was_admitted(node: Node, state: SearchState) -> bool:
+    return node.node_id in state.archive_ids or node.lifecycle_status in {
+        NodeLifecycleStatus.ADMITTED,
+        NodeLifecycleStatus.ARCHIVED,
+        NodeLifecycleStatus.WINNER,
+    }
+
+
+def _winner_contributor_ids(state: SearchState) -> set[str]:
+    contributors: set[str] = set()
+    pending = list(state.winner_ids)
+    while pending:
+        node_id = pending.pop()
+        if node_id in contributors or node_id not in state.nodes:
+            continue
+        contributors.add(node_id)
+        pending.extend(state.nodes[node_id].parent_ids)
+    return contributors
+
+
+def _stress_test_survivor_ids(
+    state: SearchState,
+    winner_contributors: set[str],
+) -> set[str]:
+    expanded_parent_ids = {
+        parent_id
+        for node in state.nodes.values()
+        for parent_id in node.parent_ids
+    }
+    return {
+        node.node_id
+        for node in state.nodes.values()
+        if node.critique is not None
+        and (node.node_id in expanded_parent_ids or node.node_id in winner_contributors)
     }
 
 

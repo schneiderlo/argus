@@ -14,6 +14,8 @@ from argus.models import (
     Node,
     NodeLifecycleStatus,
     ProblemSpec,
+    ProviderRoutingStats,
+    ProviderRoutingStatsEntry,
     ScoreVector,
     SearchState,
 )
@@ -194,6 +196,112 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(recommendation, restored)
         self.assertIn("assumptions", payload)
         self.assertIn("reversal_conditions", payload)
+
+    def test_provider_routing_stats_round_trip_with_derived_averages(self) -> None:
+        stats = ProviderRoutingStats(
+            entries=[
+                ProviderRoutingStatsEntry(
+                    provider_name="codex",
+                    action_name="generate_seed",
+                    run_count=1,
+                    invocation_count=2,
+                    provider_failure_count=0,
+                    candidate_count=4,
+                    scored_node_count=4,
+                    admitted_count=3,
+                    rejected_count=0,
+                    hard_fail_count=1,
+                    strong_score_count=2,
+                    stress_test_survivor_count=1,
+                    winner_count=1,
+                    winner_contribution_count=2,
+                    critique_count=0,
+                    useful_critique_count=0,
+                    learning_note_count=0,
+                    accumulated_score=23.41,
+                    total_reward=8.5,
+                    last_run_id="run-20260306T020456Z",
+                    last_updated_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
+                )
+            ],
+            updated_at=datetime(2026, 3, 6, 2, 10, 0, tzinfo=timezone.utc),
+        )
+
+        payload = stats.to_dict()
+        restored = ProviderRoutingStats.from_dict(payload)
+
+        self.assertEqual(stats, restored)
+        self.assertEqual(payload["entries"][0]["average_reward"], 4.25)
+        self.assertAlmostEqual(payload["entries"][0]["average_score"], 5.8525)
+
+    def test_provider_routing_stats_merge_accumulates_matching_entries(self) -> None:
+        earlier = ProviderRoutingStats(
+            entries=[
+                ProviderRoutingStatsEntry(
+                    provider_name="codex",
+                    action_name="stress_test",
+                    run_count=1,
+                    invocation_count=2,
+                    provider_failure_count=0,
+                    candidate_count=0,
+                    scored_node_count=0,
+                    admitted_count=0,
+                    rejected_count=0,
+                    hard_fail_count=0,
+                    strong_score_count=0,
+                    stress_test_survivor_count=0,
+                    winner_count=0,
+                    winner_contribution_count=0,
+                    critique_count=2,
+                    useful_critique_count=2,
+                    learning_note_count=0,
+                    accumulated_score=0.0,
+                    total_reward=2.0,
+                    last_run_id="run-1",
+                    last_updated_at=datetime(2026, 3, 6, 2, 0, 0, tzinfo=timezone.utc),
+                )
+            ],
+            updated_at=datetime(2026, 3, 6, 2, 0, 0, tzinfo=timezone.utc),
+        )
+        later = ProviderRoutingStats(
+            entries=[
+                ProviderRoutingStatsEntry(
+                    provider_name="codex",
+                    action_name="stress_test",
+                    run_count=1,
+                    invocation_count=1,
+                    provider_failure_count=1,
+                    candidate_count=0,
+                    scored_node_count=0,
+                    admitted_count=0,
+                    rejected_count=0,
+                    hard_fail_count=0,
+                    strong_score_count=0,
+                    stress_test_survivor_count=0,
+                    winner_count=0,
+                    winner_contribution_count=0,
+                    critique_count=0,
+                    useful_critique_count=0,
+                    learning_note_count=0,
+                    accumulated_score=0.0,
+                    total_reward=-2.0,
+                    last_run_id="run-2",
+                    last_updated_at=datetime(2026, 3, 6, 3, 0, 0, tzinfo=timezone.utc),
+                )
+            ],
+            updated_at=datetime(2026, 3, 6, 3, 0, 0, tzinfo=timezone.utc),
+        )
+
+        merged = earlier.merge(later)
+
+        self.assertEqual(len(merged.entries), 1)
+        entry = merged.entries[0]
+        self.assertEqual(entry.run_count, 2)
+        self.assertEqual(entry.invocation_count, 3)
+        self.assertEqual(entry.provider_failure_count, 1)
+        self.assertEqual(entry.critique_count, 2)
+        self.assertEqual(entry.last_run_id, "run-2")
+        self.assertEqual(entry.total_reward, 0.0)
 
     def test_from_dict_rejects_unknown_top_level_keys(self) -> None:
         with self.assertRaises(ArgusValidationError):

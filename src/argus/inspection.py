@@ -22,6 +22,7 @@ _RECOGNIZED_ARGUS_RUN_FILES = {
     "final-recommendation.json",
     "learning-notes.json",
     "problem-spec.json",
+    "routing-summary.json",
     "run.json",
     "state.json",
     "summary.md",

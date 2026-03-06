@@ -13,6 +13,7 @@ from argus.models.core import (
     ScoreVector,
     SearchState,
 )
+from argus.models.routing import ProviderRoutingStats, ProviderRoutingStatsEntry
 
 __all__ = [
     "ActionType",
@@ -26,6 +27,8 @@ __all__ = [
     "Node",
     "NodeLifecycleStatus",
     "ProblemSpec",
+    "ProviderRoutingStats",
+    "ProviderRoutingStatsEntry",
     "ScoreVector",
     "SearchState",
 ]

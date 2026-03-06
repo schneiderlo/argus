@@ -37,6 +37,7 @@ class SearchRuntimeTests(unittest.TestCase):
                 run_id="run-search-fixture",
             )
             loaded = store.load_run("run-search-fixture")
+            aggregate_routing = store.load_provider_routing_stats()
 
         action_names = [call["action_name"] for call in provider.calls]
         self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
@@ -58,6 +59,24 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertIn("compress_learning", action_names)
         self.assertGreaterEqual(action_names.count("evaluate_candidate"), 6)
         self.assertGreaterEqual(action_names.count("assess_novelty"), 3)
+        self.assertIsNotNone(loaded.routing_summary)
+        self.assertEqual(loaded.routing_summary, aggregate_routing)
+
+        entries = {
+            entry.action_name: entry
+            for entry in loaded.routing_summary.entries
+            if entry.provider_name == provider.name
+        }
+        self.assertEqual(entries["frame_problem"].winner_contribution_count, 1)
+        self.assertEqual(entries["generate_seed"].candidate_count, 4)
+        self.assertEqual(entries["generate_seed"].admitted_count, 3)
+        self.assertEqual(entries["generate_seed"].hard_fail_count, 1)
+        self.assertEqual(entries["generate_seed"].stress_test_survivor_count, 2)
+        self.assertEqual(entries["generate_seed"].winner_contribution_count, 3)
+        self.assertEqual(entries["stress_test"].critique_count, 2)
+        self.assertEqual(entries["stress_test"].useful_critique_count, 2)
+        self.assertEqual(entries["deepen"].winner_count, 1)
+        self.assertEqual(entries["compress_learning"].learning_note_count, 2)
 
     def test_runtime_marks_manifest_failed_when_frame_problem_raises(self) -> None:
         with TemporaryDirectory() as directory:
@@ -77,8 +96,17 @@ class SearchRuntimeTests(unittest.TestCase):
                 )
 
             loaded = store.load_run("run-frame-failure")
+            aggregate_routing = store.load_provider_routing_stats()
 
         self.assertEqual(loaded.manifest.status, RunStatus.FAILED)
         self.assertIsNone(loaded.state)
         self.assertEqual(loaded.manifest.metadata["failed_action"], "frame_problem")
         self.assertIn("frame_problem", loaded.manifest.error)
+        self.assertIsNotNone(loaded.routing_summary)
+        self.assertEqual(loaded.routing_summary, aggregate_routing)
+        self.assertEqual(len(loaded.routing_summary.entries), 1)
+        entry = loaded.routing_summary.entries[0]
+        self.assertEqual(entry.action_name, "frame_problem")
+        self.assertEqual(entry.invocation_count, 1)
+        self.assertEqual(entry.provider_failure_count, 1)
+        self.assertEqual(entry.total_reward, -2.0)

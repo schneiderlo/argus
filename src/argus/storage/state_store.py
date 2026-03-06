@@ -14,6 +14,7 @@ from argus.models import (
     LearningNote,
     Node,
     ProblemSpec,
+    ProviderRoutingStats,
     SearchState,
 )
 
@@ -306,9 +307,13 @@ class PersistedRun:
     state: SearchState | None = None
     final_recommendation: FinalRecommendation | None = None
     summary_markdown: str | None = None
+    routing_summary: ProviderRoutingStats | None = None
 
 
 class FileSystemStateStore:
+    _ROUTING_SUMMARY_PATH = "routing-summary.json"
+    _ROUTING_STATS_PATH = "provider-routing-stats.json"
+
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir.expanduser().resolve()
 
@@ -357,6 +362,7 @@ class FileSystemStateStore:
         state: SearchState,
         final_recommendation: FinalRecommendation | None = None,
         summary_markdown: str | None = None,
+        routing_summary: ProviderRoutingStats | None = None,
         status: RunStatus = RunStatus.RUNNING,
         updated_at: datetime | None = None,
         metadata_patch: Mapping[str, JSONValue] | None = None,
@@ -392,6 +398,15 @@ class FileSystemStateStore:
             None if final_recommendation is None else final_recommendation.to_dict(),
         )
         summary_path = self._write_optional_text(run_dir, "summary.md", summary_markdown)
+        if routing_summary is None:
+            routing_summary_path = run_dir / self._ROUTING_SUMMARY_PATH
+            if routing_summary_path.exists():
+                routing_summary_path.unlink()
+        else:
+            self._write_json(
+                run_dir / self._ROUTING_SUMMARY_PATH,
+                routing_summary.to_dict(),
+            )
 
         merged_metadata = dict(manifest.metadata)
         if metadata_patch is not None:
@@ -443,6 +458,13 @@ class FileSystemStateStore:
                 raise ArgusValidationError(f"Missing summary file: {summary_path}")
             summary_markdown = summary_path.read_text(encoding="utf-8")
 
+        routing_summary: ProviderRoutingStats | None = None
+        routing_summary_path = run_dir / self._ROUTING_SUMMARY_PATH
+        if routing_summary_path.is_file():
+            routing_summary = ProviderRoutingStats.from_dict(
+                self._read_json_required(routing_summary_path)
+            )
+
         return PersistedRun(
             path=run_dir,
             manifest=manifest,
@@ -450,6 +472,7 @@ class FileSystemStateStore:
             state=state,
             final_recommendation=final_recommendation,
             summary_markdown=summary_markdown,
+            routing_summary=routing_summary,
         )
 
     def list_runs(self) -> list[RunManifest]:
@@ -495,6 +518,41 @@ class FileSystemStateStore:
         )
         self._write_manifest(run_dir, refreshed_manifest)
         return refreshed_manifest
+
+    def save_provider_routing_summary(
+        self,
+        run_id: str,
+        summary: ProviderRoutingStats,
+    ) -> ProviderRoutingStats:
+        if not isinstance(summary, ProviderRoutingStats):
+            raise ArgusValidationError(
+                "summary must be a ProviderRoutingStats instance, "
+                f"got {type(summary).__name__}."
+            )
+        normalized_run_id = _normalize_path_segment(run_id, "run_id")
+        _, run_dir = self._load_manifest(normalized_run_id)
+        self._write_json(run_dir / self._ROUTING_SUMMARY_PATH, summary.to_dict())
+        return summary
+
+    def load_provider_routing_stats(self) -> ProviderRoutingStats:
+        path = self.root_dir / self._ROUTING_STATS_PATH
+        if not path.is_file():
+            return ProviderRoutingStats.empty()
+        return ProviderRoutingStats.from_dict(self._read_json_required(path))
+
+    def merge_provider_routing_stats(
+        self,
+        summary: ProviderRoutingStats,
+    ) -> ProviderRoutingStats:
+        if not isinstance(summary, ProviderRoutingStats):
+            raise ArgusValidationError(
+                "summary must be a ProviderRoutingStats instance, "
+                f"got {type(summary).__name__}."
+            )
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        merged = self.load_provider_routing_stats().merge(summary)
+        self._write_json(self.root_dir / self._ROUTING_STATS_PATH, merged.to_dict())
+        return merged
 
     def _allocate_run_id(self, run_id: str | None, timestamp: datetime) -> str:
         if run_id is not None:
