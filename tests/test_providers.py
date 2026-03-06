@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
+from threading import Lock
 import unittest
+from unittest.mock import patch
 
 from argus.eval.evaluator import evaluation_assessment_schema, pairwise_ranking_assessment_schema
 from argus.eval.novelty import novelty_assessment_schema
@@ -297,6 +301,53 @@ class CodexProviderTests(unittest.TestCase):
             prompt_text,
         )
 
+    def test_run_action_allocates_unique_artifact_dirs_under_concurrency(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            class FixedDatetime(datetime):
+                @classmethod
+                def now(cls, tz=None) -> datetime:
+                    fixed = datetime(2026, 3, 6, 12, 0, 0, tzinfo=timezone.utc)
+                    return fixed if tz is None else fixed.astimezone(tz)
+
+            with patch("argus.providers.cli_base.datetime", FixedDatetime):
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    responses = list(
+                        executor.map(
+                            lambda _: provider.run_action(
+                                action_name=ActionType.GENERATE_SEED,
+                                problem_spec=_problem_spec(),
+                                input_payload={"target_count": 1},
+                                output_schema=_candidate_schema(),
+                            ),
+                            range(3),
+                        )
+                    )
+
+        invocation_ids = sorted(response.artifacts.invocation_id for response in responses)
+        expected_base = "20260306T120000000000Z-generate-seed"
+        self.assertEqual(
+            invocation_ids,
+            [
+                expected_base,
+                f"{expected_base}-01",
+                f"{expected_base}-02",
+            ],
+        )
+        self.assertEqual(len(runner.calls), 3)
+
 
 class GeminiProviderTests(unittest.TestCase):
     def test_run_action_uses_headless_json_mode_and_unwraps_response_text(self) -> None:
@@ -485,9 +536,11 @@ class FakeCliRunner:
     def __init__(self, *, outcome: CompletedRunnerResult | Exception) -> None:
         self.outcome = outcome
         self.calls: list[dict[str, object]] = []
+        self._lock = Lock()
 
     def __call__(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        self.calls.append({"command": list(command), **kwargs})
+        with self._lock:
+            self.calls.append({"command": list(command), **kwargs})
 
         if isinstance(self.outcome, CompletedRunnerResult):
             if self.outcome.last_message is not None and "-o" in command:

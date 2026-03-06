@@ -247,9 +247,11 @@ class CliProviderBase(ABC):
         return response
 
     def _prepare_artifacts(self, action_name: str, timestamp: datetime) -> ProviderArtifacts:
-        invocation_id = _allocate_invocation_id(self.artifacts_root, action_name, timestamp)
-        invocation_dir = self.artifacts_root / invocation_id
-        invocation_dir.mkdir(parents=True, exist_ok=False)
+        invocation_id, invocation_dir = _allocate_invocation_dir(
+            self.artifacts_root,
+            action_name,
+            timestamp,
+        )
         sandbox_dir = invocation_dir / "workspace"
         sandbox_dir.mkdir()
 
@@ -367,15 +369,23 @@ class _ResponseExtractionError(Exception):
         self.message = message
 
 
-def _allocate_invocation_id(root: Path, action_name: str, timestamp: datetime) -> str:
+def _allocate_invocation_dir(
+    root: Path,
+    action_name: str,
+    timestamp: datetime,
+) -> tuple[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
     base = f"{timestamp.strftime('%Y%m%dT%H%M%S%fZ')}-{_slugify(action_name)}"
-    candidate = base
     suffix = 1
-    while (root / candidate).exists():
-        candidate = f"{base}-{suffix:02d}"
-        suffix += 1
-    return candidate
+    while True:
+        candidate = base if suffix == 1 else f"{base}-{suffix - 1:02d}"
+        invocation_dir = root / candidate
+        try:
+            invocation_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            suffix += 1
+            continue
+        return candidate, invocation_dir
 
 
 def _normalize_action_name(value: ActionType | str) -> str:

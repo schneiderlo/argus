@@ -98,13 +98,12 @@ Current implementation status:
 - The provider layer now also supports `gemini` and `opencode` behind the same typed contract and `--provider` CLI flag. Codex remains the default and the best-supported path; the additional adapters reuse the same audited prompt, artifact, and validation flow while speaking each CLI's native headless JSON surface.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors, semantic novelty judgments, and pairwise `rank` decisions instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, generates and de-duplicates candidates, stress-tests and deepens survivors, compresses learnings, and writes a compiled recommendation package to `artifacts/runs/<run_id>/`.
+- The runtime now dispatches bounded concurrent provider-backed work for archive novelty checks, candidate evaluation, stress tests, deepens, and mutations. Commits remain deterministic, node ids stay stable, and final same-batch novelty admission is serialized so near-duplicates cannot race into the archive together.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn from admitted nodes, strong scores, useful critiques, and winner contributions.
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, and each `argus run` snapshots the imported reusable subset it used at `artifacts/runs/<run_id>/reusable-learning-context.json` before feeding those priors back into later framing, generation, evaluation, ranking, and critique steps.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The largest remaining implementation gaps are bounded concurrent provider dispatch, multi-island search, and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
-
-Bounded concurrent dispatch is now an explicit roadmap item because runtime latency can otherwise grow linearly with evaluator, novelty, critique, and deepen calls. The intended goal is lower wall-clock time through parallel independent work while preserving deterministic commits, stable artifacts, and safe novelty admission. That is a latency optimization, not automatically a token-cost optimization.
+The largest remaining implementation gaps are multi-island search and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
 
 Process guardrails:
 

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
+from typing import TypeVar
 
 from argus.errors import ArgusValidationError
 from argus.eval import (
     AgenticEvaluator,
     AgenticNoveltyFilter,
+    EvaluationAssessment,
+    NoveltyAssessment,
     PairwiseRankingAssessment,
     rank_nodes,
 )
@@ -28,7 +33,7 @@ from argus.models import (
     ReusableLearningNote,
     SearchState,
 )
-from argus.providers import Provider
+from argus.providers import Provider, StructuredOutputSchema
 from argus.search.contracts import (
     ProblemFrame,
     candidate_batch_schema,
@@ -51,6 +56,7 @@ class SearchPolicy:
     rejected_limit: int = 3
     max_learning_notes: int = 4
     reusable_learning_limit: int = 4
+    provider_max_concurrency: int = 4
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -63,6 +69,7 @@ class SearchPolicy:
             "rejected_limit",
             "max_learning_notes",
             "reusable_learning_limit",
+            "provider_max_concurrency",
         ):
             value = getattr(self, field_name)
             if not isinstance(value, int) or value <= 0:
@@ -79,6 +86,7 @@ class SearchPolicy:
             "rejected_limit": self.rejected_limit,
             "max_learning_notes": self.max_learning_notes,
             "reusable_learning_limit": self.reusable_learning_limit,
+            "provider_max_concurrency": self.provider_max_concurrency,
         }
 
 
@@ -98,6 +106,31 @@ class _PairwiseDecisionRecord:
     right_node_id: str
     winner_node_id: str
     assessment: PairwiseRankingAssessment
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateAdmissionRequest:
+    candidate: Candidate
+    parent_ids: tuple[str, ...]
+    batch_summary: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedCandidateAdmission:
+    novelty: NoveltyAssessment
+    assessment: EvaluationAssessment
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderActionRequest:
+    action_name: ActionType
+    problem_spec: ProblemSpec
+    input_payload: dict[str, JSONValue]
+    output_schema: StructuredOutputSchema[object]
+
+
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 class SearchRuntime:
@@ -425,14 +458,18 @@ class SearchRuntime:
         )
         session.consume_budget()
         batch = response.payload
-        for candidate in batch.candidates:
-            self._admit_candidate(
-                session,
-                action_type=ActionType.GENERATE_SEED,
-                candidate=candidate,
-                parent_ids=[session.root_id],
-                batch_summary=batch.batch_summary,
-            )
+        self._admit_candidate_batch(
+            session,
+            action_type=ActionType.GENERATE_SEED,
+            requests=[
+                _CandidateAdmissionRequest(
+                    candidate=candidate,
+                    parent_ids=(session.root_id,),
+                    batch_summary=batch.batch_summary,
+                )
+                for candidate in batch.candidates
+            ],
+        )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _stress_test_frontier(
@@ -441,9 +478,16 @@ class SearchRuntime:
         budget: int,
         routing_tracker: "_RoutingTracker",
     ) -> None:
-        for node in self._top_ranked_nodes(session, limit=self._policy.stress_test_limit):
-            if session.budget_spent >= budget:
-                break
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return
+
+        selected_nodes = self._top_ranked_nodes(
+            session,
+            limit=min(self._policy.stress_test_limit, remaining_budget),
+        )
+        requests: list[_ProviderActionRequest] = []
+        for node in selected_nodes:
             input_payload: dict[str, JSONValue] = {
                 "node_id": node.node_id,
                 "candidate": node.candidate.to_dict(),
@@ -461,13 +505,17 @@ class SearchRuntime:
                 input_payload["reusable_learning_notes"] = [
                     note.to_prompt_dict() for note in session.reusable_learning_notes
                 ]
-            response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.STRESS_TEST,
-                problem_spec=session.problem_spec,
-                input_payload=input_payload,
-                output_schema=critique_schema(),
+            requests.append(
+                _ProviderActionRequest(
+                    action_name=ActionType.STRESS_TEST,
+                    problem_spec=session.problem_spec,
+                    input_payload=input_payload,
+                    output_schema=critique_schema(),
+                )
             )
+
+        responses = self._dispatch_provider_requests(routing_tracker, requests)
+        for node, response in zip(selected_nodes, responses):
             session.consume_budget()
             critique = response.payload
             routing_tracker.record_critique(
@@ -491,9 +539,16 @@ class SearchRuntime:
         budget: int,
         routing_tracker: "_RoutingTracker",
     ) -> None:
-        for node in self._top_ranked_nodes(session, limit=self._policy.deepen_limit):
-            if session.budget_spent >= budget:
-                break
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return
+
+        selected_nodes = self._top_ranked_nodes(
+            session,
+            limit=min(self._policy.deepen_limit, remaining_budget),
+        )
+        requests: list[_ProviderActionRequest] = []
+        for node in selected_nodes:
             input_payload: dict[str, JSONValue] = {
                 "node_id": node.node_id,
                 "candidate": node.candidate.to_dict(),
@@ -510,21 +565,31 @@ class SearchRuntime:
                 input_payload["reusable_learning_notes"] = [
                     note.to_prompt_dict() for note in session.reusable_learning_notes
                 ]
-            response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.DEEPEN,
-                problem_spec=session.problem_spec,
-                input_payload=input_payload,
-                output_schema=candidate_schema(),
+            requests.append(
+                _ProviderActionRequest(
+                    action_name=ActionType.DEEPEN,
+                    problem_spec=session.problem_spec,
+                    input_payload=input_payload,
+                    output_schema=candidate_schema(),
+                )
             )
+
+        responses = self._dispatch_provider_requests(routing_tracker, requests)
+        admission_requests: list[_CandidateAdmissionRequest] = []
+        for node, response in zip(selected_nodes, responses):
             session.consume_budget()
-            self._admit_candidate(
-                session,
-                action_type=ActionType.DEEPEN,
-                candidate=response.payload,
-                parent_ids=[node.node_id],
-                batch_summary="Deepened a high-scoring survivor.",
+            admission_requests.append(
+                _CandidateAdmissionRequest(
+                    candidate=response.payload,
+                    parent_ids=(node.node_id,),
+                    batch_summary="Deepened a high-scoring survivor.",
+                )
             )
+        self._admit_candidate_batch(
+            session,
+            action_type=ActionType.DEEPEN,
+            requests=admission_requests,
+        )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _mutate_survivors(
@@ -533,10 +598,16 @@ class SearchRuntime:
         budget: int,
         routing_tracker: "_RoutingTracker",
     ) -> None:
-        mutations = 0
-        for node in self._top_ranked_nodes(session, limit=self._policy.mutate_limit):
-            if mutations >= self._policy.mutate_limit or session.budget_spent >= budget:
-                break
+        remaining_budget = max(budget - session.budget_spent, 0)
+        if remaining_budget <= 0:
+            return
+
+        selected_nodes = self._top_ranked_nodes(
+            session,
+            limit=min(self._policy.mutate_limit, remaining_budget),
+        )
+        requests: list[_ProviderActionRequest] = []
+        for node in selected_nodes:
             input_payload: dict[str, JSONValue] = {
                 "node_id": node.node_id,
                 "candidate": node.candidate.to_dict(),
@@ -550,23 +621,32 @@ class SearchRuntime:
                 input_payload["reusable_learning_notes"] = [
                     note.to_prompt_dict() for note in session.reusable_learning_notes
                 ]
-            response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.MUTATE,
-                problem_spec=session.problem_spec,
-                input_payload=input_payload,
-                output_schema=candidate_batch_schema(),
-            )
-            session.consume_budget()
-            mutations += 1
-            for candidate in response.payload.candidates:
-                self._admit_candidate(
-                    session,
-                    action_type=ActionType.MUTATE,
-                    candidate=candidate,
-                    parent_ids=[node.node_id],
-                    batch_summary=response.payload.batch_summary,
+            requests.append(
+                _ProviderActionRequest(
+                    action_name=ActionType.MUTATE,
+                    problem_spec=session.problem_spec,
+                    input_payload=input_payload,
+                    output_schema=candidate_batch_schema(),
                 )
+            )
+
+        responses = self._dispatch_provider_requests(routing_tracker, requests)
+        admission_requests: list[_CandidateAdmissionRequest] = []
+        for node, response in zip(selected_nodes, responses):
+            session.consume_budget()
+            for candidate in response.payload.candidates:
+                admission_requests.append(
+                    _CandidateAdmissionRequest(
+                        candidate=candidate,
+                        parent_ids=(node.node_id,),
+                        batch_summary=response.payload.batch_summary,
+                    )
+                )
+        self._admit_candidate_batch(
+            session,
+            action_type=ActionType.MUTATE,
+            requests=admission_requests,
+        )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _combine_survivors(
@@ -603,14 +683,18 @@ class SearchRuntime:
             output_schema=candidate_batch_schema(),
         )
         session.consume_budget()
-        for candidate in response.payload.candidates:
-            self._admit_candidate(
-                session,
-                action_type=ActionType.COMBINE,
-                candidate=candidate,
-                parent_ids=[ranked[0].node_id, ranked[1].node_id],
-                batch_summary=response.payload.batch_summary,
-            )
+        self._admit_candidate_batch(
+            session,
+            action_type=ActionType.COMBINE,
+            requests=[
+                _CandidateAdmissionRequest(
+                    candidate=candidate,
+                    parent_ids=(ranked[0].node_id, ranked[1].node_id),
+                    batch_summary=response.payload.batch_summary,
+                )
+                for candidate in response.payload.candidates
+            ],
+        )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _compress_learning(
@@ -690,6 +774,54 @@ class SearchRuntime:
             )
             raise
 
+    def _dispatch_provider_requests(
+        self,
+        routing_tracker: "_RoutingTracker",
+        requests: Sequence[_ProviderActionRequest],
+    ) -> list[object]:
+        return self._run_bounded_tasks(
+            requests,
+            lambda request: self._run_provider_action(
+                routing_tracker,
+                action_name=request.action_name,
+                problem_spec=request.problem_spec,
+                input_payload=request.input_payload,
+                output_schema=request.output_schema,
+            ),
+        )
+
+    def _run_bounded_tasks(
+        self,
+        items: Sequence[T],
+        worker: Callable[[T], R],
+    ) -> list[R]:
+        if not items:
+            return []
+        if len(items) == 1 or self._policy.provider_max_concurrency == 1:
+            return [worker(item) for item in items]
+
+        max_workers = min(self._policy.provider_max_concurrency, len(items))
+        results: list[R | None] = [None] * len(items)
+        failures: dict[int, Exception] = {}
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix=f"argus-{self._provider.name}",
+        ) as executor:
+            future_map = {
+                executor.submit(worker, item): index
+                for index, item in enumerate(items)
+            }
+            for future in as_completed(future_map):
+                index = future_map[future]
+                try:
+                    results[index] = future.result()
+                except Exception as exc:
+                    failures[index] = exc
+
+        if failures:
+            raise failures[min(failures)]
+        return [result for result in results if result is not None]
+
     def _admit_candidate(
         self,
         session: "_MutableSession",
@@ -699,18 +831,106 @@ class SearchRuntime:
         parent_ids: Sequence[str],
         batch_summary: str,
     ) -> Node:
-        archive_nodes = [session.nodes[node_id] for node_id in session.archive_ids]
-        novelty = self._novelty_filter.assess(
+        prepared = self._prepare_candidate_admission(
             problem_spec=session.problem_spec,
+            candidate=candidate,
+            archive_nodes=[session.nodes[node_id] for node_id in session.archive_ids],
+            reusable_learning_notes=session.reusable_learning_notes,
+        )
+        return self._commit_candidate_admission(
+            session,
+            action_type=action_type,
+            candidate=candidate,
+            parent_ids=parent_ids,
+            batch_summary=batch_summary,
+            novelty=prepared.novelty,
+            assessment=prepared.assessment,
+        )
+
+    def _admit_candidate_batch(
+        self,
+        session: "_MutableSession",
+        *,
+        action_type: ActionType,
+        requests: Sequence[_CandidateAdmissionRequest],
+    ) -> list[Node]:
+        if not requests:
+            return []
+
+        archive_snapshot = [session.nodes[node_id] for node_id in session.archive_ids]
+        prepared = self._run_bounded_tasks(
+            requests,
+            lambda request: self._prepare_candidate_admission(
+                problem_spec=session.problem_spec,
+                candidate=request.candidate,
+                archive_nodes=archive_snapshot,
+                reusable_learning_notes=session.reusable_learning_notes,
+            ),
+        )
+        admitted_batch_nodes: list[Node] = []
+        committed: list[Node] = []
+        for request, prepared_candidate in zip(requests, prepared):
+            novelty = prepared_candidate.novelty
+            if novelty.is_novel and admitted_batch_nodes:
+                # Concurrent archive checks use a fixed snapshot; final batch admission
+                # stays serial so same-batch near-duplicates cannot both land.
+                novelty = _merge_novelty_assessments(
+                    archive_novelty=novelty,
+                    intra_batch_novelty=self._novelty_filter.assess(
+                        problem_spec=session.problem_spec,
+                        candidate=request.candidate,
+                        archive_nodes=admitted_batch_nodes,
+                    ),
+                )
+            node = self._commit_candidate_admission(
+                session,
+                action_type=action_type,
+                candidate=request.candidate,
+                parent_ids=request.parent_ids,
+                batch_summary=request.batch_summary,
+                novelty=novelty,
+                assessment=prepared_candidate.assessment,
+            )
+            committed.append(node)
+            if node.node_id in session.archive_ids:
+                admitted_batch_nodes.append(node)
+        return committed
+
+    def _prepare_candidate_admission(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidate: Candidate,
+        archive_nodes: Sequence[Node],
+        reusable_learning_notes: Sequence[ReusableLearningNote],
+    ) -> _PreparedCandidateAdmission:
+        novelty = self._novelty_filter.assess(
+            problem_spec=problem_spec,
             candidate=candidate,
             archive_nodes=archive_nodes,
         )
         assessment = self._evaluator.evaluate(
-            session.problem_spec,
+            problem_spec,
             candidate,
             novelty_score=novelty.novelty_score,
-            reusable_learning_notes=session.reusable_learning_notes,
+            reusable_learning_notes=reusable_learning_notes,
         )
+        return _PreparedCandidateAdmission(
+            novelty=novelty,
+            assessment=assessment,
+        )
+
+    def _commit_candidate_admission(
+        self,
+        session: "_MutableSession",
+        *,
+        action_type: ActionType,
+        candidate: Candidate,
+        parent_ids: Sequence[str],
+        batch_summary: str,
+        novelty: NoveltyAssessment,
+        assessment: EvaluationAssessment,
+    ) -> Node:
         node_id = session.allocate_node_id()
         if parent_ids:
             depth = max(session.nodes[parent_id].depth for parent_id in parent_ids) + 1
@@ -1176,13 +1396,15 @@ class _RoutingTracker:
             default_provider_name,
             "default_provider_name",
         )
+        self._lock = Lock()
         self._invocations: dict[tuple[str, str], int] = defaultdict(int)
         self._provider_failures: dict[tuple[str, str], int] = defaultdict(int)
         self._critiques: dict[tuple[str, str], tuple[int, int]] = {}
         self._learning_note_counts: dict[tuple[str, str], int] = defaultdict(int)
 
     def record_invocation(self, *, action_name: str, provider_name: str | None = None) -> None:
-        self._invocations[self._key(action_name, provider_name)] += 1
+        with self._lock:
+            self._invocations[self._key(action_name, provider_name)] += 1
 
     def record_provider_failure(
         self,
@@ -1190,7 +1412,8 @@ class _RoutingTracker:
         action_name: str,
         provider_name: str | None = None,
     ) -> None:
-        self._provider_failures[self._key(action_name, provider_name)] += 1
+        with self._lock:
+            self._provider_failures[self._key(action_name, provider_name)] += 1
 
     def record_critique(
         self,
@@ -1199,12 +1422,13 @@ class _RoutingTracker:
         provider_name: str | None = None,
         useful: bool,
     ) -> None:
-        key = self._key(action_name, provider_name)
-        critique_count, useful_count = self._critiques.get(key, (0, 0))
-        self._critiques[key] = (
-            critique_count + 1,
-            useful_count + (1 if useful else 0),
-        )
+        with self._lock:
+            key = self._key(action_name, provider_name)
+            critique_count, useful_count = self._critiques.get(key, (0, 0))
+            self._critiques[key] = (
+                critique_count + 1,
+                useful_count + (1 if useful else 0),
+            )
 
     def record_learning_notes(
         self,
@@ -1215,7 +1439,8 @@ class _RoutingTracker:
     ) -> None:
         if not isinstance(count, int) or count < 0:
             raise ArgusValidationError("count must be a non-negative integer.")
-        self._learning_note_counts[self._key(action_name, provider_name)] += count
+        with self._lock:
+            self._learning_note_counts[self._key(action_name, provider_name)] += count
 
     def build_summary(
         self,
@@ -1332,6 +1557,39 @@ def _node_snapshot_payload(node: Node) -> dict[str, JSONValue]:
     if node.critique is not None:
         payload["critique"] = node.critique.to_dict()
     return payload
+
+
+def _merge_novelty_assessments(
+    *,
+    archive_novelty: NoveltyAssessment,
+    intra_batch_novelty: NoveltyAssessment,
+) -> NoveltyAssessment:
+    stronger_overlap = (
+        intra_batch_novelty
+        if intra_batch_novelty.max_similarity >= archive_novelty.max_similarity
+        else archive_novelty
+    )
+    summary_fragments = [archive_novelty.summary]
+    if intra_batch_novelty.summary != archive_novelty.summary:
+        summary_fragments.append(intra_batch_novelty.summary)
+    return NoveltyAssessment(
+        novelty_score=min(archive_novelty.novelty_score, intra_batch_novelty.novelty_score),
+        max_similarity=max(archive_novelty.max_similarity, intra_batch_novelty.max_similarity),
+        nearest_neighbor_id=stronger_overlap.nearest_neighbor_id,
+        similarity_threshold=max(
+            archive_novelty.similarity_threshold,
+            intra_batch_novelty.similarity_threshold,
+        ),
+        is_novel=archive_novelty.is_novel and intra_batch_novelty.is_novel,
+        summary=" ".join(summary_fragments),
+        duplicate_signals=_collect_unique_strings(
+            [
+                *archive_novelty.duplicate_signals,
+                *intra_batch_novelty.duplicate_signals,
+            ],
+            limit=6,
+        ),
+    )
 
 
 def _evaluation_metadata(assessment: object) -> dict[str, JSONValue]:

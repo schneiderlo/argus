@@ -5,10 +5,15 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from argus.errors import ArgusValidationError
-from argus.models import LearningNote, LearningNoteType, ProblemSpec
+from argus.models import ActionType, LearningNote, LearningNoteType, NodeLifecycleStatus, ProblemSpec
 from argus.search import SearchPolicy, SearchRuntime
 from argus.storage import FileSystemStateStore, RunStatus
-from tests.search_fixtures import SearchFixtureProvider
+from tests.search_fixtures import (
+    SearchFixtureProvider,
+    _benchmark_market_candidate,
+    _operational_assistant_candidate,
+    _workflow_archive_candidate,
+)
 
 
 class SearchRuntimeTests(unittest.TestCase):
@@ -188,3 +193,134 @@ class SearchRuntimeTests(unittest.TestCase):
             entry.source_run_ids,
             ["run-prior-learning", "run-search-learning-memory"],
         )
+
+    def test_runtime_uses_bounded_concurrency_for_independent_provider_calls(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                sleep_by_action={
+                    "assess_novelty": 0.03,
+                    "evaluate_candidate": 0.03,
+                    "stress_test": 0.03,
+                    "deepen": 0.03,
+                },
+            )
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=2,
+                    deepen_limit=2,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=4,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=9,
+                run_id="run-search-concurrency",
+            )
+
+        self.assertLessEqual(_max_overlap(provider.calls), 2)
+        self.assertGreaterEqual(
+            _max_overlap(provider.calls, actions={"assess_novelty", "evaluate_candidate"}),
+            2,
+        )
+        self.assertEqual(_max_overlap(provider.calls, actions={"stress_test"}), 2)
+        self.assertEqual(_max_overlap(provider.calls, actions={"deepen"}), 2)
+
+    def test_runtime_rejects_same_batch_duplicates_after_parallel_archive_checks(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            duplicate_candidate = _workflow_archive_candidate()
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                sleep_by_action={
+                    "assess_novelty": 0.02,
+                    "evaluate_candidate": 0.02,
+                },
+                seed_candidates=[
+                    duplicate_candidate,
+                    duplicate_candidate,
+                    _operational_assistant_candidate(),
+                    _benchmark_market_candidate(),
+                ],
+            )
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=2,
+                    deepen_limit=2,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=4,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                    provider_max_concurrency=4,
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=9,
+                run_id="run-search-intra-batch-dedupe",
+            )
+
+        duplicate_seed_nodes = [
+            node
+            for node in result.state.nodes.values()
+            if node.action_type is ActionType.GENERATE_SEED
+            and node.candidate.thesis == "Workflow-native decision archive"
+        ]
+        admitted_duplicates = [
+            node for node in duplicate_seed_nodes if node.node_id in result.state.archive_ids
+        ]
+        rejected_duplicates = [
+            node
+            for node in duplicate_seed_nodes
+            if node.lifecycle_status is NodeLifecycleStatus.REJECTED
+        ]
+
+        self.assertEqual(len(duplicate_seed_nodes), 2)
+        self.assertEqual(len(admitted_duplicates), 1)
+        self.assertEqual(len(rejected_duplicates), 1)
+        self.assertEqual(
+            rejected_duplicates[0].metadata["novelty"]["nearest_neighbor_id"],
+            admitted_duplicates[0].node_id,
+        )
+        self.assertIn(
+            "near-duplicate",
+            rejected_duplicates[0].metadata["novelty"]["summary"].lower(),
+        )
+
+
+def _max_overlap(
+    calls: list[dict[str, object]],
+    *,
+    actions: set[str] | None = None,
+) -> int:
+    events: list[tuple[float, int]] = []
+    for call in calls:
+        action_name = str(call["action_name"])
+        if actions is not None and action_name not in actions:
+            continue
+        events.append((float(call["started_at"]), 1))
+        events.append((float(call["finished_at"]), -1))
+
+    active = 0
+    max_active = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], -item[1])):
+        active += delta
+        max_active = max(max_active, active)
+    return max_active

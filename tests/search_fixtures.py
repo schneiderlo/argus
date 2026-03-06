@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
+import time
 
 from argus.errors import ArgusValidationError
 from argus.models import ActionType, Candidate, Critique, LearningNote, LearningNoteType, ProblemSpec
@@ -17,10 +19,18 @@ class SearchFixtureProvider:
         root_dir: Path,
         *,
         fail_on_action: str | None = None,
+        sleep_by_action: dict[str, float] | None = None,
+        seed_candidates: list[Candidate] | None = None,
     ) -> None:
         self.root_dir = root_dir
         self.fail_on_action = fail_on_action
+        self.sleep_by_action = dict(sleep_by_action or {})
+        if seed_candidates is not None and not seed_candidates:
+            raise ArgusValidationError("seed_candidates must not be empty when provided.")
+        self.seed_candidates = None if seed_candidates is None else list(seed_candidates)
         self.calls: list[dict[str, object]] = []
+        self._lock = Lock()
+        self._next_call_index = 1
 
     def run_action(
         self,
@@ -31,49 +41,62 @@ class SearchFixtureProvider:
         output_schema,
     ):
         normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
-        self.calls.append(
-            {
+        started_at = time.monotonic()
+        with self._lock:
+            call_index = self._next_call_index
+            self._next_call_index += 1
+            call_record = {
+                "call_index": call_index,
                 "action_name": normalized_action,
                 "problem_spec": problem_spec,
                 "input_payload": input_payload,
+                "started_at": started_at,
             }
-        )
+            self.calls.append(call_record)
 
-        if self.fail_on_action == normalized_action:
-            raise ArgusValidationError(f"fixture provider failed during {normalized_action}.")
+        try:
+            delay = self.sleep_by_action.get(normalized_action, 0.0)
+            if delay > 0:
+                time.sleep(delay)
 
-        handler = getattr(self, f"_handle_{normalized_action}")
-        payload = handler(problem_spec, input_payload)
-        raw_payload = payload.to_dict() if hasattr(payload, "to_dict") else payload
-        typed_payload = output_schema.validate(raw_payload)
+            if self.fail_on_action == normalized_action:
+                raise ArgusValidationError(f"fixture provider failed during {normalized_action}.")
 
-        artifacts_dir = self.root_dir / normalized_action / f"call-{len(self.calls):02d}"
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-        artifacts = ProviderArtifacts(
-            invocation_id=f"{normalized_action}-{len(self.calls):02d}",
-            invocation_dir=artifacts_dir,
-            prompt_path=artifacts_dir / "prompt.md",
-            schema_path=artifacts_dir / "schema.json",
-            last_message_path=artifacts_dir / "last-message.json",
-            response_path=artifacts_dir / "response.json",
-            stdout_path=artifacts_dir / "stdout.jsonl",
-            stderr_path=artifacts_dir / "stderr.txt",
-            metadata_path=artifacts_dir / "metadata.json",
-            sandbox_dir=artifacts_dir / "workspace",
-            failure_path=artifacts_dir / "failure.json",
-        )
-        artifacts.sandbox_dir.mkdir(parents=True, exist_ok=True)
-        return ProviderResponse(
-            provider_name=self.name,
-            action_name=normalized_action,
-            payload=typed_payload,
-            raw_payload=raw_payload,
-            prompt_sha256=f"fixture-{normalized_action}",
-            artifacts=artifacts,
-            exit_status=0,
-            timestamp=datetime(2026, 3, 6, 3, 33, 40, tzinfo=timezone.utc),
-            model="fixture-model",
-        )
+            handler = getattr(self, f"_handle_{normalized_action}")
+            payload = handler(problem_spec, input_payload)
+            raw_payload = payload.to_dict() if hasattr(payload, "to_dict") else payload
+            typed_payload = output_schema.validate(raw_payload)
+
+            artifacts_dir = self.root_dir / normalized_action / f"call-{call_index:02d}"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            artifacts = ProviderArtifacts(
+                invocation_id=f"{normalized_action}-{call_index:02d}",
+                invocation_dir=artifacts_dir,
+                prompt_path=artifacts_dir / "prompt.md",
+                schema_path=artifacts_dir / "schema.json",
+                last_message_path=artifacts_dir / "last-message.json",
+                response_path=artifacts_dir / "response.json",
+                stdout_path=artifacts_dir / "stdout.jsonl",
+                stderr_path=artifacts_dir / "stderr.txt",
+                metadata_path=artifacts_dir / "metadata.json",
+                sandbox_dir=artifacts_dir / "workspace",
+                failure_path=artifacts_dir / "failure.json",
+            )
+            artifacts.sandbox_dir.mkdir(parents=True, exist_ok=True)
+            return ProviderResponse(
+                provider_name=self.name,
+                action_name=normalized_action,
+                payload=typed_payload,
+                raw_payload=raw_payload,
+                prompt_sha256=f"fixture-{normalized_action}",
+                artifacts=artifacts,
+                exit_status=0,
+                timestamp=datetime(2026, 3, 6, 3, 33, 40, tzinfo=timezone.utc),
+                model="fixture-model",
+            )
+        finally:
+            with self._lock:
+                call_record["finished_at"] = time.monotonic()
 
     def _handle_frame_problem(
         self,
@@ -116,12 +139,16 @@ class SearchFixtureProvider:
         input_payload: dict[str, object],
     ) -> CandidateBatch:
         target_count = int(input_payload["target_count"])
-        templates = [
-            _workflow_archive_candidate(),
-            _operational_assistant_candidate(),
-            _benchmark_market_candidate(),
-            _chat_wrapper_candidate(),
-        ]
+        templates = (
+            list(self.seed_candidates)
+            if self.seed_candidates is not None
+            else [
+                _workflow_archive_candidate(),
+                _operational_assistant_candidate(),
+                _benchmark_market_candidate(),
+                _chat_wrapper_candidate(),
+            ]
+        )
         candidates = [templates[index % len(templates)] for index in range(target_count)]
         return CandidateBatch(
             candidates=candidates,
