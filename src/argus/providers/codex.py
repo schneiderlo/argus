@@ -19,6 +19,7 @@ from argus.providers.base import (
     ProviderResponse,
     StructuredOutputSchema,
 )
+from argus.providers.prompting import render_codex_prompt
 
 
 class CodexProvider:
@@ -372,34 +373,12 @@ def _render_prompt(
     input_payload: Mapping[str, JSONValue],
     output_schema: StructuredOutputSchema[Any],
 ) -> str:
-    sections = [
-        "You are the Codex worker behind the Argus provider layer.",
-        "Return exactly one JSON response that satisfies the supplied schema.",
-        "Do not wrap the JSON in markdown fences.",
-        "Do not run shell commands or write files.",
-        "Treat the problem spec and input payload as the full source of truth.",
-        "",
-        f"Action: {action_name}",
-        "",
-        "Problem spec:",
-        "```json",
-        json.dumps(problem_spec.to_dict(), indent=2, sort_keys=True),
-        "```",
-        "",
-        "Input payload:",
-        "```json",
-        json.dumps(dict(input_payload), indent=2, sort_keys=True),
-        "```",
-        "",
-        f"Output schema name: {output_schema.name}",
-        "Output schema:",
-        "```json",
-        json.dumps(output_schema.json_schema, indent=2, sort_keys=True),
-        "```",
-        "",
-        "Return only the JSON value that matches the schema.",
-    ]
-    return "\n".join(sections).strip() + "\n"
+    return render_codex_prompt(
+        action_name=action_name,
+        problem_spec=problem_spec,
+        input_payload=input_payload,
+        output_schema=output_schema,
+    )
 
 
 def _slugify(value: str) -> str:

@@ -6,6 +6,8 @@ import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 
+from argus.eval.evaluator import evaluation_assessment_schema, pairwise_ranking_assessment_schema
+from argus.eval.novelty import novelty_assessment_schema
 from argus.models import ActionType, Candidate, ProblemSpec
 from argus.providers import CodexProvider, ProviderInvocationError, StructuredOutputSchema
 
@@ -171,6 +173,113 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("timed out", failure.message)
         self.assertIn("deadline exceeded", metadata["stderr_excerpt"])
 
+    def test_run_action_materializes_action_specific_evaluation_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCodexRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_evaluation_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name="evaluate_candidate",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "candidate": _candidate_payload(),
+                    "novelty_score": 0.71,
+                },
+                output_schema=evaluation_assessment_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: candidate evaluator for Argus.", prompt_text)
+        self.assertIn("Hard-constraint gate: set score.hard_constraint_pass=false", prompt_text)
+        self.assertIn("Anti-style rule: do not reward polish, buzzwords, generic optimism", prompt_text)
+
+    def test_run_action_materializes_action_specific_novelty_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCodexRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_novelty_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name="assess_novelty",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "candidate": _candidate_payload(),
+                    "archive_candidates": [
+                        {
+                            "node_id": "node-001",
+                            "candidate": _candidate_payload(),
+                        }
+                    ],
+                    "similarity_threshold": 0.8,
+                },
+                output_schema=novelty_assessment_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: semantic novelty judge for Argus archive admission.", prompt_text)
+        self.assertIn("Near-duplicate rule: mark is_novel=false", prompt_text)
+        self.assertIn(
+            "Shared-vocabulary rule: do not reject a candidate just because it uses similar domain terms.",
+            prompt_text,
+        )
+
+    def test_run_action_materializes_action_specific_pairwise_ranking_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCodexRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_pairwise_ranking_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.RANK,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "objective": {
+                        "name": "conservative_option",
+                        "description": "Choose the safer, more implementation-ready option.",
+                    },
+                    "left": _comparison_payload("node-left"),
+                    "right": _comparison_payload("node-right"),
+                },
+                output_schema=pairwise_ranking_assessment_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: pairwise ranking judge for Argus finalist selection.", prompt_text)
+        self.assertIn("There are no ties.", prompt_text)
+        self.assertIn("Objective-specific focus for conservative_option:", prompt_text)
+        self.assertIn(
+            "Prefer operational clarity, tractability, plausibility, robustness, and confidence over raw upside.",
+            prompt_text,
+        )
+
 
 class FakeCodexRunner:
     def __init__(self, *, outcome: CompletedRunnerResult | Exception) -> None:
@@ -259,4 +368,58 @@ def _candidate_payload() -> dict[str, object]:
         "unknowns": ["How much configuration the target segment will accept."],
         "implementation_shape": "Persist the workflow state and score outcomes explicitly.",
         "evidence": ["Argus should favor evaluator-first, replayable systems."],
+    }
+
+
+def _evaluation_payload() -> dict[str, object]:
+    return {
+        "score": {
+            "hard_constraint_pass": True,
+            "hard_constraint_reasons": [],
+            "distinctiveness": 0.73,
+            "usefulness": 0.86,
+            "specificity": 0.78,
+            "plausibility": 0.81,
+            "implementation_tractability": 0.79,
+            "upside": 0.71,
+            "adversarial_robustness": 0.68,
+            "evidence_quality": 0.66,
+            "total_score": 6.02,
+            "confidence_estimate": 0.77,
+        },
+        "summary": "The candidate is strong because it directly supports repeatable retention loops.",
+        "strengths": ["Strong connection between workflow habit and product value."],
+        "weaknesses": ["Could still add some onboarding friction."],
+        "open_questions": ["How much setup effort will the target segment tolerate?"],
+    }
+
+
+def _novelty_payload() -> dict[str, object]:
+    return {
+        "novelty_score": 0.22,
+        "max_similarity": 0.84,
+        "nearest_neighbor_id": "node-001",
+        "similarity_threshold": 0.8,
+        "is_novel": False,
+        "summary": "The candidate is a near-duplicate of the archived workflow ritual idea.",
+        "duplicate_signals": ["Same retention mechanism.", "Same rollout shape."],
+    }
+
+
+def _pairwise_ranking_payload() -> dict[str, object]:
+    return {
+        "winner": "left",
+        "summary": "The left option is safer to ship without giving up the core value loop.",
+        "decisive_advantages": ["Cleaner implementation path."],
+        "decisive_risks": ["May leave some upside on the table."],
+        "confidence": 0.81,
+    }
+
+
+def _comparison_payload(node_id: str) -> dict[str, object]:
+    return {
+        "node_id": node_id,
+        "candidate": _candidate_payload(),
+        "score": _evaluation_payload()["score"],
+        "novelty_score": 0.63,
     }
