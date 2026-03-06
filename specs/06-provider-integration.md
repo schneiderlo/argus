@@ -36,6 +36,8 @@ No provider may directly mutate repository state as part of its contract. Only t
 
 The orchestrator also owns the full action-specific prompt design. A provider adapter may materialize a generic wrapper, but Argus must supply rich per-action instructions for evaluation, novelty, pairwise ranking, generation, and critique behaviors rather than relying on the model to infer intent from raw JSON alone.
 
+Provider implementations should also support a bounded-concurrency execution model so the runtime can dispatch independent work in parallel without building a separate orchestration path per provider. This can be implemented with async APIs, worker pools, or another explicit concurrency mechanism, but it must preserve the same artifact capture, schema validation, timeout handling, and failure serialization guarantees as the synchronous path.
+
 ## Initial Provider Scope
 
 The first implementation only needs a production-quality Codex adapter. Gemini CLI and OpenCode can arrive later, but the interface must not make their addition awkward.
@@ -58,3 +60,7 @@ Structured outputs are mandatory. The provider layer must not admit free-form pr
 ## Prompt Audit Requirement
 
 Provider invocation artifacts must make it easy to inspect the exact prompt that was sent for each action. This is especially important for evaluator, novelty, and pairwise ranking actions because prompt quality is part of the product, not incidental glue code.
+
+## Concurrency Audit Requirement
+
+If providers are dispatched concurrently, each invocation still needs isolated artifacts, explicit timing metadata, and unambiguous association back to the runtime action that triggered it. Parallelism must not make failures or prompt provenance harder to debug.

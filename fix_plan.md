@@ -19,6 +19,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Highest Priority
 
+- [ ] Implement bounded concurrent provider dispatch for independent search phases so `argus run` latency does not scale linearly with every evaluation, novelty, stress-test, and deepen call. Keep state commits deterministic, cap concurrency per provider, and prevent intra-batch novelty races.
 - [x] Replace the thin generic evaluator and novelty prompts with action-specific judge prompts that encode the real rubric, hard-constraint handling, adversarial checks, duplicate criteria, and output expectations directly in the provider prompt materialized for Codex.
 - [x] Add evaluator-quality benchmark fixtures and tests that catch obvious ranking, hard-constraint, pairwise-comparison, and novelty failures instead of only checking schema/plumbing behavior.
 - [x] Bootstrap the Python project with `uv`: create `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.
@@ -53,9 +54,10 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - The Codex provider adapter now lives in `src/argus/providers/` and runs `codex exec` against an isolated read-only workspace while materializing prompt, schema, stdout, stderr, metadata, and failure artifacts under `artifacts/provider_invocations/` when wired into the runtime.
 - `argus inspect` recognizes persisted Argus run directories as well as Ralph-loop artifact directories.
 - The evaluator and novelty layer in `src/argus/eval/` now use provider-backed structured judgment rather than lexical heuristics.
-- The evaluator/provider wiring now materializes action-specific judge prompts for evaluation, novelty, and pairwise ranking. Evaluator-quality benchmark assertions are now the top priority before additional search sophistication.
+- The evaluator/provider wiring now materializes action-specific judge prompts for evaluation, novelty, and pairwise ranking, and evaluator-quality benchmark assertions now exist in the repo. The next runtime priority is latency reduction through safe bounded concurrent dispatch.
 - Evaluator-quality benchmark fixtures now live under `benchmarks/evaluator_cases/`, with typed loaders in `src/argus/benchmarks/evaluator_dataset.py` and data-driven tests in `tests/test_evaluator_benchmarks.py` covering hard-constraint failures, semantic novelty duplicates vs distinct shared-vocabulary ideas, pairwise objective-specific winner flips, and score-based finalist ordering.
 - Codex prompt materialization now lives in `src/argus/providers/prompting.py` and gives `evaluate_candidate`, `assess_novelty`, and pairwise `rank` dedicated instructions covering authoritative evidence, hard constraints, adversarial checks, duplicate criteria, objective-specific ranking tradeoffs, and output expectations.
+- Runtime latency is now an explicit priority. The next orchestration improvement is bounded concurrent provider dispatch with deterministic commit order, archive-safe novelty handling, and provider-level concurrency caps. This should reduce wall-clock latency, but not be misrepresented as a token-cost fix by itself.
 - The first working search runtime now lives in `src/argus/search/`; `argus run` frames the problem, generates and filters seeds, stress-tests and deepens survivors, compresses learnings, and persists a compiled final recommendation under `artifacts/runs/<run_id>/`.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` records replayable benchmark sessions under `artifacts/benchmarks/<session_id>/` with per-case snapshots plus manifest-level output digests for change detection.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the aggregate cross-run ledger now lives at `artifacts/runs/provider-routing-stats.json`.

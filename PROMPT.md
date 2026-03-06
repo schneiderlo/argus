@@ -28,6 +28,9 @@ Execution rules:
 14. Do not treat evaluator quality as complete just because provider plumbing exists. If the Codex-facing judge prompt for evaluation, novelty, or pairwise ranking is still generic or under-specified, harden that before adding more search sophistication.
 15. For evaluation actions, prefer action-specific prompts over one generic wrapper. The prompt should explicitly encode the rubric, hard constraints, adversarial checks, duplicate criteria, and what evidence the judge must rely on.
 16. Add benchmark-style tests that can fail when the evaluator makes bad decisions, not only when schemas or wiring break.
+17. Treat wall-clock latency as a real product constraint. After evaluator hardening, prefer bounded concurrent provider dispatch for independent work rather than adding more sequential provider calls.
+18. Keep concurrent execution deterministic at the state boundary. Dispatch can happen in parallel, but commits, node ids, and persisted artifacts must remain stable and auditable.
+19. Do not parallelize novelty admission naively. If a batch of candidates is processed concurrently, protect against intra-batch near-duplicates by using a fixed archive snapshot plus deterministic intra-batch dedupe or an equivalent explicit policy.
 
 Product target:
 
@@ -37,6 +40,7 @@ Product target:
 - Use evaluator-first logic, not style-first logic.
 - Prefer provider-backed semantic judgment over hand-written lexical scoring.
 - Treat evaluator prompt quality and benchmarked judgment quality as first-class product work, not prompt polish.
+- Reduce runtime latency through safe bounded concurrency when independent provider calls dominate wall-clock time.
 - Produce final outputs that include a best bet, a conservative bet, a high-upside bet, rejected alternatives worth noting, and next experiments.
 
 Quality bar:

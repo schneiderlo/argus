@@ -102,7 +102,9 @@ Current implementation status:
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, and each `argus run` snapshots the imported reusable subset it used at `artifacts/runs/<run_id>/reusable-learning-context.json` before feeding those priors back into later framing, generation, evaluation, ranking, and critique steps.
 - Benchmark fixtures now live under `benchmarks/cases/`, and `argus benchmark` executes them into replayable benchmark sessions under `artifacts/benchmarks/<session_id>/`.
 
-The largest remaining implementation gaps are multi-island search and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
+The largest remaining implementation gaps are bounded concurrent provider dispatch, multi-island search, and outcome-feedback ingestion. Benchmarks intentionally keep shared learning memory disabled so stored output digests stay comparable across sessions.
+
+Bounded concurrent dispatch is now an explicit roadmap item because runtime latency can otherwise grow linearly with evaluator, novelty, critique, and deepen calls. The intended goal is lower wall-clock time through parallel independent work while preserving deterministic commits, stable artifacts, and safe novelty admission. That is a latency optimization, not automatically a token-cost optimization.
 
 Process guardrails:
 

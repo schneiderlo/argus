@@ -136,6 +136,30 @@ When a provider returns a candidate:
 6. update router stats
 7. persist the node and its attachments
 
+## Concurrency Requirement
+
+The runtime may execute independent provider calls concurrently when doing so reduces wall-clock latency, but it must preserve deterministic state transitions.
+
+That means:
+
+- framing and final persistence may remain serial
+- independent stress tests, deepens, mutations, and evaluations may be dispatched concurrently
+- provider concurrency must be bounded explicitly, not unbounded
+- node ids and persisted artifact layout must remain stable even when provider calls finish out of order
+- admission must commit in deterministic order after results are collected
+
+## Novelty Safety Under Concurrency
+
+Naive parallel novelty admission is not acceptable. If multiple candidates from the same batch are processed concurrently, the runtime must prevent two near-duplicates from being admitted just because they both compared against the same stale archive snapshot.
+
+Acceptable approaches include:
+
+- evaluate against a fixed archive snapshot, then run deterministic intra-batch dedupe before commit
+- serialize only the final novelty admission step while still parallelizing other expensive calls
+- another explicit policy that preserves archive consistency and is covered by tests
+
+Latency reduction is a valid optimization target. Token cost reduction is related but separate, and should not be claimed unless the implementation actually reduces provider work.
+
 ## Frontier Strategy
 
 The system must not only expand the single highest-score node. It must preserve stepping stones. Frontier selection should balance:
@@ -165,4 +189,3 @@ The search must stop when:
 - or the system has a stable winner set that satisfies the configured stop criteria
 
 The exact stop policy can evolve, but it must be explicit and testable.
-
