@@ -417,6 +417,7 @@ class CliTests(unittest.TestCase):
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
+        renderer._interactive = True
         buffer = io.StringIO()
         with patch("argus.cli.sys.stderr", buffer):
             renderer.emit(
@@ -444,6 +445,62 @@ class CliTests(unittest.TestCase):
         self.assertIn("Current: initializing", output)
         self.assertIn("Current: Exploring", output)
         self.assertNotIn("Current: Exploringing", output)
+
+    def test_interactive_progress_renderer_rewinds_multiline_blocks(self) -> None:
+        metadata = _RunProgressMetadata(
+            run_id="run-20260307T000000Z",
+            request="Run for multiline progress rendering checks.",
+            provider_pool=["codex"],
+            budget=12,
+            artifact_path=Path("/tmp"),
+        )
+        renderer = _AutoProgressRenderer(metadata, interactive=True)
+        renderer._interactive = True
+        buffer = io.StringIO()
+        with patch("argus.cli.sys.stderr", buffer):
+            renderer.emit(
+                build_event(
+                    kind="run_started",
+                    run_id=metadata.run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    timestamp=datetime(2026, 3, 7, tzinfo=timezone.utc),
+                    payload={"budget": 12},
+                )
+            )
+            renderer.emit(
+                build_event(
+                    kind="node_rejected",
+                    run_id=metadata.run_id,
+                    step_count=1,
+                    budget_spent=1,
+                    timestamp=datetime(2026, 3, 7, 1, tzinfo=timezone.utc),
+                    payload={
+                        "node_id": "node-0002",
+                        "selection_mode": "balanced",
+                        "thesis": "First rejected thesis.",
+                    },
+                )
+            )
+            renderer.emit(
+                build_event(
+                    kind="node_admitted",
+                    run_id=metadata.run_id,
+                    step_count=1,
+                    budget_spent=1,
+                    timestamp=datetime(2026, 3, 7, 1, 0, 1, tzinfo=timezone.utc),
+                    payload={
+                        "node_id": "node-0003",
+                        "selection_mode": "balanced",
+                        "thesis": "Second admitted thesis.",
+                    },
+                )
+            )
+
+        output = buffer.getvalue()
+        self.assertIn("\x1b[1A", output)
+        self.assertIn("node-0002", output)
+        self.assertIn("node-0003", output)
 
     def test_stage_label_formatter_maps_runtime_actions_to_display_labels(self) -> None:
         self.assertEqual(_format_stage_label({"action": "generate_seed"}), "Exploring")

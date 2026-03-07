@@ -105,6 +105,7 @@ class _AutoProgressRenderer(ProgressSink):
         self._best_bet: str | None = None
         self._conservative: str | None = None
         self._high_upside: str | None = None
+        self._rendered_line_count = 0
 
     def emit(self, event: ProgressEvent) -> None:
         payload = event.payload
@@ -173,21 +174,23 @@ class _AutoProgressRenderer(ProgressSink):
 
     def _emit(self, event: ProgressEvent) -> None:
         status_line = self._status_line(event)
-        feed = list(self._recent_nodes)
+        feed = [f"  {line}" for line in self._recent_nodes]
 
         if self._interactive:
-            print("\r\x1b[2K", end="", file=sys.stderr)
-            print(status_line, end="", file=sys.stderr)
-            if feed:
-                print(file=sys.stderr)
-                for line in feed:
-                    print(f"\r\x1b[2K  {line}", file=sys.stderr)
-            print("\r\x1b[2K", end="", file=sys.stderr)
+            self._clear_rendered_block()
+            block = "\n".join([status_line, *feed])
+            print(block, file=sys.stderr)
+            print("\r\x1b[2K", end="", file=sys.stderr, flush=True)
+            self._rendered_line_count = 1 + len(feed)
             return
 
         print(status_line, file=sys.stderr)
         for line in feed:
-            print(f"  {line}", file=sys.stderr)
+            print(line, file=sys.stderr)
+
+    def _clear_rendered_block(self) -> None:
+        for _ in range(self._rendered_line_count):
+            print("\x1b[1A\r\x1b[2K", end="", file=sys.stderr)
 
     def _status_line(self, event: ProgressEvent) -> str:
         start_perf = self._start_perf
