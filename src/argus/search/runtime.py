@@ -258,9 +258,9 @@ class _CandidateAdmissionRequest:
 @dataclass(frozen=True, slots=True)
 class _PreparedCandidateAdmission:
     novelty: NoveltyAssessment
-    assessment: EvaluationAssessment | None
+    assessment: EvaluationAssessment
     novelty_provider_names: tuple[str, ...]
-    evaluation_provider_names: tuple[str, ...] = ()
+    evaluation_provider_names: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1774,19 +1774,9 @@ class SearchRuntime:
             problem_spec=session.problem_spec,
             candidate=candidate,
             archive_nodes=[session.nodes[node_id] for node_id in session.archive_ids],
+            reusable_learning_notes=session.reusable_learning_notes,
             routing_tracker=routing_tracker,
         )
-        assessment: EvaluationAssessment | None = None
-        evaluation_provider_names = prepared.evaluation_provider_names
-        if prepared.novelty.is_novel:
-            assessment, evaluation_provider_name = self._evaluate_candidate(
-                problem_spec=session.problem_spec,
-                candidate=candidate,
-                novelty_score=prepared.novelty.novelty_score,
-                reusable_learning_notes=session.reusable_learning_notes,
-                routing_tracker=routing_tracker,
-            )
-            evaluation_provider_names = (evaluation_provider_name,)
         return self._commit_candidate_admission(
             session,
             island_id=island_id,
@@ -1797,9 +1787,9 @@ class SearchRuntime:
             source_provider_name=self._provider.name,
             metadata_patch=None,
             novelty=prepared.novelty,
-            assessment=assessment,
+            assessment=prepared.assessment,
             novelty_provider_names=prepared.novelty_provider_names,
-            evaluation_provider_names=evaluation_provider_names,
+            evaluation_provider_names=prepared.evaluation_provider_names,
         )
 
     def _admit_candidate_batch(
@@ -1821,6 +1811,7 @@ class SearchRuntime:
                 problem_spec=session.problem_spec,
                 candidate=request.candidate,
                 archive_nodes=archive_snapshot,
+                reusable_learning_notes=session.reusable_learning_notes,
                 routing_tracker=routing_tracker,
             ),
         )
@@ -1849,17 +1840,6 @@ class SearchRuntime:
                     ],
                     limit=4,
                 )
-            assessment: EvaluationAssessment | None = None
-            evaluation_provider_names = prepared_candidate.evaluation_provider_names
-            if novelty.is_novel:
-                assessment, evaluation_provider_name = self._evaluate_candidate(
-                    problem_spec=session.problem_spec,
-                    candidate=request.candidate,
-                    novelty_score=novelty.novelty_score,
-                    reusable_learning_notes=session.reusable_learning_notes,
-                    routing_tracker=routing_tracker,
-                )
-                evaluation_provider_names = (evaluation_provider_name,)
             node = self._commit_candidate_admission(
                 session,
                 island_id=island_id,
@@ -1870,9 +1850,9 @@ class SearchRuntime:
                 source_provider_name=request.source_provider_name,
                 metadata_patch=request.metadata_patch,
                 novelty=novelty,
-                assessment=assessment,
+                assessment=prepared_candidate.assessment,
                 novelty_provider_names=novelty_provider_names,
-                evaluation_provider_names=evaluation_provider_names,
+                evaluation_provider_names=prepared_candidate.evaluation_provider_names,
             )
             committed.append(node)
             if node.node_id in session.archive_ids:
@@ -1885,6 +1865,7 @@ class SearchRuntime:
         problem_spec: ProblemSpec,
         candidate: Candidate,
         archive_nodes: Sequence[Node],
+        reusable_learning_notes: Sequence[ReusableLearningNote],
         routing_tracker: "_RoutingTracker",
     ) -> _PreparedCandidateAdmission:
         novelty, novelty_provider_name = self._assess_novelty(
@@ -1893,10 +1874,18 @@ class SearchRuntime:
             archive_nodes=archive_nodes,
             routing_tracker=routing_tracker,
         )
+        assessment, evaluation_provider_name = self._evaluate_candidate(
+            problem_spec=problem_spec,
+            candidate=candidate,
+            novelty_score=novelty.novelty_score,
+            reusable_learning_notes=reusable_learning_notes,
+            routing_tracker=routing_tracker,
+        )
         return _PreparedCandidateAdmission(
             novelty=novelty,
-            assessment=None,
+            assessment=assessment,
             novelty_provider_names=(novelty_provider_name,),
+            evaluation_provider_names=(evaluation_provider_name,),
         )
 
     def _commit_candidate_admission(
@@ -1911,7 +1900,7 @@ class SearchRuntime:
         source_provider_name: str,
         metadata_patch: Mapping[str, JSONValue] | None,
         novelty: NoveltyAssessment,
-        assessment: EvaluationAssessment | None,
+        assessment: EvaluationAssessment,
         novelty_provider_names: Sequence[str],
         evaluation_provider_names: Sequence[str],
     ) -> Node:
@@ -1924,21 +1913,16 @@ class SearchRuntime:
         metadata: dict[str, JSONValue] = {
             "batch_summary": batch_summary,
             "novelty": novelty.to_dict(),
+            "evaluation": _evaluation_metadata(assessment),
             "provider_routing": _provider_routing_metadata(
                 novelty_provider_names=novelty_provider_names,
                 evaluation_provider_names=evaluation_provider_names,
             ),
         }
-        if assessment is not None:
-            metadata["evaluation"] = _evaluation_metadata(assessment)
         if metadata_patch:
             metadata.update(dict(metadata_patch))
         if not novelty.is_novel:
             lifecycle_status = NodeLifecycleStatus.REJECTED
-        elif assessment is None:
-            raise ArgusValidationError(
-                "Novel candidate admissions require an evaluation assessment."
-            )
         elif not assessment.score.hard_constraint_pass:
             lifecycle_status = NodeLifecycleStatus.FAILED
         else:
@@ -1955,7 +1939,7 @@ class SearchRuntime:
             ),
             candidate=candidate,
             island_id=island_id,
-            score=None if assessment is None else assessment.score,
+            score=assessment.score,
             novelty_score=novelty.novelty_score,
             lifecycle_status=lifecycle_status,
             metadata=metadata,

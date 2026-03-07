@@ -47,5 +47,6 @@
 
 <div class="main-content">
   <NetworkGraph />
+  <div class="empty-push" style="flex: 1;"></div>
   <NodeSidebar />
 </div>

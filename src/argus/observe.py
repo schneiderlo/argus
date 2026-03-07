@@ -1,5 +1,4 @@
 import json
-import sys
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -193,20 +192,13 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
                 self.send_response(200)
                 ext = file_path.suffix.lower()
                 mime = "application/octet-stream"
-                if ext == ".html":
-                    mime = "text/html"
-                elif ext == ".js":
-                    mime = "application/javascript"
-                elif ext == ".css":
-                    mime = "text/css"
-                elif ext == ".json":
-                    mime = "application/json"
-                elif ext == ".svg":
-                    mime = "image/svg+xml"
-                elif ext == ".png":
-                    mime = "image/png"
-                elif ext == ".ico":
-                    mime = "image/x-icon"
+                if ext == ".html": mime = "text/html"
+                elif ext == ".js": mime = "application/javascript"
+                elif ext == ".css": mime = "text/css"
+                elif ext == ".json": mime = "application/json"
+                elif ext == ".svg": mime = "image/svg+xml"
+                elif ext == ".png": mime = "image/png"
+                elif ext == ".ico": mime = "image/x-icon"
                 
                 self.send_header("Content-type", mime)
                 self.end_headers()
