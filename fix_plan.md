@@ -49,8 +49,8 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] **Phase 2: Parity with `observer.html`**
   - [x] Implement Svelte Flow (or Vis-Network wrapped in Svelte) for the node tree.
   - [x] Implement the Sidebar with reactive state for pruning.
-- [ ] **Phase 3: The New Views**
-  - [ ] Add SvelteKit routing for the Home Dashboard, Final Recommendation Report, and Learning Memory Ledger.
+- [x] **Phase 3: The New Views**
+  - [x] Add SvelteKit routing for the Home Dashboard, Final Recommendation Report, and Learning Memory Ledger.
 
 - [x] Add Gemini CLI and OpenCode provider adapters behind the same interface, while keeping Codex as the default and best-supported provider.
 - [x] Add multi-island search so different optimization priors can evolve semi-independently.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from '$app/stores';
   import { uiState, toggleTheme, getStyle } from '$lib/stores.svelte';
 
   const isRunning = $derived(uiState.searchState?.manifest?.status === 'running');
@@ -7,36 +8,62 @@
   const budgetTotal = $derived(uiState.searchState?.manifest?.budget || 1);
   const budgetPercentage = $derived(Math.min(100, (budgetSpent / budgetTotal) * 100));
   const stepCount = $derived(uiState.searchState?.step_count || 0);
+
+  // Derived routing helpers
+  const currentPath = $derived($page.url.pathname);
+  const isDashboard = $derived(currentPath === '/');
+  const isMemory = $derived(currentPath === '/memory');
+  const isRunGraph = $derived(currentPath.startsWith('/runs/') && !currentPath.includes('/report'));
+  const isRunReport = $derived(currentPath.startsWith('/runs/') && currentPath.includes('/report'));
+  const activeRunParam = $derived($page.params.id);
 </script>
 
 <div id="top-bar">
-  <h1 class="system-title">ARGUS SEARCH RUNTIME</h1>
+  <div class="logo-area">
+      <a href="/" class="system-title" class:active={isDashboard}>
+          ARGUS COMMAND CENTER
+      </a>
+      
+      <div class="nav-links">
+          <a href="/" class="nav-link" class:active={isDashboard}>Dashboard</a>
+          <a href="/memory" class="nav-link" class:active={isMemory}>Memory Ledger</a>
+      </div>
+  </div>
   
-  <div id="run-status">
-      {#if uiState.searchState}
-          <span class="status-badge" style="color: {statusTheme.border}; box-shadow: 0 0 10px {statusTheme.border}40;">
-              {uiState.searchState.manifest.status.toUpperCase()}
-          </span>
-
-          <div style="display: flex; flex-direction: column; width: 160px;">
-              <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                  <span class="metric-label">Token Budget</span>
-                  <span class="metric-value">{budgetSpent} / {budgetTotal}</span>
-              </div>
-              <div class="budget-track">
-                  <div class="budget-fill" style="width: {budgetPercentage}%;"></div>
-              </div>
+  <div id="run-context-controls">
+      {#if activeRunParam}
+          <div class="run-tabs">
+              <a href="/runs/{activeRunParam}" class="run-tab" class:active={isRunGraph}>Observer Graph</a>
+              <a href="/runs/{activeRunParam}/report" class="run-tab" class:active={isRunReport}>Final Report</a>
           </div>
+      {/if}
 
-          <div style="display: flex; align-items: baseline; gap: 8px;">
-              <span class="metric-label">Steps</span>
-              <span class="metric-value">{stepCount}</span>
+      {#if uiState.searchState && (isRunGraph || isRunReport)}
+          <div class="run-status">
+              <span class="status-badge" style="color: {statusTheme.border}; box-shadow: 0 0 10px {statusTheme.border}40;">
+                  {uiState.searchState.manifest.status.toUpperCase()}
+              </span>
+
+              <div class="metric-container">
+                  <div class="metric-header">
+                      <span class="metric-label">Token Budget</span>
+                      <span class="metric-value">{budgetSpent} / {budgetTotal}</span>
+                  </div>
+                  <div class="budget-track">
+                      <div class="budget-fill" style="width: {budgetPercentage}%;"></div>
+                  </div>
+              </div>
+
+              <div class="metric-container compact">
+                  <span class="metric-label">Steps</span>
+                  <span class="metric-value">{stepCount}</span>
+              </div>
           </div>
       {/if}
   </div>
 
-  <div style="margin-left: auto; display: flex; align-items: center;">
-      <button class="action-button" onclick={toggleTheme} style="padding: 6px 12px; font-size: 12px; width: auto; background: transparent;">
+  <div class="utility-controls">
+      <button class="action-button theme-toggle" onclick={toggleTheme}>
           {uiState.isLightMode ? 'Dark Mode' : 'Light Mode'}
       </button>
   </div>
@@ -51,22 +78,105 @@
       border-bottom: 1px solid var(--border-heavy);
       display: flex;
       align-items: center;
+      justify-content: space-between;
       padding: 0 24px;
       z-index: 100;
+  }
+
+  .logo-area {
+      display: flex;
+      align-items: center;
+      gap: 32px;
   }
 
   .system-title {
       font-weight: 700;
       font-size: 16px;
       letter-spacing: 0.15em;
-      margin-right: 40px;
       color: var(--ink-primary);
+      text-decoration: none;
+      transition: color 0.2s;
   }
 
-  #run-status {
+  .system-title:hover {
+      color: #60a5fa;
+  }
+
+  .nav-links {
+      display: flex;
+      gap: 20px;
+  }
+
+  .nav-link {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--ink-secondary);
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      transition: all 0.2s;
+  }
+
+  .nav-link:hover {
+      color: var(--ink-primary);
+      background: rgba(255, 255, 255, 0.05);
+  }
+
+  :global(.light-mode) .nav-link:hover {
+      background: rgba(0, 0, 0, 0.05);
+  }
+
+  .nav-link.active {
+      color: #60a5fa;
+      background: rgba(59, 130, 246, 0.1);
+  }
+
+  #run-context-controls {
       display: flex;
       align-items: center;
       gap: 32px;
+      flex: 1;
+      justify-content: center;
+  }
+
+  .run-tabs {
+      display: flex;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 4px;
+      border: 1px solid var(--border-subtle);
+  }
+
+  :global(.light-mode) .run-tabs {
+      background: rgba(0, 0, 0, 0.05);
+  }
+
+  .run-tab {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--ink-secondary);
+      text-decoration: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      transition: all 0.2s;
+  }
+
+  .run-tab:hover {
+      color: var(--ink-primary);
+  }
+
+  .run-tab.active {
+      color: var(--ink-primary);
+      background: var(--surface-color);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .run-status {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding-left: 24px;
+      border-left: 1px solid var(--border-subtle);
   }
 
   /* Metrics & UI elements */
@@ -79,6 +189,25 @@
       border: 1px solid currentColor;
       border-radius: 4px;
       text-transform: uppercase;
+  }
+
+  .metric-container {
+      display: flex;
+      flex-direction: column;
+      width: 160px;
+  }
+
+  .metric-container.compact {
+      width: auto;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 8px;
+  }
+
+  .metric-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
   }
 
   .metric-label {
@@ -109,28 +238,31 @@
       transition: width 0.3s ease;
   }
   
+  .utility-controls {
+      display: flex;
+      align-items: center;
+  }
+
   .action-button {
       background: var(--ink-primary);
       color: var(--bg-base);
       border: none;
-      padding: 10px 16px;
       border-radius: 6px;
       font-family: var(--font-ui);
       font-weight: 600;
-      font-size: 13px;
       cursor: pointer;
-      width: 100%;
-      margin-top: 16px;
       transition: opacity 0.2s;
   }
 
-  .action-button:hover:not(:disabled) {
-      opacity: 0.9;
+  .action-button.theme-toggle {
+      padding: 6px 12px;
+      font-size: 12px;
+      background: transparent;
+      color: var(--ink-primary);
+      border: 1px solid var(--border-heavy);
   }
 
-  .action-button:disabled {
-      background: var(--border-heavy);
-      color: var(--ink-secondary);
-      cursor: not-allowed;
+  .action-button:hover {
+      opacity: 0.8;
   }
 </style>

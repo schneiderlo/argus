@@ -24,6 +24,30 @@ export async function fetchDefaultRunId() {
     }
 }
 
+export async function listRuns() {
+    try {
+        const res = await fetch('/api/runs');
+        if (!res.ok) return [];
+        const json = await res.json();
+        return Array.isArray(json) ? json : [];
+    } catch (err) {
+        console.error("Error listing runs:", err);
+        return [];
+    }
+}
+
+export async function fetchMemory() {
+    try {
+        const res = await fetch('/api/memory');
+        if (!res.ok) return null;
+        const json = await res.json();
+        return json;
+    } catch (err) {
+        console.error("Error fetching memory:", err);
+        return null;
+    }
+}
+
 export async function pruneNode(runId: string, nodeId: string) {
     try {
         const res = await fetch(`/api/runs/${runId}/prune`, {
