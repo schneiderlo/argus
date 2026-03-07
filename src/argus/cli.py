@@ -550,9 +550,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return args.handler(args, config)
     except ArgusUserError as exc:
+        if sys.stderr.isatty():
+            print(file=sys.stderr)
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except ArgusError as exc:
+        if sys.stderr.isatty():
+            print(file=sys.stderr)
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

@@ -1,4 +1,2 @@
 provider_pool = ["codex"]
-
-[providers.codex]
-model = "GPT-5.3-Codex-Spark"
+# Leave model unset to use Codex CLI default for your account.
