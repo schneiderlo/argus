@@ -42,6 +42,16 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Later
 
+- [x] **Phase 1: Setup Svelte 5 & API Expansion**
+  - [x] Initialize Svelte 5 + Vite under `src/argus/render/ui`.
+  - [x] Expand `observe.py` with standard REST endpoints: `/api/runs`, `/api/runs/{id}/state`, `/api/memory`.
+  - [x] Update the Python server to serve the Svelte `dist` folder.
+- [ ] **Phase 2: Parity with `observer.html`**
+  - [ ] Implement Svelte Flow (or Vis-Network wrapped in Svelte) for the node tree.
+  - [ ] Implement the Sidebar with reactive state for pruning.
+- [ ] **Phase 3: The New Views**
+  - [ ] Add SvelteKit routing for the Home Dashboard, Final Recommendation Report, and Learning Memory Ledger.
+
 - [x] Add Gemini CLI and OpenCode provider adapters behind the same interface, while keeping Codex as the default and best-supported provider.
 - [x] Add multi-island search so different optimization priors can evolve semi-independently.
 - [x] Add outcome-feedback ingestion so shipped experiment results can influence future evaluation.

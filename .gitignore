@@ -11,3 +11,9 @@ tmp/
 .ruff_cache/
 __pycache__/
 *.pyc
+
+# Svelte UI
+src/argus/render/ui/node_modules
+src/argus/render/ui/.svelte-kit
+src/argus/render/ui/build
+src/argus/render/dist

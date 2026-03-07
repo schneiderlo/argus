@@ -72,83 +72,175 @@ def _annotate_nodes_with_termination_reason(nodes_payload: object) -> object:
 def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
     store = FileSystemStateStore(config.runs_dir)
     
-    if run_id is None or run_id == "latest":
+    default_run_id = run_id
+    if default_run_id is None or default_run_id == "latest":
         runs = store.list_runs()
-        if not runs:
-            print("No runs found to observe.")
-            return
-        runs.sort(key=lambda r: r.updated_at, reverse=True)
-        run_id = runs[0].run_id
+        if runs:
+            runs.sort(key=lambda r: r.updated_at, reverse=True)
+            default_run_id = runs[0].run_id
 
-    print(f"Starting Argus observer on http://localhost:{port} for run: {run_id}")
+    print(f"Starting Argus Command Center on http://localhost:{port}")
+    if default_run_id:
+        print(f"Default run: {default_run_id}")
     
     class ObserverHandler(BaseHTTPRequestHandler):
+        def _send_json(self, data, status=200):
+            self.send_response(status)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+
+        def _send_error(self, message, status=500):
+            self._send_json({"error": message}, status)
+
         def do_GET(self):
             parsed = urlparse(self.path)
             parsed_path = parsed.path
             parsed_query = parse_qs(parsed.query)
 
-            if parsed_path == "/":
-                self.send_response(200)
-                self.send_header("Content-type", "text/html")
-                self.end_headers()
-                
+            if parsed_path.startswith("/api/"):
+                try:
+                    parts = [p for p in parsed_path.split("/") if p]
+                    
+                    if len(parts) == 2 and parts[1] == "runs":
+                        runs = store.list_runs()
+                        runs.sort(key=lambda r: r.updated_at, reverse=True)
+                        self._send_json([r.to_dict() for r in runs])
+                        return
+                    
+                    if len(parts) == 2 and parts[1] == "default-run":
+                        if default_run_id:
+                            self._send_json({"run_id": default_run_id})
+                        else:
+                            self._send_error("No default run", 404)
+                        return
+                        
+                    if len(parts) == 2 and parts[1] == "memory":
+                        self._send_json({
+                            "learning_memory": store.load_learning_memory().to_dict(),
+                            "routing_stats": store.load_provider_routing_stats().to_dict(),
+                        })
+                        return
+
+                    if len(parts) == 4 and parts[1] == "runs" and parts[3] == "state":
+                        target_run_id = parts[2]
+                        persisted_run = store.load_run(target_run_id)
+                        state = persisted_run.state
+                        if state:
+                            data = state.to_dict()
+                            data["nodes"] = _annotate_nodes_with_termination_reason(data.get("nodes"))
+                            data["manifest"] = persisted_run.manifest.to_dict()
+                            self._send_json(data)
+                        else:
+                            self._send_json({})
+                        return
+
+                    if len(parts) == 4 and parts[1] == "runs" and parts[3] == "events":
+                        target_run_id = parts[2]
+                        limit = _parse_events_limit(parsed_query)
+                        events = store.load_progress_events(target_run_id, limit=limit)
+                        self._send_json(events)
+                        return
+
+                    if parsed_path == "/api/state" and default_run_id:
+                        persisted_run = store.load_run(default_run_id)
+                        state = persisted_run.state
+                        if state:
+                            data = state.to_dict()
+                            data["nodes"] = _annotate_nodes_with_termination_reason(data.get("nodes"))
+                            data["manifest"] = persisted_run.manifest.to_dict()
+                            self._send_json(data)
+                        else:
+                            self._send_json({})
+                        return
+                        
+                    if parsed_path == "/api/events" and default_run_id:
+                        limit = _parse_events_limit(parsed_query)
+                        events = store.load_progress_events(default_run_id, limit=limit)
+                        self._send_json(events)
+                        return
+
+                    self._send_error("Not found", 404)
+                except Exception as exc:
+                    self._send_error(str(exc), 500)
+                return
+
+            dist_path = Path(__file__).parent / "render" / "dist"
+            if not dist_path.exists():
                 html_path = Path(__file__).parent / "render" / "observer.html"
                 if html_path.exists():
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/html")
+                    self.end_headers()
                     self.wfile.write(html_path.read_bytes())
                 else:
-                    self.wfile.write(b"<html><body>Observer HTML not found.</body></html>")
-                
-            elif parsed_path == "/api/events":
-                try:
-                    limit = _parse_events_limit(parsed_query)
-                except ValueError as exc:
-                    self.send_response(400)
+                    self.send_response(404)
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": str(exc)}).encode("utf-8"))
-                    return
-                try:
-                    events = store.load_progress_events(run_id, limit=limit)
-                    self.send_response(200)
-                    self.send_header("Content-type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps(events).encode("utf-8"))
-                except Exception as exc:
-                    self.send_response(500)
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": str(exc)}).encode("utf-8"))
-            elif parsed_path == "/api/state":
-                self.send_response(200)
-                self.send_header("Content-type", "application/json")
-                self.end_headers()
-                
-                try:
-                    persisted_run = store.load_run(run_id)
-                    state = persisted_run.state
-                    if state:
-                        data = state.to_dict()
-                        data["nodes"] = _annotate_nodes_with_termination_reason(data.get("nodes"))
-                        data["manifest"] = persisted_run.manifest.to_dict()
-                        self.wfile.write(json.dumps(data).encode("utf-8"))
-                    else:
-                        self.wfile.write(b"{}")
-                except Exception as e:
-                    self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
-            else:
-                self.send_response(404)
-                self.end_headers()
+                    self.wfile.write(b"UI dist folder not found.")
+                return
 
+            file_path = dist_path / parsed_path.lstrip("/")
+            try:
+                file_path = file_path.resolve()
+                if not str(file_path).startswith(str(dist_path.resolve())):
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+            except Exception:
+                pass
+
+            if file_path.exists() and file_path.is_file():
+                self.send_response(200)
+                ext = file_path.suffix.lower()
+                mime = "application/octet-stream"
+                if ext == ".html": mime = "text/html"
+                elif ext == ".js": mime = "application/javascript"
+                elif ext == ".css": mime = "text/css"
+                elif ext == ".json": mime = "application/json"
+                elif ext == ".svg": mime = "image/svg+xml"
+                elif ext == ".png": mime = "image/png"
+                elif ext == ".ico": mime = "image/x-icon"
+                
+                self.send_header("Content-type", mime)
+                self.end_headers()
+                self.wfile.write(file_path.read_bytes())
+            else:
+                index_path = dist_path / "index.html"
+                if index_path.exists():
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/html")
+                    self.end_headers()
+                    self.wfile.write(index_path.read_bytes())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
             return
 
         def do_POST(self):
-            if self.path == "/api/prune":
-                content_length = int(self.headers['Content-Length'])
-                post_data = self.rfile.read(content_length)
-                payload = json.loads(post_data)
-                node_id_to_prune = payload.get("node_id")
-
+            parsed = urlparse(self.path)
+            parsed_path = parsed.path
+            
+            if parsed_path.startswith("/api/"):
                 try:
-                    persisted_run = store.load_run(run_id)
+                    parts = [p for p in parsed_path.split("/") if p]
+                    
+                    target_run_id = default_run_id
+                    if len(parts) == 4 and parts[1] == "runs" and parts[3] == "prune":
+                        target_run_id = parts[2]
+                    elif parsed_path != "/api/prune":
+                        self._send_error("Not found", 404)
+                        return
+                        
+                    if not target_run_id:
+                        self._send_error("No run specified", 400)
+                        return
+
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    payload = json.loads(post_data)
+                    node_id_to_prune = payload.get("node_id")
+
+                    persisted_run = store.load_run(target_run_id)
                     state = persisted_run.state
                     if state and node_id_to_prune in state.nodes:
                         node = state.nodes[node_id_to_prune]
@@ -188,29 +280,21 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
                         )
                         
                         store.save_snapshot(
-                            run_id,
+                            target_run_id,
                             state=new_state,
                             status=persisted_run.manifest.status
                         )
                         
-                        self.send_response(200)
-                        self.send_header("Content-type", "application/json")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"status": "success"}).encode("utf-8"))
+                        self._send_json({"status": "success"})
                     else:
-                        self.send_response(404)
-                        self.end_headers()
-                        self.wfile.write(b'{"error": "Node not found"}')
+                        self._send_error("Node not found", 404)
                 except Exception as e:
-                    self.send_response(500)
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                    self._send_error(str(e), 500)
             else:
                 self.send_response(404)
                 self.end_headers()
 
         def log_message(self, format, *args):
-            # Suppress default HTTP server logging to keep terminal clean
             pass
 
     server_address = ('', port)
