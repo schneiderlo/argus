@@ -79,7 +79,6 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
             runs.sort(key=lambda r: r.updated_at, reverse=True)
             default_run_id = runs[0].run_id
 
-    print(f"Starting Argus Command Center on http://localhost:{port}")
     if default_run_id:
         print(f"Default run: {default_run_id}")
     
@@ -297,8 +296,23 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
         def log_message(self, format, *args):
             pass
 
-    server_address = ('', port)
-    httpd = HTTPServer(server_address, ObserverHandler)
+    httpd = None
+    for attempt_port in range(port, port + 10):
+        try:
+            server_address = ('', attempt_port)
+            httpd = HTTPServer(server_address, ObserverHandler)
+            port = attempt_port
+            break
+        except OSError as e:
+            if e.errno == 98: # Address already in use
+                continue
+            raise
+
+    if httpd is None:
+        print(f"Failed to bind to any port from {port} to {port + 9}", file=sys.stderr)
+        return
+
+    print(f"Starting Argus Command Center on http://localhost:{port}")
     try:
         webbrowser.open(f'http://localhost:{port}')
     except Exception:
