@@ -1,13 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fetchMemory } from '$lib/api';
-  import { initTheme } from '$lib/stores.svelte';
 
   let memoryData: any = $state(null);
   let isLoading = $state(true);
 
   onMount(async () => {
-      initTheme();
       memoryData = await fetchMemory();
       isLoading = false;
   });

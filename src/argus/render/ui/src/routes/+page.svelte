@@ -1,13 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { listRuns } from '$lib/api';
-  import { initTheme } from '$lib/stores.svelte';
 
   let runs: any[] = $state([]);
   let isLoading = $state(true);
 
   onMount(async () => {
-      initTheme();
       runs = await listRuns();
       isLoading = false;
   });
