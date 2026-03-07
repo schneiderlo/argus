@@ -345,6 +345,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show verbose internal progress details.",
     )
+    run_parser.add_argument(
+        "--observe",
+        action="store_true",
+        help="Automatically launch the Argus web dashboard to monitor the run.",
+    )
+    run_parser.add_argument(
+        "--observe-port",
+        type=int,
+        default=8080,
+        help="Port to run the observation server on if --observe is set.",
+    )
     run_parser.set_defaults(handler=_handle_run)
 
     dry_run_parser = subparsers.add_parser(
@@ -615,6 +626,20 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         state_store=state_store,
     )
     _print_run_header(metadata)
+    
+    if getattr(args, "observe", False):
+        import threading
+        from argus.observe import start_observer_server
+        port = getattr(args, "observe_port", 8080)
+        
+        server_thread = threading.Thread(
+            target=start_observer_server,
+            args=(config, run_id, port),
+            daemon=True,
+        )
+        server_thread.start()
+        print(f"Observation server running on http://localhost:{port}", file=sys.stderr)
+        
     provider = providers[0]
     runtime = SearchRuntime(
         provider=provider,
