@@ -77,45 +77,53 @@
                       <p class="thesis-text">{selectedNode.candidate.thesis}</p>
                       <div class="mechanism-text">{selectedNode.candidate.mechanism}</div>
                       
-                      {#if selectedNode.candidate.implementation_shape}
-                          <div class="field-label">Implementation Shape:</div>
-                          <div class="field-text">{selectedNode.candidate.implementation_shape}</div>
-                      {/if}
+                      {#if selectedNode.candidate.implementation_shape || selectedNode.candidate.assumptions?.length > 0 || selectedNode.candidate.strengths?.length > 0 || selectedNode.candidate.failure_modes?.length > 0 || selectedNode.candidate.unknowns?.length > 0}
+                          <details class="candidate-details">
+                              <summary>Show Details</summary>
+                              
+                              <div class="details-content">
+                                  {#if selectedNode.candidate.implementation_shape}
+                                      <div class="field-label">Implementation Shape:</div>
+                                      <div class="field-text">{selectedNode.candidate.implementation_shape}</div>
+                                  {/if}
 
-                      {#if selectedNode.candidate.assumptions?.length > 0}
-                          <div class="field-label">Assumptions:</div>
-                          <ul class="field-list">
-                              {#each selectedNode.candidate.assumptions as assumption}
-                                  <li>{assumption}</li>
-                              {/each}
-                          </ul>
-                      {/if}
+                                  {#if selectedNode.candidate.assumptions?.length > 0}
+                                      <div class="field-label">Assumptions:</div>
+                                      <ul class="field-list">
+                                          {#each selectedNode.candidate.assumptions as assumption}
+                                              <li>{assumption}</li>
+                                          {/each}
+                                      </ul>
+                                  {/if}
 
-                      {#if selectedNode.candidate.strengths?.length > 0}
-                          <div class="field-label">Strengths:</div>
-                          <ul class="field-list">
-                              {#each selectedNode.candidate.strengths as strength}
-                                  <li>{strength}</li>
-                              {/each}
-                          </ul>
-                      {/if}
+                                  {#if selectedNode.candidate.strengths?.length > 0}
+                                      <div class="field-label">Strengths:</div>
+                                      <ul class="field-list">
+                                          {#each selectedNode.candidate.strengths as strength}
+                                              <li>{strength}</li>
+                                          {/each}
+                                      </ul>
+                                  {/if}
 
-                      {#if selectedNode.candidate.failure_modes?.length > 0}
-                          <div class="field-label">Failure Modes:</div>
-                          <ul class="field-list">
-                              {#each selectedNode.candidate.failure_modes as mode}
-                                  <li>{mode}</li>
-                              {/each}
-                          </ul>
-                      {/if}
+                                  {#if selectedNode.candidate.failure_modes?.length > 0}
+                                      <div class="field-label">Failure Modes:</div>
+                                      <ul class="field-list">
+                                          {#each selectedNode.candidate.failure_modes as mode}
+                                              <li>{mode}</li>
+                                          {/each}
+                                      </ul>
+                                  {/if}
 
-                      {#if selectedNode.candidate.unknowns?.length > 0}
-                          <div class="field-label">Unknowns:</div>
-                          <ul class="field-list">
-                              {#each selectedNode.candidate.unknowns as unknown}
-                                  <li>{unknown}</li>
-                              {/each}
-                          </ul>
+                                  {#if selectedNode.candidate.unknowns?.length > 0}
+                                      <div class="field-label">Unknowns:</div>
+                                      <ul class="field-list">
+                                          {#each selectedNode.candidate.unknowns as unknown}
+                                              <li>{unknown}</li>
+                                          {/each}
+                                      </ul>
+                                  {/if}
+                              </div>
+                          </details>
                       {/if}
                   </div>
               {/if}
@@ -340,7 +348,53 @@
       font-size: 14px;
       line-height: 1.6;
       color: var(--ink-secondary);
-      margin-bottom: 20px;
+  }
+
+  /* Candidate Toggle Details */
+  .candidate-details {
+      margin-top: 20px;
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 16px;
+  }
+
+  .candidate-details summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #a78bfa;
+      list-style: none; /* remove native triangle on most browsers */
+      display: inline-flex;
+      align-items: center;
+      transition: color 0.2s;
+  }
+
+  .candidate-details summary::-webkit-details-marker {
+      display: none; /* remove native triangle on WebKit */
+  }
+
+  .candidate-details summary::before {
+      content: '▶';
+      font-size: 10px;
+      margin-right: 8px;
+      transition: transform 0.2s ease;
+  }
+
+  .candidate-details[open] summary::before {
+      transform: rotate(90deg);
+  }
+
+  .candidate-details summary:hover {
+      color: #8b5cf6;
+  }
+
+  .details-content {
+      margin-top: 8px;
+      animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
   }
 
   .field-label {
