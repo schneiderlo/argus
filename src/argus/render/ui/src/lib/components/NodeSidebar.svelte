@@ -14,11 +14,34 @@
   }
 
   const canPrune = $derived(selectedNode && !['pruned', 'rejected', 'failed'].includes(selectedNode.lifecycle_status));
+  let isResizing = $state(false);
+  let sidebarWidth = $state(450);
+
+  function startResize(e: MouseEvent) {
+      isResizing = true;
+      e.preventDefault();
+  }
+
+  function doResize(e: MouseEvent) {
+      if (!isResizing) return;
+      let newWidth = window.innerWidth - e.clientX;
+      if (newWidth < 300) newWidth = 300;
+      if (newWidth > window.innerWidth - 300) newWidth = window.innerWidth - 300;
+      sidebarWidth = newWidth;
+  }
+
+  function stopResize() {
+      isResizing = false;
+  }
 </script>
 
-<div id="sidebar-wrapper">
-  <div id="resizer"></div>
-  <div id="sidebar">
+<svelte:window onmousemove={doResize} onmouseup={stopResize} />
+<svelte:body class:resizing={isResizing} />
+
+<div id="sidebar-wrapper" class:resizing={isResizing}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div id="resizer" class:active={isResizing} onmousedown={startResize}></div>
+  <div id="sidebar" style="width: {sidebarWidth}px;">
       <div class="sidebar-content" id="node-panel">
           {#if !selectedNode}
               <div class="empty-state">
@@ -163,8 +186,14 @@
       bottom: 0;
   }
 
-  #resizer:hover {
+  #resizer:hover, #resizer.active {
       background: var(--border-heavy);
+  }
+
+  /* When resizing, prevent text selection globally */
+  :global(body.resizing) {
+      cursor: col-resize !important;
+      user-select: none;
   }
 
   .sidebar-content {
