@@ -12,6 +12,7 @@ from unittest.mock import patch
 from argus.cli import (
     _AutoProgressRenderer,
     _RunProgressMetadata,
+    _format_stage_label,
     _build_provider,
     build_parser,
     main,
@@ -443,6 +444,54 @@ class CliTests(unittest.TestCase):
         self.assertIn("Current: initializing", output)
         self.assertIn("Current: Exploring", output)
         self.assertNotIn("Current: Exploringing", output)
+
+    def test_stage_label_formatter_maps_runtime_actions_to_display_labels(self) -> None:
+        self.assertEqual(_format_stage_label({"action": "generate_seed"}), "Exploring")
+        self.assertEqual(
+            _format_stage_label({"action": "generate_seed"}, suffix=" complete"),
+            "Exploring complete",
+        )
+        self.assertEqual(_format_stage_label({"action": "rank"}), "Selecting finalists")
+
+    def test_stage_completed_progress_uses_friendly_labels(self) -> None:
+        metadata = _RunProgressMetadata(
+            run_id="run-20260307T000000Z",
+            request="Run for stage label checks.",
+            provider_pool=["codex"],
+            budget=12,
+            artifact_path=Path("/tmp"),
+        )
+        renderer = _AutoProgressRenderer(metadata)
+        buffer = io.StringIO()
+        with patch("argus.cli.sys.stderr", buffer):
+            renderer.emit(
+                build_event(
+                    kind="run_started",
+                    run_id=metadata.run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    timestamp=datetime(2026, 3, 7, tzinfo=timezone.utc),
+                    payload={"budget": 12},
+                )
+            )
+            renderer.emit(
+                build_event(
+                    kind="stage_completed",
+                    run_id=metadata.run_id,
+                    step_count=1,
+                    budget_spent=1,
+                    timestamp=datetime(2026, 3, 7, 1, tzinfo=timezone.utc),
+                    payload={
+                        "action": "generate_seed",
+                        "nodes": 10,
+                        "archive": 5,
+                        "frontier": 2,
+                    },
+                )
+            )
+
+        output = buffer.getvalue()
+        self.assertIn("Current: Exploring complete", output)
 
     def test_run_command_plain_progress_mode_prints_line_feed(self) -> None:
         with TemporaryRepoRoot() as root:

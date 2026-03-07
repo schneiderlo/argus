@@ -38,6 +38,19 @@ _PROVIDER_TYPES = {
 _PROGRESS_MODES = ("auto", "plain", "jsonl", "quiet")
 
 
+_ACTION_LABELS: dict[str, str] = {
+    "frame_problem": "Framing",
+    "generate_seed": "Exploring",
+    "stress_test": "Stress testing",
+    "deepen": "Deepening",
+    "mutate": "Iterating",
+    "combine": "Combining",
+    "migrate": "Cross-island transfer",
+    "compress_learning": "Compressing learnings",
+    "rank": "Selecting finalists",
+}
+
+
 @dataclass(frozen=True)
 class _RunProgressMetadata:
     run_id: str
@@ -92,7 +105,6 @@ class _AutoProgressRenderer(ProgressSink):
         self._best_bet: str | None = None
         self._conservative: str | None = None
         self._high_upside: str | None = None
-        self._previous_status_width = 0
 
     def emit(self, event: ProgressEvent) -> None:
         payload = event.payload
@@ -164,16 +176,13 @@ class _AutoProgressRenderer(ProgressSink):
         feed = list(self._recent_nodes)
 
         if self._interactive:
-            status_padding = ""
-            if len(status_line) < self._previous_status_width:
-                status_padding = " " * (self._previous_status_width - len(status_line))
-            print(f"\r{status_line}{status_padding}", end="", file=sys.stderr)
+            print("\r\x1b[2K", end="", file=sys.stderr)
+            print(status_line, end="", file=sys.stderr)
             if feed:
-                print("", file=sys.stderr)
+                print(file=sys.stderr)
                 for line in feed:
-                    print(f"  {line}", file=sys.stderr)
-            print("", file=sys.stderr, end="\r")
-            self._previous_status_width = len(status_line)
+                    print(f"\r\x1b[2K  {line}", file=sys.stderr)
+            print("\r\x1b[2K", end="", file=sys.stderr)
             return
 
         print(status_line, file=sys.stderr)
@@ -201,7 +210,8 @@ def _format_stage_label(payload: Mapping[str, object], *, suffix: str = "") -> s
         return f"{label.strip()}{suffix}"
     action = payload.get("action")
     if isinstance(action, str):
-        return f"{action}{suffix}"
+        action_label = _ACTION_LABELS.get(action.strip(), action.strip())
+        return f"{action_label}{suffix}"
     return "processing"
 
 

@@ -642,6 +642,9 @@ class SearchRuntime:
                     budget_spent=session.budget_spent,
                     payload={
                         "action": ActionType.GENERATE_SEED.value,
+                        "label": self._action_display_label(
+                            ActionType.GENERATE_SEED.value
+                        ),
                         "nodes": len(session.nodes),
                         "archive": len(session.archive_ids),
                         "frontier": len(session.frontier_ids),
@@ -699,6 +702,7 @@ class SearchRuntime:
                     budget_spent=session.budget_spent,
                     payload={
                         "action": scheduled.action_type.value,
+                        "label": self._action_display_label(scheduled.action_type.value),
                         "nodes": len(session.nodes),
                         "archive": len(session.archive_ids),
                         "frontier": len(session.frontier_ids),
@@ -737,6 +741,9 @@ class SearchRuntime:
                     budget_spent=session.budget_spent,
                     payload={
                         "action": ActionType.COMPRESS_LEARNING.value,
+                        "label": self._action_display_label(
+                            ActionType.COMPRESS_LEARNING.value
+                        ),
                         "nodes": len(session.nodes),
                         "archive": len(session.archive_ids),
                         "frontier": len(session.frontier_ids),
