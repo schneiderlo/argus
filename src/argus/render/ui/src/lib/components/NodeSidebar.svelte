@@ -76,6 +76,47 @@
                   <div class="data-card">
                       <p class="thesis-text">{selectedNode.candidate.thesis}</p>
                       <div class="mechanism-text">{selectedNode.candidate.mechanism}</div>
+                      
+                      {#if selectedNode.candidate.implementation_shape}
+                          <div class="field-label">Implementation Shape:</div>
+                          <div class="field-text">{selectedNode.candidate.implementation_shape}</div>
+                      {/if}
+
+                      {#if selectedNode.candidate.assumptions?.length > 0}
+                          <div class="field-label">Assumptions:</div>
+                          <ul class="field-list">
+                              {#each selectedNode.candidate.assumptions as assumption}
+                                  <li>{assumption}</li>
+                              {/each}
+                          </ul>
+                      {/if}
+
+                      {#if selectedNode.candidate.strengths?.length > 0}
+                          <div class="field-label">Strengths:</div>
+                          <ul class="field-list">
+                              {#each selectedNode.candidate.strengths as strength}
+                                  <li>{strength}</li>
+                              {/each}
+                          </ul>
+                      {/if}
+
+                      {#if selectedNode.candidate.failure_modes?.length > 0}
+                          <div class="field-label">Failure Modes:</div>
+                          <ul class="field-list">
+                              {#each selectedNode.candidate.failure_modes as mode}
+                                  <li>{mode}</li>
+                              {/each}
+                          </ul>
+                      {/if}
+
+                      {#if selectedNode.candidate.unknowns?.length > 0}
+                          <div class="field-label">Unknowns:</div>
+                          <ul class="field-list">
+                              {#each selectedNode.candidate.unknowns as unknown}
+                                  <li>{unknown}</li>
+                              {/each}
+                          </ul>
+                      {/if}
                   </div>
               {/if}
 
@@ -299,6 +340,30 @@
       font-size: 14px;
       line-height: 1.6;
       color: var(--ink-secondary);
+      margin-bottom: 20px;
+  }
+
+  .field-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      margin-top: 16px;
+      margin-bottom: 4px;
+  }
+
+  .field-text, .field-list {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink-secondary);
+  }
+
+  .field-list {
+      margin: 0;
+      padding-left: 20px;
+  }
+  
+  .field-list li {
+      margin-bottom: 4px;
   }
 
   /* Matrix Layout */
