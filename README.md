@@ -210,3 +210,7 @@ Process guardrails:
 - Python cache directories and bytecode files are ignored so loop runs do not dirty the tree with generated junk.
 - A successful iteration is expected to end in a clean, committed repository state.
 - The main evaluator and novelty layer are provider-backed and semantic. Deterministic logic is acceptable only for safety rails, validation, and cheap prefilters.
+
+# Current tests
+
+uv run argus run --cost-profile max --run-config run-config.gemini.toml --prompt-file workspace.md
