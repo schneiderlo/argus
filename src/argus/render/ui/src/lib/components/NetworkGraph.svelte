@@ -64,7 +64,8 @@
               hover: true,
               tooltipDelay: 200,
               zoomView: true
-          }
+          },
+          autoResize: false
       };
   }
 
@@ -79,7 +80,17 @@
           uiState.selectedNodeId = null;
       });
 
+      // Handle resize manually to avoid scaling/flicker
+      const ro = new ResizeObserver(() => {
+          if (network && container) {
+              network.setSize(`${container.clientWidth}px`, `${container.clientHeight}px`);
+              network.redraw();
+          }
+      });
+      ro.observe(container);
+
       return () => {
+          ro.disconnect();
           network?.destroy();
       };
   });
