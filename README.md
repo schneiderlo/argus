@@ -45,6 +45,17 @@ Run a single Argus search:
 uv run argus run "Find the best retention strategy for a workflow-heavy product."
 ```
 
+Run a search request from a file instead of inline text:
+
+```bash
+cat > request.txt <<'EOF'
+Find the best retention strategy for a workflow-heavy product.
+Focus on weekly workflow habits and explicit failure modes.
+EOF
+
+uv run argus run --prompt-file request.txt
+```
+
 Run the same search through a non-default provider:
 
 ```bash
@@ -59,6 +70,47 @@ provider-routing stats while falling back to the first provider in the list:
 uv run argus run --provider codex,gemini,opencode \
   "Find the best retention strategy for a workflow-heavy product."
 ```
+
+Run through a TOML run-config that defines the provider pool and per-provider model overrides:
+
+```toml
+# run-config.toml
+provider_pool = ["codex", "gemini", "opencode"]
+
+[providers.codex]
+model = "gpt-5-codex"
+
+[providers.gemini]
+model = "gemini-2.5-pro"
+
+[providers.opencode]
+model = "o4-mini"
+```
+
+```bash
+uv run argus run --run-config run-config.toml \
+  "Find the best retention strategy for a workflow-heavy product."
+uv run argus benchmark --run-config run-config.toml
+```
+
+`--provider` still works and overrides `provider_pool` from the run-config for that command.
+
+Validate prompt/config/provider setup before running a real search:
+
+```bash
+uv run argus dry-run --run-config run-config.toml --prompt-file request.txt
+uv run argus dry-run "Find the best retention strategy." --provider codex --json
+```
+
+`argus dry-run` does not execute provider actions. It validates request input, run-config parsing,
+provider resolution, and local provider binary availability.
+
+Run-config rules:
+
+- `provider_pool` is the ordered provider fallback/routing pool for the run.
+- Every provider listed in `provider_pool` must have a matching `[providers.<name>]` table.
+- `model` is optional per provider; if omitted, the provider default/env behavior is used.
+- If `--provider` is passed, that value is used instead of `provider_pool` from the file.
 
 Run the stored benchmark suite, or a single case:
 

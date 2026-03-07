@@ -1,47 +1,101 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>Argus · Command Center</title>
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet">
     <style>
         :root {
-            /* Brutally minimal grayscale palette */
-            --bg-base: #F9F9F9;
-            --surface-color: #FFFFFF;
-            --ink-primary: #1A1A1A;
-            --ink-secondary: #5E5E5E;
-            --ink-tertiary: #A1A1A1;
-            --border-subtle: #E5E5E5;
-            --border-heavy: #D4D4D4;
+            /* Premium Dark Mode Palette */
+            --bg-base: #09090b;
+            --surface-color: rgba(24, 24, 27, 0.7);
+            --ink-primary: #fafafa;
+            --ink-secondary: #a1a1aa;
+            --ink-tertiary: #71717a;
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --border-heavy: rgba(255, 255, 255, 0.15);
+            --glass-blur: blur(16px);
+            --shadow-glow: 0 0 20px rgba(0, 0, 0, 0.4);
 
-            /* Contextual Status Colors - Muted & Intentional */
-            --color-winner-bg: #ECFDF5;
-            --color-winner-border: #10B981;
-            
-            --color-admitted-bg: #EFF6FF;
-            --color-admitted-border: #3B82F6;
-            
-            --color-pending-bg: #FEFCE8;
-            --color-pending-border: #EAB308;
-            
-            --color-rejected-bg: #FEF2F2;
-            --color-rejected-border: #EF4444;
-            
-            --color-archived-bg: #FAF5FF;
-            --color-archived-border: #A855F7;
-            
-            --color-pruned-bg: #F3F4F6;
-            --color-pruned-border: #9CA3AF;
+            --bg-radial-1: rgba(59, 130, 246, 0.15);
+            --bg-radial-2: rgba(168, 85, 247, 0.08);
 
-            --font-ui: 'Inter', -apple-system, sans-serif;
+            --color-winner-bg: rgba(16, 185, 129, 0.15);
+            --color-winner-border: #34d399;
+            --color-winner-text: #6ee7b7;
+
+            --color-admitted-bg: rgba(59, 130, 246, 0.15);
+            --color-admitted-border: #60a5fa;
+            --color-admitted-text: #93c5fd;
+
+            --color-pending-bg: rgba(234, 179, 8, 0.15);
+            --color-pending-border: #facc15;
+            --color-pending-text: #fef08a;
+
+            --color-rejected-bg: rgba(239, 68, 68, 0.15);
+            --color-rejected-border: #f87171;
+            --color-rejected-text: #fca5a5;
+
+            --color-archived-bg: rgba(168, 85, 247, 0.15);
+            --color-archived-border: #c084fc;
+            --color-archived-text: #e9d5ff;
+
+            --color-pruned-bg: rgba(156, 163, 175, 0.15);
+            --color-pruned-border: #9ca3af;
+            --color-pruned-text: #d1d5db;
+
+            --font-ui: 'Outfit', -apple-system, sans-serif;
             --font-mono: 'Geist Mono', monospace;
         }
 
-        * { box-sizing: border-box; }
+        :root.light-mode {
+            --bg-base: #f4f4f5;
+            --surface-color: rgba(255, 255, 255, 0.85);
+            --ink-primary: #18181b;
+            --ink-secondary: #52525b;
+            --ink-tertiary: #a1a1aa;
+            --border-subtle: rgba(0, 0, 0, 0.08);
+            --border-heavy: rgba(0, 0, 0, 0.15);
+            --shadow-glow: 0 4px 15px rgba(0, 0, 0, 0.05);
+
+            --bg-radial-1: rgba(59, 130, 246, 0.08);
+            --bg-radial-2: rgba(168, 85, 247, 0.05);
+
+            --color-winner-bg: rgba(16, 185, 129, 0.15);
+            --color-winner-border: #059669;
+            --color-winner-text: #065f46;
+
+            --color-admitted-bg: rgba(59, 130, 246, 0.15);
+            --color-admitted-border: #2563eb;
+            --color-admitted-text: #1e40af;
+
+            --color-pending-bg: rgba(234, 179, 8, 0.15);
+            --color-pending-border: #ca8a04;
+            --color-pending-text: #854d0e;
+
+            --color-rejected-bg: rgba(239, 68, 68, 0.15);
+            --color-rejected-border: #dc2626;
+            --color-rejected-text: #991b1b;
+
+            --color-archived-bg: rgba(168, 85, 247, 0.15);
+            --color-archived-border: #9333ea;
+            --color-archived-text: #581c87;
+
+            --color-pruned-bg: rgba(156, 163, 175, 0.15);
+            --color-pruned-border: #4b5563;
+            --color-pruned-text: #1f2937;
+        }
+
+
+        * {
+            box-sizing: border-box;
+        }
 
         body {
             font-family: var(--font-ui);
@@ -53,103 +107,205 @@
             flex-direction: column;
             height: 100vh;
             overflow: hidden;
-            background-image: 
+            background-image:
+                radial-gradient(circle at 100% 0%, var(--bg-radial-1) 0%, transparent 40%),
+                radial-gradient(circle at 0% 100%, var(--bg-radial-2) 0%, transparent 40%),
                 linear-gradient(var(--border-subtle) 1px, transparent 1px),
                 linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
-            background-size: 40px 40px;
+            background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
         }
 
         #top-bar {
-            height: 56px;
+            height: 64px;
             background: var(--surface-color);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
             border-bottom: 1px solid var(--border-heavy);
             display: flex;
             align-items: center;
-            padding: 0 24px;
+            padding: 0 32px;
             z-index: 20;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+            box-shadow: var(--shadow-glow);
             flex-shrink: 0;
+            position: relative;
+            /* ensure it stays above the absolute container */
         }
 
         .system-title {
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 700;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.1em;
             color: var(--ink-primary);
             margin: 0;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 12px;
             text-transform: uppercase;
+            text-shadow: 0 2px 10px rgba(255, 255, 255, 0.2);
         }
 
         .system-title::before {
             content: '';
             display: inline-block;
-            width: 8px;
-            height: 8px;
-            background-color: var(--ink-primary);
-            border-radius: 2px;
+            width: 10px;
+            height: 10px;
+            background: linear-gradient(135deg, #60a5fa, #c084fc);
+            border-radius: 3px;
+            box-shadow: 0 0 10px rgba(96, 165, 250, 0.5);
         }
 
         #run-status {
             display: flex;
             align-items: center;
-            gap: 24px;
-            margin-left: 32px;
+            gap: 32px;
+            margin-left: 48px;
             border-left: 1px solid var(--border-subtle);
-            padding-left: 24px;
-            height: 32px;
+            padding-left: 32px;
+            height: 40px;
         }
 
         #main-content {
             display: flex;
             flex-grow: 1;
-            height: calc(100vh - 56px);
+            height: calc(100vh - 64px);
             overflow: hidden;
+            position: relative;
+            /* to allow absolute stretching */
         }
 
         #network-container {
+            /* Full screen graph beneath the UI panels! */
+            position: absolute;
+            top: -64px;
+            /* stretch behind top bar */
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 1;
+        }
+
+        #empty-push {
             flex-grow: 1;
-            height: 100%;
+            /* pushes resizer to the right */
+        }
+
+        #sidebar-wrapper {
+            position: relative;
+            display: flex;
+            z-index: 10;
         }
 
         #sidebar {
             width: 440px;
             height: 100%;
             background: var(--surface-color);
+            backdrop-filter: var(--glass-blur);
+            -webkit-backdrop-filter: var(--glass-blur);
             border-left: 1px solid var(--border-heavy);
             display: flex;
             flex-direction: column;
-            z-index: 10;
-            box-shadow: -4px 0 24px rgba(0,0,0,0.03);
+            box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
             flex-shrink: 0;
         }
 
         #resizer {
-            width: 5px;
-            background-color: var(--border-subtle);
+            width: 6px;
+            background-color: transparent;
             cursor: col-resize;
             flex-shrink: 0;
             z-index: 15;
-            transition: background-color 0.2s ease;
+            transition: background-color 0.2s ease, width 0.2s ease;
+            margin-right: -1px;
+            /* overlap border */
         }
 
-        #resizer:hover, #resizer.active {
-            background-color: var(--ink-tertiary);
+        #resizer:hover,
+        #resizer.active {
+            background-color: rgba(255, 255, 255, 0.2);
         }
 
         .sidebar-content {
             padding: 32px;
             overflow-y: auto;
             flex-grow: 1;
+            opacity: 0;
+            animation: fadeIn 0.4s ease forwards;
+        }
+
+        .event-feed {
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .event-feed-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ink-secondary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .event-feed-title::after {
+            content: '';
+            flex-grow: 1;
+            height: 1px;
+            background: linear-gradient(90deg, var(--border-heavy), transparent);
+        }
+
+        .event-item {
+            margin-bottom: 10px;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-subtle);
+            background: rgba(255, 255, 255, 0.03);
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--ink-secondary);
+            line-height: 1.4;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .event-kind {
+            color: var(--ink-primary);
+            font-weight: 600;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* Refined Scrollbar */
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border-heavy); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--ink-tertiary); }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-heavy);
+            border-radius: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--ink-tertiary);
+        }
 
         .system-header {
             margin-bottom: 32px;
@@ -157,37 +313,21 @@
             border-bottom: 1px solid var(--border-subtle);
         }
 
-        .system-title {
-            font-size: 14px;
-            font-weight: 600;
-            letter-spacing: -0.01em;
-            color: var(--ink-primary);
-            margin: 0 0 16px 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .system-title::before {
-            content: '';
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            background-color: var(--ink-primary);
-            border-radius: 2px;
-        }
-
         .status-badge {
             display: inline-flex;
             align-items: center;
             font-family: var(--font-mono);
             font-size: 11px;
-            font-weight: 500;
+            font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.04em;
-            padding: 4px 8px;
-            border-radius: 4px;
+            letter-spacing: 0.06em;
+            padding: 4px 10px;
+            border-radius: 6px;
             border: 1px solid currentColor;
+            box-shadow: 0 0 10px currentColor;
+            /* glow effect */
+            background: transparent !important;
+            /* let it inherit color but we'll override in JS */
         }
 
         .run-metrics {
@@ -206,87 +346,105 @@
             font-size: 11px;
             color: var(--ink-secondary);
             text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .metric-value {
-            font-size: 14px;
+            font-size: 15px;
             font-weight: 500;
             font-variant-numeric: tabular-nums;
+            color: var(--ink-primary);
         }
 
         /* Progress Bar */
         .budget-track {
             width: 100%;
-            height: 4px;
-            background: var(--border-subtle);
-            border-radius: 2px;
+            height: 6px;
+            background: var(--bg-base);
+            border: 1px solid var(--border-heavy);
+            border-radius: 3px;
             margin-top: 8px;
             overflow: hidden;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
         }
+
         .budget-fill {
             height: 100%;
-            background: var(--ink-primary);
-            transition: width 0.3s ease;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            border-radius: 2px;
+            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
         }
 
         .node-header {
-            margin-top: 40px;
-            margin-bottom: 24px;
+            margin-top: 24px;
+            margin-bottom: 32px;
         }
 
         .node-action {
-            font-size: 20px;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            margin: 0 0 4px 0;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            margin: 0 0 8px 0;
             color: var(--ink-primary);
+            text-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
         }
 
         .node-id {
             font-family: var(--font-mono);
-            font-size: 12px;
+            font-size: 13px;
             color: var(--ink-secondary);
         }
 
         .section-label {
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
-            color: var(--ink-primary);
-            margin-bottom: 12px;
+            color: var(--ink-secondary);
+            margin-bottom: 16px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .section-label::after {
             content: '';
             flex-grow: 1;
             height: 1px;
-            background: var(--border-subtle);
+            background: linear-gradient(90deg, var(--border-heavy), transparent);
         }
 
         .data-card {
-            background: var(--bg-base);
+            background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border-subtle);
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 24px;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .data-card:hover {
+            border-color: var(--border-heavy);
+            transform: translateY(-2px);
         }
 
         .thesis-text {
-            font-size: 14px;
-            line-height: 1.6;
+            font-size: 15px;
+            line-height: 1.7;
             color: var(--ink-primary);
             margin: 0;
+            font-weight: 500;
         }
 
         .mechanism-text {
             font-family: var(--font-mono);
             font-size: 12px;
-            line-height: 1.5;
+            line-height: 1.6;
             color: var(--ink-secondary);
-            margin-top: 12px;
-            padding-top: 12px;
+            margin-top: 16px;
+            padding-top: 16px;
             border-top: 1px dashed var(--border-heavy);
         }
 
@@ -294,74 +452,127 @@
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 1px;
-            background: var(--border-subtle);
-            border: 1px solid var(--border-subtle);
-            border-radius: 8px;
+            background: var(--border-heavy);
+            border: 1px solid var(--border-heavy);
+            border-radius: 12px;
             overflow: hidden;
-            margin-bottom: 24px;
+            margin-bottom: 32px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
         }
 
         .score-cell {
-            background: var(--surface-color);
-            padding: 12px;
+            background: rgba(24, 24, 27, 0.9);
+            padding: 16px;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 8px;
+            transition: background 0.2s ease;
+        }
+
+        .score-cell:hover {
+            background: rgba(39, 39, 42, 0.9);
         }
 
         .score-cell-label {
             font-family: var(--font-mono);
-            font-size: 10px;
+            font-size: 11px;
             color: var(--ink-secondary);
             text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .score-cell-value {
-            font-size: 16px;
+            font-size: 20px;
             font-weight: 600;
             font-variant-numeric: tabular-nums;
+            color: var(--ink-primary);
         }
 
         .critique-card {
-            background: var(--color-rejected-bg);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            border-radius: 8px;
-            padding: 16px;
+            background: rgba(220, 38, 38, 0.05);
+            /* very subtle red */
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 24px;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #fca5a5;
+            margin-bottom: 32px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .critique-card strong {
+            color: #f87171;
+            font-weight: 600;
+        }
+
+        .decision-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-heavy);
+            border-left: 3px solid #f87171;
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 24px;
             font-size: 13px;
             line-height: 1.6;
-            color: #991B1B;
-            margin-bottom: 24px;
+            color: var(--ink-primary);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
         }
 
         .action-button {
             width: 100%;
-            background: var(--surface-color);
+            background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border-heavy);
             color: var(--ink-primary);
             font-family: var(--font-ui);
-            font-size: 13px;
-            font-weight: 500;
-            padding: 12px;
-            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            padding: 14px;
+            border-radius: 8px;
             cursor: pointer;
-            transition: all 0.15s ease;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            letter-spacing: 0.02em;
+        }
+
+        .action-button::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(rgba(255, 255, 255, 0.1), transparent);
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .action-button:hover::after {
+            opacity: 1;
         }
 
         .action-button.destructive {
-            border-color: rgba(239, 68, 68, 0.3);
-            color: var(--color-rejected-border);
+            border-color: rgba(239, 68, 68, 0.5);
+            color: #fca5a5;
+            background: rgba(220, 38, 38, 0.05);
         }
 
         .action-button.destructive:hover:not(:disabled) {
-            background: var(--color-rejected-bg);
-            border-color: var(--color-rejected-border);
+            background: rgba(220, 38, 38, 0.15);
+            border-color: rgba(239, 68, 68, 0.8);
+            box-shadow: 0 0 15px rgba(220, 38, 38, 0.2);
         }
 
         .action-button:disabled {
-            background: var(--bg-base);
+            background: rgba(255, 255, 255, 0.02);
             color: var(--ink-tertiary);
             border-color: var(--border-subtle);
             cursor: not-allowed;
+        }
+
+        .action-button:disabled::after {
+            display: none;
         }
 
         .empty-state {
@@ -372,48 +583,79 @@
             justify-content: center;
             color: var(--ink-tertiary);
             font-family: var(--font-mono);
-            font-size: 12px;
+            font-size: 13px;
             text-align: center;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
         }
 
         .empty-state svg {
-            width: 24px;
-            height: 24px;
-            margin-bottom: 16px;
-            opacity: 0.5;
+            width: 32px;
+            height: 32px;
+            margin-bottom: 24px;
+            opacity: 0.4;
+            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
         }
 
         /* Provider Tag specifically */
         .provider-tag {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             font-family: var(--font-mono);
-            font-size: 10px;
-            color: var(--ink-secondary);
-            background: var(--bg-base);
-            border: 1px solid var(--border-subtle);
-            padding: 2px 6px;
-            border-radius: 4px;
-            margin-top: 8px;
+            font-size: 11px;
+            font-weight: 500;
+            color: #a78bfa;
+            /* subtle purple */
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            padding: 4px 10px;
+            border-radius: 6px;
+            margin-top: 12px;
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.1);
+            letter-spacing: 0.04em;
         }
 
+        .provider-tag::before {
+            content: '♦';
+            margin-right: 6px;
+            font-size: 10px;
+        }
     </style>
 </head>
+
 <body>
     <div id="top-bar">
         <h1 class="system-title">ARGUS SEARCH RUNTIME</h1>
         <div id="run-status">
             <!-- Injected by JS -->
         </div>
+        <div style="margin-left: auto; display: flex; align-items: center;">
+            <button id="theme-toggle" class="action-button" style="padding: 6px 12px; font-size: 12px; width: auto; background: transparent;">Light Mode</button>
+        </div>
     </div>
-    
+
+
     <div id="main-content">
         <div id="network-container"></div>
-        <div id="resizer"></div>
-        <div id="sidebar">
-            <div class="sidebar-content">
-                <div id="node-panel">
+        <div id="empty-push"></div>
+        <div id="sidebar-wrapper">
+            <div id="resizer"></div>
+            <div id="sidebar">
+                <div class="sidebar-content" id="event-feed">
                     <div class="empty-state">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                        Awaiting run progress feed
+                    </div>
+                </div>
+                <div class="sidebar-content" id="node-panel">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="12" cy="12" r="10"></circle>
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
@@ -429,6 +671,7 @@
         const container = document.getElementById('network-container');
         const runStatusEl = document.getElementById('run-status');
         const nodePanelEl = document.getElementById('node-panel');
+        const eventFeedEl = document.getElementById('event-feed');
 
         const resizer = document.getElementById('resizer');
         const sidebar = document.getElementById('sidebar');
@@ -465,71 +708,122 @@
         let selectedNodeId = null;
 
         const data = { nodes: nodes, edges: edges };
-        
-        const styleMap = {
-            winner:   { bg: '#ECFDF5', border: '#10B981', text: '#065F46' },
-            admitted: { bg: '#EFF6FF', border: '#3B82F6', text: '#1E40AF' },
-            pending:  { bg: '#FEFCE8', border: '#EAB308', text: '#854D0E' },
-            rejected: { bg: '#FEF2F2', border: '#EF4444', text: '#991B1B' },
-            failed:   { bg: '#FFF7ED', border: '#F97316', text: '#9A3412' },
-            archived: { bg: '#FAF5FF', border: '#A855F7', text: '#6B21A8' },
-            pruned:   { bg: '#F3F4F6', border: '#9CA3AF', text: '#4B5563' },
-            default:  { bg: '#FFFFFF', border: '#E5E5E5', text: '#1A1A1A' }
+
+        // Theme Setup
+        let isLightMode = localStorage.getItem('theme') === 'light';
+        if (isLightMode) {
+            document.documentElement.classList.add('light-mode');
+        }
+
+        const darkStyleMap = {
+            winner: { bg: 'rgba(16, 185, 129, 0.1)', border: '#34d399', text: '#6ee7b7' },
+            admitted: { bg: 'rgba(59, 130, 246, 0.1)', border: '#60a5fa', text: '#93c5fd' },
+            pending: { bg: 'rgba(234, 179, 8, 0.1)', border: '#facc15', text: '#fef08a' },
+            rejected: { bg: 'rgba(239, 68, 68, 0.1)', border: '#f87171', text: '#fca5a5' },
+            failed: { bg: 'rgba(249, 115, 22, 0.1)', border: '#fb923c', text: '#fdba74' },
+            archived: { bg: 'rgba(168, 85, 247, 0.1)', border: '#c084fc', text: '#e9d5ff' },
+            pruned: { bg: 'rgba(156, 163, 175, 0.1)', border: '#9ca3af', text: '#d1d5db' },
+            default: { bg: 'rgba(255, 255, 255, 0.05)', border: 'rgba(255,255,255,0.2)', text: '#fafafa' }
         };
 
-        const options = {
-            layout: {
-                hierarchical: {
-                    direction: 'LR',
-                    sortMethod: 'hubsize',
-                    nodeSpacing: 120,
-                    levelSeparation: 320
-                }
-            },
-            physics: false,
-            nodes: {
-                shape: 'box',
-                margin: { top: 12, bottom: 12, left: 16, right: 16 },
-                borderWidth: 1,
-                shapeProperties: { borderRadius: 6 },
-                font: { 
-                    multi: 'html',
-                    face: "'Geist Mono', monospace",
-                    size: 12,
-                    color: '#1A1A1A',
-                    align: 'center',
-                    bold: {
-                        color: '#1A1A1A',
-                        size: 12,
-                        vadjust: 0
+        const lightStyleMap = {
+            winner: { bg: 'rgba(16, 185, 129, 0.15)', border: '#059669', text: '#065f46' },
+            admitted: { bg: 'rgba(59, 130, 246, 0.15)', border: '#2563eb', text: '#1e40af' },
+            pending: { bg: 'rgba(234, 179, 8, 0.15)', border: '#ca8a04', text: '#854d0e' },
+            rejected: { bg: 'rgba(239, 68, 68, 0.15)', border: '#dc2626', text: '#991b1b' },
+            failed: { bg: 'rgba(249, 115, 22, 0.15)', border: '#ea580c', text: '#9a3412' },
+            archived: { bg: 'rgba(168, 85, 247, 0.15)', border: '#9333ea', text: '#581c87' },
+            pruned: { bg: 'rgba(156, 163, 175, 0.15)', border: '#4b5563', text: '#1f2937' },
+            default: { bg: 'rgba(0, 0, 0, 0.05)', border: 'rgba(0,0,0,0.2)', text: '#18181b' }
+        };
+
+        function getStyle(status) {
+            const map = isLightMode ? lightStyleMap : darkStyleMap;
+            return map[status] || map.default;
+        }
+
+        function getVisOptions() {
+            const textColor = isLightMode ? '#18181b' : '#fafafa';
+            const shadowColor = isLightMode ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.6)';
+            const edgeColor = isLightMode ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.15)';
+            const highlightColor = isLightMode ? '#2563eb' : '#60a5fa';
+
+            return {
+                layout: {
+                    hierarchical: {
+                        direction: 'LR',
+                        sortMethod: 'hubsize',
+                        nodeSpacing: 140,
+                        levelSeparation: 360
                     }
                 },
-                shadow: {
-                    enabled: true,
-                    color: 'rgba(0,0,0,0.04)',
-                    size: 8,
-                    x: 0,
-                    y: 4
-                }
-            },
-            edges: {
-                arrows: { to: { enabled: true, scaleFactor: 0.8 } },
-                color: {
-                    color: '#D4D4D4',
-                    highlight: '#1A1A1A',
-                    hover: '#1A1A1A'
+                physics: false,
+                nodes: {
+                    shape: 'box',
+                    margin: { top: 14, bottom: 14, left: 20, right: 20 },
+                    borderWidth: 1.5,
+                    shapeProperties: { borderRadius: 8 },
+                    font: {
+                        multi: 'html',
+                        face: "'Geist Mono', monospace",
+                        size: 13,
+                        color: textColor,
+                        align: 'center',
+                        bold: {
+                            color: textColor,
+                            size: 13,
+                            vadjust: 0
+                        }
+                    },
+                    shadow: {
+                        enabled: true,
+                        color: shadowColor,
+                        size: 15,
+                        x: 0,
+                        y: 6
+                    }
                 },
-                width: 1.5,
-                smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 }
-            },
-            interaction: {
-                hover: true,
-                tooltipDelay: 200,
-                zoomView: true
-            }
-        };
+                edges: {
+                    arrows: { to: { enabled: true, scaleFactor: 0.8 } },
+                    color: {
+                        color: edgeColor,
+                        highlight: highlightColor,
+                        hover: highlightColor
+                    },
+                    width: 2,
+                    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.6 }
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200,
+                    zoomView: true
+                }
+            };
+        }
 
-        network = new vis.Network(container, data, options);
+        network = new vis.Network(container, data, getVisOptions());
+
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        if (isLightMode) themeToggleBtn.textContent = 'Dark Mode';
+        
+        themeToggleBtn.addEventListener('click', () => {
+            isLightMode = !isLightMode;
+            if (isLightMode) {
+                document.documentElement.classList.add('light-mode');
+                localStorage.setItem('theme', 'light');
+                themeToggleBtn.textContent = 'Dark Mode';
+            } else {
+                document.documentElement.classList.remove('light-mode');
+                localStorage.setItem('theme', 'dark');
+                themeToggleBtn.textContent = 'Light Mode';
+            }
+            network.setOptions(getVisOptions());
+            
+            // Immediately apply new styles to nodes
+            if (currentState) {
+                renderState(currentState);
+            }
+        });
 
         network.on("selectNode", function (params) {
             if (params.nodes.length > 0) {
@@ -554,116 +848,161 @@
                 const json = await res.json();
                 if (json.error) return;
                 currentState = json;
-                
-                const isRunning = json.manifest.status === 'running';
-                const statusTheme = isRunning ? styleMap.pending : styleMap.archived;
-                const budgetPercentage = Math.min(100, (json.budget_spent / json.manifest.budget) * 100);
-
-                runStatusEl.innerHTML = `
-                    <span class="status-badge" style="color: ${statusTheme.border}; background: ${statusTheme.bg};">
-                        ${json.manifest.status}
-                    </span>
-
-                    <div style="display: flex; flex-direction: column; width: 140px;">
-                        <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                            <span class="metric-label">Token Budget</span>
-                            <span class="metric-value">${json.budget_spent} / ${json.manifest.budget}</span>
-                        </div>
-                        <div class="budget-track" style="margin-top: 4px;">
-                            <div class="budget-fill" style="width: ${budgetPercentage}%;"></div>
-                        </div>
-                    </div>
-
-                    <div style="display: flex; align-items: baseline; gap: 8px;">
-                        <span class="metric-label">Steps</span>
-                        <span class="metric-value">${json.step_count}</span>
-                    </div>
-                `;
-                const visNodes = [];
-                const visEdges = [];
-
-                // 1. First, build the edges array and parent mappings
-                const childToParents = {};
-                for (const nodeId in json.nodes) {
-                    const node = json.nodes[nodeId];
-                    if (node.parent_ids && node.parent_ids.length > 0) {
-                        childToParents[nodeId] = node.parent_ids;
-                        for (const parentId of node.parent_ids) {
-                            visEdges.push({
-                                id: `${parentId}-${nodeId}`,
-                                from: parentId,
-                                to: nodeId,
-                                color: { opacity: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? 0.3 : 1.0 },
-                                dashes: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? [4, 4] : false
-                            });
-                        }
-                    } else {
-                        childToParents[nodeId] = [];
-                    }
-                }
-
-                // 2. Compute depth levels explicitly to force same-generation nodes to align
-                const nodeLevels = {};
-                function getLevel(id) {
-                    if (nodeLevels[id] !== undefined) return nodeLevels[id];
-                    const parents = childToParents[id] || [];
-                    if (parents.length === 0) {
-                        nodeLevels[id] = 0;
-                        return 0;
-                    }
-                    let maxParentLevel = -1;
-                    for (const pid of parents) {
-                        if (nodeLevels[pid] === undefined) {
-                            nodeLevels[pid] = 0; 
-                            nodeLevels[pid] = getLevel(pid);
-                        }
-                        if (nodeLevels[pid] > maxParentLevel) {
-                            maxParentLevel = nodeLevels[pid];
-                        }
-                    }
-                    nodeLevels[id] = maxParentLevel + 1;
-                    return nodeLevels[id];
-                }
-
-                // 3. Build the nodes array and assign explicit levels
-                for (const nodeId in json.nodes) {
-                    const node = json.nodes[nodeId];
-                    const status = node.lifecycle_status;
-                    const style = getStyle(status);
-
-                    let labelText = `<b>${node.action_type.toUpperCase()}</b>\n${nodeId}`;
-
-                    if (node.score && node.score.total_score !== undefined) {
-                        labelText += `\n★ ${node.score.total_score.toFixed(2)}`;
-                    }
-
-                    let nodeConfig = {
-                        id: nodeId,
-                        level: getLevel(nodeId),
-                        label: labelText,
-                        color: {
-                            background: style.bg,
-                            border: style.border,
-                            highlight: { background: style.bg, border: '#1A1A1A' },
-                            hover: { background: style.bg, border: '#1A1A1A' }
-                        },
-                        font: { multi: 'html', color: style.text }
-                    };
-
-                    if (status === 'pruned' || status === 'rejected') {
-                        nodeConfig.shapeProperties = { borderDashes: [4, 4] };
-                    }
-
-                    visNodes.push(nodeConfig);
-                }
-
-                nodes.update(visNodes);
-                edges.update(visEdges);                
-                updateSidebar();
-
+                renderState(json);
             } catch (err) {
                 console.error("Error fetching state:", err);
             }
+        }
+
+        async function fetchEvents() {
+            try {
+                const res = await fetch('/api/events?limit=12');
+                if (!res.ok) return;
+                const events = await res.json();
+                renderEvents(events);
+            } catch (err) {
+                console.error("Error fetching events:", err);
+            }
+        }
+
+        function renderEvents(events) {
+            if (!eventFeedEl) return;
+            if (!Array.isArray(events) || events.length === 0) {
+                eventFeedEl.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y="16" x2="12" y2="12"></line>
+                            <line x1="12" y="8" x2="12.01" y="8"></line>
+                        </svg>
+                        Awaiting run progress feed
+                    </div>
+                `;
+                return;
+            }
+
+            const title = `<div class="event-feed-title">Recent Events</div>`;
+            const lines = events.slice().reverse().map((event) => {
+                const kind = event.kind || "event";
+                const ts = event.timestamp || "";
+                const thesis = event.payload && event.payload.thesis ? ` · ${event.payload.thesis}` : "";
+                const nodeId = event.payload && event.payload.node_id ? ` · ${event.payload.node_id}` : "";
+                const label = event.payload && event.payload.label ? ` · ${event.payload.label}` : "";
+                const text = `${kind}${nodeId}${label}${thesis}`.slice(0, 180);
+                return `<div class="event-item"><span class="event-kind">${ts}</span> ${text}</div>`;
+            });
+            eventFeedEl.innerHTML = title + lines.join('');
+        }
+
+        function renderState(json) {
+            const isRunning = json.manifest.status === 'running';
+            const statusTheme = isRunning ? getStyle('pending') : getStyle('archived');
+            const budgetPercentage = Math.min(100, (json.budget_spent / json.manifest.budget) * 100);
+
+            runStatusEl.innerHTML = `
+                <span class="status-badge" style="color: ${statusTheme.border}; box-shadow: 0 0 10px ${statusTheme.border}40;">
+                    ${json.manifest.status}
+                </span>
+
+                <div style="display: flex; flex-direction: column; width: 160px;">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                        <span class="metric-label">Search Budget</span>
+                        <span class="metric-value">${json.budget_spent} / ${json.manifest.budget}</span>
+                    </div>
+                    <div class="budget-track">
+                        <div class="budget-fill" style="width: ${budgetPercentage}%;"></div>
+                    </div>
+                </div>
+
+                <div style="display: flex; align-items: baseline; gap: 8px;">
+                    <span class="metric-label">Steps</span>
+                    <span class="metric-value">${json.step_count}</span>
+                </div>
+            `;
+            const visNodes = [];
+            const visEdges = [];
+
+            // 1. First, build the edges array and parent mappings
+            const childToParents = {};
+            for (const nodeId in json.nodes) {
+                const node = json.nodes[nodeId];
+                if (node.parent_ids && node.parent_ids.length > 0) {
+                    childToParents[nodeId] = node.parent_ids;
+                    for (const parentId of node.parent_ids) {
+                        visEdges.push({
+                            id: `${parentId}-${nodeId}`,
+                            from: parentId,
+                            to: nodeId,
+                            color: { opacity: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? 0.2 : 0.8 },
+                            dashes: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? [4, 4] : false
+                        });
+                    }
+                } else {
+                    childToParents[nodeId] = [];
+                }
+            }
+
+            // 2. Compute depth levels explicitly to force same-generation nodes to align
+            const nodeLevels = {};
+            function getLevel(id) {
+                if (nodeLevels[id] !== undefined) return nodeLevels[id];
+                const parents = childToParents[id] || [];
+                if (parents.length === 0) {
+                    nodeLevels[id] = 0;
+                    return 0;
+                }
+                let maxParentLevel = -1;
+                for (const pid of parents) {
+                    if (nodeLevels[pid] === undefined) {
+                        nodeLevels[pid] = 0;
+                        nodeLevels[pid] = getLevel(pid);
+                    }
+                    if (nodeLevels[pid] > maxParentLevel) {
+                        maxParentLevel = nodeLevels[pid];
+                    }
+                }
+                nodeLevels[id] = maxParentLevel + 1;
+                return nodeLevels[id];
+            }
+
+            // 3. Build the nodes array and assign explicit levels
+            for (const nodeId in json.nodes) {
+                const node = json.nodes[nodeId];
+                const status = node.lifecycle_status;
+                const style = getStyle(status);
+
+                let labelText = `<b>${node.action_type.toUpperCase()}</b>
+${nodeId}`;
+
+                if (node.score && node.score.total_score !== undefined) {
+                    labelText += `
+★ ${node.score.total_score.toFixed(2)}`;
+                }
+
+                let nodeConfig = {
+                    id: nodeId,
+                    level: getLevel(nodeId),
+                    label: labelText,
+                    color: {
+                        background: style.bg,
+                        border: style.border,
+                        highlight: { background: style.bg, border: isLightMode ? '#000' : '#fff', shadow: { color: style.border, size: 20 } },
+                        hover: { background: style.bg, border: isLightMode ? '#000' : '#fff', shadow: { color: style.border, size: 15 } }
+                    },
+                    font: { multi: 'html', color: style.text }
+                };
+
+                if (status === 'pruned' || status === 'rejected') {
+                    nodeConfig.shapeProperties = { borderDashes: [4, 4] };
+                    nodeConfig.font.color = isLightMode ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+                }
+
+                visNodes.push(nodeConfig);
+            }
+
+            nodes.update(visNodes);
+            edges.update(visEdges);
+            updateSidebar();
         }
 
         async function pruneNode(nodeId) {
@@ -674,7 +1013,7 @@
                     body: JSON.stringify({ node_id: nodeId })
                 });
                 if (res.ok) {
-                    fetchState(); 
+                    fetchState();
                 }
             } catch (e) {
                 console.error("Failed to prune:", e);
@@ -697,18 +1036,25 @@
 
             const node = currentState.nodes[selectedNodeId];
             const nodeStyle = getStyle(node.lifecycle_status);
-            
+
             let html = `
                 <div class="node-header">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
                         <h2 class="node-action">${node.action_type.replace('_', ' ')}</h2>
-                        <span class="status-badge" style="color: ${nodeStyle.border}; background: ${nodeStyle.bg};">${node.lifecycle_status}</span>
+                        <span class="status-badge" style="color: ${nodeStyle.border}; box-shadow: 0 0 10px ${nodeStyle.border}40;">${node.lifecycle_status}</span>
                     </div>
                     <div class="node-id">${node.node_id}</div>
                     <div class="provider-tag">${node.provider_name}</div>
                 </div>
             `;
-            
+
+            if (node.termination_reason) {
+                html += `
+                    <div class="section-label" style="color: ${nodeStyle.text};">Decision Reason</div>
+                    <div class="decision-card">${node.termination_reason}</div>
+                `;
+            }
+
             if (node.candidate) {
                 html += `
                     <div class="section-label">Candidate Concept</div>
@@ -725,7 +1071,7 @@
                     <div class="score-matrix">
                         <div class="score-cell">
                             <span class="score-cell-label">Total Score</span>
-                            <span class="score-cell-value">${node.score.total_score.toFixed(2)}</span>
+                            <span class="score-cell-value" style="text-shadow: 0 0 15px rgba(255,255,255,0.3);">${node.score.total_score.toFixed(2)}</span>
                         </div>
                         <div class="score-cell">
                             <span class="score-cell-label">Confidence</span>
@@ -744,9 +1090,9 @@
 
                 if (!node.score.hard_constraint_pass && node.score.hard_constraint_reasons && node.score.hard_constraint_reasons.length > 0) {
                     html += `
-                        <div class="section-label" style="color: #EF4444; margin-top: 16px;">Hard Constraints Failed</div>
+                        <div class="section-label" style="color: #f87171; margin-top: 24px;">Hard Constraints Failed</div>
                         <div class="critique-card">
-                            <ul style="margin: 0; padding-left: 16px;">
+                            <ul style="margin: 0; padding-left: 20px;">
                                 ${node.score.hard_constraint_reasons.map(r => `<li>${r}</li>`).join('')}
                             </ul>
                         </div>
@@ -756,29 +1102,29 @@
 
             if (node.critique) {
                 html += `
-                    <div class="section-label" style="color: #EF4444; margin-top: 16px;">Critique</div>
+                    <div class="section-label" style="color: #f87171; margin-top: 24px;">Critique</div>
                     <div class="critique-card">
                 `;
-                
+
                 if (node.critique.summary) {
                     html += `<div><strong>Summary:</strong> ${node.critique.summary}</div>`;
                 }
                 if (node.critique.kill_shots && node.critique.kill_shots.length > 0) {
-                    html += `<div style="margin-top: 8px;"><strong>Kill Shots:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 16px;">`;
+                    html += `<div style="margin-top: 12px;"><strong>Kill Shots:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 20px;">`;
                     html += node.critique.kill_shots.map(k => `<li>${k}</li>`).join('');
                     html += `</ul>`;
                 }
                 if (node.critique.sharp_edges && node.critique.sharp_edges.length > 0) {
-                    html += `<div style="margin-top: 8px;"><strong>Sharp Edges:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 16px;">`;
+                    html += `<div style="margin-top: 12px;"><strong>Sharp Edges:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 20px;">`;
                     html += node.critique.sharp_edges.map(e => `<li>${e}</li>`).join('');
                     html += `</ul>`;
                 }
                 if (node.critique.hidden_dependencies && node.critique.hidden_dependencies.length > 0) {
-                    html += `<div style="margin-top: 8px;"><strong>Hidden Dependencies:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 16px;">`;
+                    html += `<div style="margin-top: 12px;"><strong>Hidden Dependencies:</strong></div><ul style="margin: 4px 0 0 0; padding-left: 20px;">`;
                     html += node.critique.hidden_dependencies.map(d => `<li>${d}</li>`).join('');
                     html += `</ul>`;
                 }
-                
+
                 html += `</div>`;
             }
 
@@ -793,7 +1139,10 @@
         }
 
         setInterval(fetchState, 500);
+        setInterval(fetchEvents, 500);
         fetchState();
+        fetchEvents();
     </script>
 </body>
+
 </html>

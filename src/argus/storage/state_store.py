@@ -360,9 +360,59 @@ class FileSystemStateStore:
     _OUTCOME_FEEDBACK_LEDGER_PATH = "outcome-feedback-ledger.json"
     _ROUTING_SUMMARY_PATH = "routing-summary.json"
     _ROUTING_STATS_PATH = "provider-routing-stats.json"
+    _PROGRESS_EVENTS_PATH = "progress-events.jsonl"
 
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir.expanduser().resolve()
+
+    def allocate_run_id(self, *, timestamp: datetime | None = None) -> str:
+        normalized_timestamp = _normalize_datetime(
+            datetime.now(timezone.utc) if timestamp is None else timestamp,
+            "timestamp",
+        )
+        return self._allocate_run_id(None, normalized_timestamp)
+
+    def progress_events_path(self, run_id: str) -> Path:
+        return self.root_dir / _normalize_path_segment(run_id, "run_id") / self._PROGRESS_EVENTS_PATH
+
+    def load_progress_events(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        normalized_run_id = _normalize_path_segment(run_id, "run_id")
+        manifest, run_dir = self._load_manifest(normalized_run_id)
+        path = run_dir / self._PROGRESS_EVENTS_PATH
+        if not path.is_file():
+            return []
+
+        limit_count = None if limit is None else max(0, int(limit))
+        events: list[dict[str, object]] = []
+        with path.open("r", encoding="utf-8") as stream:
+            for raw_line in stream:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ArgusValidationError(
+                        f"Invalid progress event JSON in {path}: {exc}"
+                    ) from exc
+                if not isinstance(payload, dict):
+                    raise ArgusValidationError(
+                        f"Invalid progress event payload in {path}: not an object."
+                    )
+                run_id_value = payload.get("run_id")
+                if run_id_value != manifest.run_id:
+                    continue
+                events.append(dict(payload))
+        if limit_count is None:
+            return events
+        if limit_count <= 0:
+            return []
+        return events[-limit_count:]
 
     def create_run(
         self,
@@ -466,10 +516,14 @@ class FileSystemStateStore:
         if normalized_status is not RunStatus.FAILED:
             normalized_error = None
 
+        new_updated_at = updated_at or datetime.now(timezone.utc)
+        if new_updated_at < manifest.updated_at:
+            new_updated_at = manifest.updated_at
+
         refreshed_manifest = replace(
             manifest,
             status=normalized_status,
-            updated_at=_normalize_datetime(updated_at or datetime.now(timezone.utc), "updated_at"),
+            updated_at=_normalize_datetime(new_updated_at, "updated_at"),
             state_path=state_path,
             learning_notes_path=learning_notes_path,
             final_recommendation_path=final_recommendation_path,
@@ -499,10 +553,14 @@ class FileSystemStateStore:
             "reusable-learning-context.json",
             None if memory is None or not memory.entries else memory.to_dict(),
         )
+        new_updated_at = updated_at or datetime.now(timezone.utc)
+        if new_updated_at < manifest.updated_at:
+            new_updated_at = manifest.updated_at
+
         refreshed_manifest = replace(
             manifest,
             updated_at=_normalize_datetime(
-                updated_at or datetime.now(timezone.utc),
+                new_updated_at,
                 "updated_at",
             ),
             reusable_learning_path=reusable_learning_path,
@@ -598,10 +656,14 @@ class FileSystemStateStore:
         if normalized_status is not RunStatus.FAILED:
             normalized_error = None
 
+        new_updated_at = updated_at or datetime.now(timezone.utc)
+        if new_updated_at < manifest.updated_at:
+            new_updated_at = manifest.updated_at
+
         refreshed_manifest = replace(
             manifest,
             status=normalized_status,
-            updated_at=_normalize_datetime(updated_at or datetime.now(timezone.utc), "updated_at"),
+            updated_at=_normalize_datetime(new_updated_at, "updated_at"),
             metadata=merged_metadata,
             error=normalized_error,
         )

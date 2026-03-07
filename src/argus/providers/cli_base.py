@@ -29,6 +29,7 @@ class CliProviderBase(ABC):
     default_binary: str
     command_display_name: str
     model_env_var: str | None = None
+    invalid_json_retries: int = 0
 
     def __init__(
         self,
@@ -45,6 +46,8 @@ class CliProviderBase(ABC):
         resolved_binary = (binary or self.default_binary).strip()
         if not resolved_binary:
             raise ArgusValidationError("binary must be a non-empty string.")
+        if not isinstance(self.invalid_json_retries, int) or self.invalid_json_retries < 0:
+            raise ArgusValidationError("invalid_json_retries must be a non-negative integer.")
 
         self.artifacts_root = artifacts_root.expanduser().resolve()
         self.binary = resolved_binary
@@ -102,107 +105,114 @@ class CliProviderBase(ABC):
             "check": False,
         }
         runner_kwargs.update(self._build_runner_kwargs(artifacts=artifacts, prompt_text=prompt_text))
+        invalid_json_attempts_remaining = self.invalid_json_retries
+        while True:
+            try:
+                completed = self.runner(command, **runner_kwargs)
+            except subprocess.TimeoutExpired as exc:
+                stderr_text = _coerce_subprocess_output(exc.stderr)
+                stdout_text = _coerce_subprocess_output(exc.stdout)
+                self._write_process_streams(artifacts, stdout_text, stderr_text)
+                return self._raise_failure(
+                    artifacts=artifacts,
+                    action_name=normalized_action_name,
+                    prompt_sha256=prompt_sha256,
+                    message=(
+                        f"{self.command_display_name} timed out after "
+                        f"{self.timeout_seconds:.1f} seconds."
+                    ),
+                    error_type="timeout",
+                    exit_status=None,
+                    stderr_excerpt=stderr_text,
+                    timestamp=timestamp,
+                    duration_ms=_duration_ms(started_at),
+                )
+            except OSError as exc:
+                self._write_process_streams(artifacts, "", str(exc))
+                return self._raise_failure(
+                    artifacts=artifacts,
+                    action_name=normalized_action_name,
+                    prompt_sha256=prompt_sha256,
+                    message=f"Failed to execute {self.binary}: {exc}",
+                    error_type="execution_error",
+                    exit_status=None,
+                    stderr_excerpt=str(exc),
+                    timestamp=timestamp,
+                    duration_ms=_duration_ms(started_at),
+                )
 
-        try:
-            completed = self.runner(command, **runner_kwargs)
-        except subprocess.TimeoutExpired as exc:
-            stderr_text = _coerce_subprocess_output(exc.stderr)
-            stdout_text = _coerce_subprocess_output(exc.stdout)
+            stdout_text = completed.stdout or ""
+            stderr_text = completed.stderr or ""
             self._write_process_streams(artifacts, stdout_text, stderr_text)
-            return self._raise_failure(
-                artifacts=artifacts,
-                action_name=normalized_action_name,
-                prompt_sha256=prompt_sha256,
-                message=(
-                    f"{self.command_display_name} timed out after "
-                    f"{self.timeout_seconds:.1f} seconds."
-                ),
-                error_type="timeout",
-                exit_status=None,
-                stderr_excerpt=stderr_text,
-                timestamp=timestamp,
-                duration_ms=_duration_ms(started_at),
-            )
-        except OSError as exc:
-            self._write_process_streams(artifacts, "", str(exc))
-            return self._raise_failure(
-                artifacts=artifacts,
-                action_name=normalized_action_name,
-                prompt_sha256=prompt_sha256,
-                message=f"Failed to execute {self.binary}: {exc}",
-                error_type="execution_error",
-                exit_status=None,
-                stderr_excerpt=str(exc),
-                timestamp=timestamp,
-                duration_ms=_duration_ms(started_at),
-            )
 
-        stdout_text = completed.stdout or ""
-        stderr_text = completed.stderr or ""
-        self._write_process_streams(artifacts, stdout_text, stderr_text)
+            if completed.returncode != 0:
+                return self._raise_failure(
+                    artifacts=artifacts,
+                    action_name=normalized_action_name,
+                    prompt_sha256=prompt_sha256,
+                    message=f"{self.command_display_name} exited with status {completed.returncode}.",
+                    error_type="process_exit",
+                    exit_status=completed.returncode,
+                    stderr_excerpt=stderr_text,
+                    timestamp=timestamp,
+                    duration_ms=_duration_ms(started_at),
+                )
 
-        if completed.returncode != 0:
-            return self._raise_failure(
-                artifacts=artifacts,
-                action_name=normalized_action_name,
-                prompt_sha256=prompt_sha256,
-                message=f"{self.command_display_name} exited with status {completed.returncode}.",
-                error_type="process_exit",
-                exit_status=completed.returncode,
-                stderr_excerpt=stderr_text,
-                timestamp=timestamp,
-                duration_ms=_duration_ms(started_at),
-            )
+            try:
+                raw_message = self._extract_response_text(
+                    artifacts=artifacts,
+                    stdout_text=stdout_text,
+                    stderr_text=stderr_text,
+                ).strip()
+            except _ResponseExtractionError as exc:
+                if exc.error_type == "invalid_json" and invalid_json_attempts_remaining > 0:
+                    invalid_json_attempts_remaining -= 1
+                    continue
+                return self._raise_failure(
+                    artifacts=artifacts,
+                    action_name=normalized_action_name,
+                    prompt_sha256=prompt_sha256,
+                    message=exc.message,
+                    error_type=exc.error_type,
+                    exit_status=completed.returncode,
+                    stderr_excerpt=stderr_text,
+                    timestamp=timestamp,
+                    duration_ms=_duration_ms(started_at),
+                )
 
-        try:
-            raw_message = self._extract_response_text(
-                artifacts=artifacts,
-                stdout_text=stdout_text,
-                stderr_text=stderr_text,
-            ).strip()
-        except _ResponseExtractionError as exc:
-            return self._raise_failure(
-                artifacts=artifacts,
-                action_name=normalized_action_name,
-                prompt_sha256=prompt_sha256,
-                message=exc.message,
-                error_type=exc.error_type,
-                exit_status=completed.returncode,
-                stderr_excerpt=stderr_text,
-                timestamp=timestamp,
-                duration_ms=_duration_ms(started_at),
-            )
+            if not raw_message:
+                return self._raise_failure(
+                    artifacts=artifacts,
+                    action_name=normalized_action_name,
+                    prompt_sha256=prompt_sha256,
+                    message=f"{self.command_display_name} returned an empty final message.",
+                    error_type="missing_output",
+                    exit_status=completed.returncode,
+                    stderr_excerpt=stderr_text,
+                    timestamp=timestamp,
+                    duration_ms=_duration_ms(started_at),
+                )
 
-        if not raw_message:
-            return self._raise_failure(
-                artifacts=artifacts,
-                action_name=normalized_action_name,
-                prompt_sha256=prompt_sha256,
-                message=f"{self.command_display_name} returned an empty final message.",
-                error_type="missing_output",
-                exit_status=completed.returncode,
-                stderr_excerpt=stderr_text,
-                timestamp=timestamp,
-                duration_ms=_duration_ms(started_at),
-            )
-
-        if not artifacts.last_message_path.exists():
             artifacts.last_message_path.write_text(raw_message, encoding="utf-8")
 
-        try:
-            raw_payload = json.loads(raw_message)
-        except json.JSONDecodeError as exc:
-            return self._raise_failure(
-                artifacts=artifacts,
-                action_name=normalized_action_name,
-                prompt_sha256=prompt_sha256,
-                message=f"{self.command_display_name} returned invalid JSON: {exc}",
-                error_type="invalid_json",
-                exit_status=completed.returncode,
-                stderr_excerpt=stderr_text,
-                timestamp=timestamp,
-                duration_ms=_duration_ms(started_at),
-            )
+            try:
+                raw_payload = json.loads(raw_message)
+            except json.JSONDecodeError as exc:
+                if invalid_json_attempts_remaining > 0:
+                    invalid_json_attempts_remaining -= 1
+                    continue
+                return self._raise_failure(
+                    artifacts=artifacts,
+                    action_name=normalized_action_name,
+                    prompt_sha256=prompt_sha256,
+                    message=f"{self.command_display_name} returned invalid JSON: {exc}",
+                    error_type="invalid_json",
+                    exit_status=completed.returncode,
+                    stderr_excerpt=stderr_text,
+                    timestamp=timestamp,
+                    duration_ms=_duration_ms(started_at),
+                )
+            break
 
         artifacts.response_path.write_text(
             json.dumps(raw_payload, indent=2, sort_keys=True) + "\n",

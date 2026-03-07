@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from argus.providers.base import ProviderArtifacts, StructuredOutputSchema
 from argus.providers.cli_base import CliProviderBase, _ResponseExtractionError
+
+_MARKDOWN_FENCE_PATTERN = re.compile(
+    r"^\s*```(?:[A-Za-z0-9_+-]+)?\s*([\s\S]*?)\s*```\s*$",
+    re.IGNORECASE,
+)
 
 
 class GeminiProvider(CliProviderBase):
@@ -14,6 +20,7 @@ class GeminiProvider(CliProviderBase):
     default_binary = "gemini"
     command_display_name = "gemini"
     model_env_var = "GEMINI_MODEL"
+    invalid_json_retries = 1
 
     def _build_command(
         self,
@@ -82,4 +89,11 @@ class GeminiProvider(CliProviderBase):
                 error_type="missing_output",
                 message="gemini JSON output did not include a string `response` field.",
             )
-        return response
+        return _unwrap_markdown_fence(response)
+
+
+def _unwrap_markdown_fence(text: str) -> str:
+    match = _MARKDOWN_FENCE_PATTERN.match(text)
+    if match is None:
+        return text.strip()
+    return match.group(1).strip()

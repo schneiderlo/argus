@@ -501,6 +501,86 @@ class GeminiProviderTests(unittest.TestCase):
             self.assertEqual(runner.calls[0]["cwd"], response.artifacts.sandbox_dir)
             self.assertEqual(last_message_text, json.dumps(_candidate_payload()))
 
+    def test_run_action_unwraps_markdown_fenced_response_text(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "session_id": "gemini-session",
+                            "response": f"```json\n{json.dumps(_candidate_payload(), indent=2)}\n```",
+                            "stats": {"total_tokens": 42},
+                        }
+                    ),
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = GeminiProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 2},
+                output_schema=_candidate_schema(),
+            )
+
+            self.assertEqual(response.provider_name, "gemini")
+            self.assertEqual(response.payload, Candidate.from_dict(_candidate_payload()))
+
+    def test_run_action_retries_once_after_invalid_json_response_text(self) -> None:
+        payload = _candidate_payload()
+        payload_text = json.dumps(payload, indent=2)
+        trailing_comma_payload = payload_text[:-2] + ",\n}"
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=[
+                    CompletedRunnerResult(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "session_id": "gemini-session",
+                                "response": trailing_comma_payload,
+                                "stats": {"total_tokens": 42},
+                            }
+                        ),
+                        stderr="",
+                        last_message=None,
+                    ),
+                    CompletedRunnerResult(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "session_id": "gemini-session",
+                                "response": json.dumps(_candidate_payload()),
+                                "stats": {"total_tokens": 42},
+                            }
+                        ),
+                        stderr="",
+                        last_message=None,
+                    ),
+                ]
+            )
+            provider = GeminiProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 2},
+                output_schema=_candidate_schema(),
+            )
+
+            self.assertEqual(response.provider_name, "gemini")
+            self.assertEqual(response.payload, Candidate.from_dict(_candidate_payload()))
+            self.assertEqual(len(runner.calls), 2)
+
     def test_run_action_fails_when_json_envelope_has_no_response_field(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(
@@ -636,28 +716,42 @@ class OpenCodeProviderTests(unittest.TestCase):
 
 
 class FakeCliRunner:
-    def __init__(self, *, outcome: CompletedRunnerResult | Exception) -> None:
-        self.outcome = outcome
+    def __init__(
+        self,
+        *,
+        outcome: CompletedRunnerResult | Exception | list[CompletedRunnerResult | Exception],
+    ) -> None:
+        if isinstance(outcome, list):
+            if not outcome:
+                raise ValueError("outcome list must not be empty.")
+            self.outcomes: list[CompletedRunnerResult | Exception] = list(outcome)
+        else:
+            self.outcomes = [outcome]
         self.calls: list[dict[str, object]] = []
         self._lock = Lock()
 
     def __call__(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         with self._lock:
             self.calls.append({"command": list(command), **kwargs})
-
-        if isinstance(self.outcome, CompletedRunnerResult):
-            if self.outcome.last_message is not None and "-o" in command:
-                last_message_index = command.index("-o") + 1
-                last_message_path = Path(command[last_message_index])
-                last_message_path.write_text(self.outcome.last_message, encoding="utf-8")
-            return subprocess.CompletedProcess(
-                command,
-                self.outcome.returncode,
-                stdout=self.outcome.stdout,
-                stderr=self.outcome.stderr,
+            outcome = (
+                self.outcomes.pop(0)
+                if len(self.outcomes) > 1
+                else self.outcomes[0]
             )
 
-        raise self.outcome
+        if isinstance(outcome, CompletedRunnerResult):
+            if outcome.last_message is not None and "-o" in command:
+                last_message_index = command.index("-o") + 1
+                last_message_path = Path(command[last_message_index])
+                last_message_path.write_text(outcome.last_message, encoding="utf-8")
+            return subprocess.CompletedProcess(
+                command,
+                outcome.returncode,
+                stdout=outcome.stdout,
+                stderr=outcome.stderr,
+            )
+
+        raise outcome
 
 
 class CompletedRunnerResult:

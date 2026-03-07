@@ -1,0 +1,4 @@
+provider_pool = ["codex"]
+
+[providers.codex]
+model = "GPT-5.3-Codex-Spark"

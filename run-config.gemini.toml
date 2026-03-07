@@ -1,0 +1,5 @@
+provider_pool = ["gemini"]
+
+[providers.gemini]
+# Optional: replace with your preferred Gemini model id.
+model = "gemini-3-flash-preview"

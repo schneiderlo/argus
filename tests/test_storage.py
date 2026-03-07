@@ -373,6 +373,37 @@ class FileSystemStateStoreTests(unittest.TestCase):
 
         self.assertEqual([manifest.run_id for manifest in manifests], ["run-a", "run-b"])
 
+    def test_load_progress_events_respects_recent_limit(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            manifest = store.create_run(
+                problem_spec=_sample_problem_spec(),
+                provider_name="codex",
+                budget=12,
+                run_id="run-progress",
+            )
+            events_path = store.progress_events_path(manifest.run_id)
+            events_path.write_text(
+                "\n".join(
+                    [
+                        '{"kind":"run_started","run_id":"run-progress","timestamp":"2026-03-06T00:00:01Z","step_count":0,"budget_spent":0,"payload":{}}',
+                        '{"kind":"node_admitted","run_id":"run-progress","timestamp":"2026-03-06T00:00:02Z","step_count":1,"budget_spent":1,"payload":{"node_id":"node-0001"}}',
+                        '{"kind":"node_rejected","run_id":"run-progress","timestamp":"2026-03-06T00:00:03Z","step_count":2,"budget_spent":2,"payload":{"node_id":"node-0002"}}',
+                        '{"kind":"run_completed","run_id":"run-progress","timestamp":"2026-03-06T00:00:04Z","step_count":3,"budget_spent":3,"payload":{"best_bet":"node-0001"}}',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = store.load_progress_events("run-progress")
+            limited = store.load_progress_events("run-progress", limit=2)
+
+        self.assertEqual(len(loaded), 4)
+        self.assertEqual(
+            [event["kind"] for event in limited],
+            ["node_rejected", "run_completed"],
+        )
+
     def test_create_run_rejects_non_finite_metadata_values(self) -> None:
         with TemporaryDirectory() as directory:
             store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")

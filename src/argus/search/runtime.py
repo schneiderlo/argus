@@ -35,6 +35,7 @@ from argus.models import (
     SearchState,
 )
 from argus.providers import Provider, StructuredOutputSchema
+from argus.progress import NullProgressSink, ProgressSink, build_event
 from argus.search.contracts import (
     ProblemFrame,
     candidate_batch_schema,
@@ -349,6 +350,8 @@ class SearchRuntime:
         state_store: FileSystemStateStore,
         policy: SearchPolicy | None = None,
         reuse_learning_memory: bool = True,
+        progress_sink: ProgressSink | None = None,
+        progress_verbose: bool = False,
     ) -> None:
         provider_pool = self._normalize_provider_pool(
             provider=provider,
@@ -363,9 +366,12 @@ class SearchRuntime:
         self._providers = provider_pool
         self._state_store = state_store
         self._policy = policy or SearchPolicy()
+        self._progress_sink = progress_sink or NullProgressSink()
+        self._progress_verbose = bool(progress_verbose)
         if not isinstance(reuse_learning_memory, bool):
             raise ArgusValidationError("reuse_learning_memory must be a boolean.")
         self._reuse_learning_memory = reuse_learning_memory
+        self._active_run_id = ""
         self._evaluators = {
             provider_name: AgenticEvaluator(provider=pool_provider)
             for provider_name, pool_provider in self._providers.items()
@@ -437,6 +443,43 @@ class SearchRuntime:
             limit=self._policy.reusable_learning_limit,
         )
 
+    def _emit_progress(
+        self,
+        kind: str,
+        run_id: str,
+        step_count: int,
+        budget_spent: int,
+        payload: Mapping[str, JSONValue] | None = None,
+    ) -> None:
+        try:
+            self._progress_sink.emit(
+                build_event(
+                    kind=kind,
+                    run_id=run_id,
+                    step_count=step_count,
+                    budget_spent=budget_spent,
+                    timestamp=_utcnow(),
+                    payload=payload,
+                )
+            )
+        except Exception:
+            # Progress reporting should never fail search execution.
+            pass
+
+    def _action_display_label(self, action_name: str) -> str:
+        action_labels = {
+            ActionType.FRAME_PROBLEM.value: "Framing",
+            ActionType.GENERATE_SEED.value: "Exploring",
+            ActionType.STRESS_TEST.value: "Stress testing",
+            ActionType.DEEPEN.value: "Deepening",
+            ActionType.MUTATE.value: "Iterating",
+            ActionType.COMBINE.value: "Combining",
+            ActionType.MIGRATE.value: "Cross-island transfer",
+            ActionType.COMPRESS_LEARNING.value: "Compressing learnings",
+            ActionType.RANK.value: "Selecting finalists",
+        }
+        return action_labels.get(action_name, action_name)
+
     def run(
         self,
         *,
@@ -496,12 +539,25 @@ class SearchRuntime:
                 "provider_pool": list(self._providers),
             },
         )
+        self._active_run_id = manifest.run_id
         reusable_learning_context = self._select_reusable_learning_context(initial_problem_spec)
         if reusable_learning_context.entries:
             self._state_store.save_reusable_learning_context(
                 manifest.run_id,
                 reusable_learning_context,
             )
+        self._emit_progress(
+            "run_started",
+            run_id=manifest.run_id,
+            step_count=0,
+            budget_spent=0,
+            payload={
+                "request": initial_problem_spec.request,
+                "budget": budget,
+                "provider_pool": list(self._providers),
+                "provider": self._provider.name,
+            },
+        )
 
         session: _MutableSession | None = None
         routing_tracker = _RoutingTracker(default_provider_name=self._provider.name)
@@ -528,7 +584,20 @@ class SearchRuntime:
                 assessment=frame_assessment,
                 evaluation_provider_names=(frame_evaluation_provider_name,),
             )
+            self._emit_progress(
+                "frame_completed",
+                run_id=manifest.run_id,
+                step_count=1,
+                budget_spent=1,
+                payload={
+                    "node_id": root_node.node_id,
+                    "thesis": root_node.candidate.thesis,
+                    "provider": frame_response.provider_name,
+                    "stage": "Framing",
+                },
+            )
             session = _MutableSession(
+                run_id=manifest.run_id,
                 problem_spec=frame.problem_spec,
                 root_node=root_node,
                 budget_spent=1,
@@ -538,12 +607,46 @@ class SearchRuntime:
             session.set_learning_notes([])
             session.set_reusable_learning_notes(reusable_learning_context.entries)
             session.refresh_frontier(limit=self._policy.frontier_limit)
+            self._emit_progress(
+                "frontier_refreshed",
+                run_id=manifest.run_id,
+                step_count=session.step_count,
+                budget_spent=session.budget_spent,
+                payload={
+                    "nodes": len(session.nodes),
+                    "archive": len(session.archive_ids),
+                    "frontier": len(session.frontier_ids),
+                },
+            )
             self._persist_running_snapshot(manifest.run_id, session, frame_summary=frame.framing_notes)
 
             if session.budget_spent < budget:
                 current_action = ActionType.GENERATE_SEED.value
+                self._emit_progress(
+                    "stage_started",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": ActionType.GENERATE_SEED.value,
+                        "label": self._action_display_label(ActionType.GENERATE_SEED.value),
+                        "reason": "Initial frontier expansion after framing.",
+                    },
+                )
                 self._generate_seed_nodes(session, budget, routing_tracker)
                 self._persist_running_snapshot(manifest.run_id, session)
+                self._emit_progress(
+                    "stage_completed",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": ActionType.GENERATE_SEED.value,
+                        "nodes": len(session.nodes),
+                        "archive": len(session.archive_ids),
+                        "frontier": len(session.frontier_ids),
+                    },
+                )
             last_compression_budget = 0
             while session.budget_spent < budget:
                 current_action = ActionType.RANK.value
@@ -557,6 +660,19 @@ class SearchRuntime:
                 if scheduled is None:
                     break
                 current_action = scheduled.action_type.value
+                self._emit_progress(
+                    "stage_started",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": scheduled.action_type.value,
+                        "label": self._action_display_label(
+                            scheduled.action_type.value
+                        ),
+                        "reason": scheduled.reason,
+                    },
+                )
                 if scheduled.action_type is ActionType.GENERATE_SEED:
                     self._generate_seed_nodes(session, budget, routing_tracker)
                 elif scheduled.action_type is ActionType.STRESS_TEST:
@@ -576,6 +692,18 @@ class SearchRuntime:
                     raise ArgusValidationError(
                         f"Unsupported scheduled action: {scheduled.action_type.value}."
                     )
+                self._emit_progress(
+                    "stage_completed",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": scheduled.action_type.value,
+                        "nodes": len(session.nodes),
+                        "archive": len(session.archive_ids),
+                        "frontier": len(session.frontier_ids),
+                    },
+                )
                 self._persist_running_snapshot(manifest.run_id, session)
 
             if (
@@ -586,14 +714,51 @@ class SearchRuntime:
                     last_compression_budget=last_compression_budget,
                     force=True,
                 )
-            ):
+                ):
                 current_action = ActionType.COMPRESS_LEARNING.value
+                self._emit_progress(
+                    "stage_started",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": ActionType.COMPRESS_LEARNING.value,
+                        "label": self._action_display_label(
+                            ActionType.COMPRESS_LEARNING.value
+                        ),
+                        "reason": "Finalize learnings before final recommendation.",
+                    },
+                )
                 self._compress_learning(session, budget, routing_tracker)
+                self._emit_progress(
+                    "stage_completed",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": ActionType.COMPRESS_LEARNING.value,
+                        "nodes": len(session.nodes),
+                        "archive": len(session.archive_ids),
+                        "frontier": len(session.frontier_ids),
+                    },
+                )
                 self._persist_running_snapshot(manifest.run_id, session)
 
             current_action = ActionType.RANK.value
             session.record_internal_step()
+            self._emit_progress(
+                "stage_started",
+                run_id=manifest.run_id,
+                step_count=session.step_count,
+                budget_spent=session.budget_spent,
+                payload={
+                    "action": ActionType.RANK.value,
+                    "label": self._action_display_label(ActionType.RANK.value),
+                    "reason": "Final selection tournament.",
+                },
+            )
             recommendation = self._compile_final_recommendation(
+                manifest.run_id,
                 session.snapshot(),
                 routing_tracker,
                 session.reusable_learning_notes,
@@ -631,6 +796,20 @@ class SearchRuntime:
                     notes=final_state.learning_notes,
                 )
             self._state_store.merge_provider_routing_stats(routing_summary)
+            self._emit_progress(
+                "run_completed",
+                run_id=manifest.run_id,
+                step_count=final_state.step_count,
+                budget_spent=final_state.budget_spent,
+                payload={
+                    "best_bet": recommendation.best_bet_node_id,
+                    "conservative": recommendation.conservative_node_id,
+                    "high_upside": recommendation.high_upside_node_id,
+                    "nodes": len(final_state.nodes),
+                    "archive": len(final_state.archive_ids),
+                    "frontier": len(final_state.frontier_ids),
+                },
+            )
             return SearchRunResult(
                 run_path=self._state_store.root_dir / refreshed_manifest.run_id,
                 manifest=refreshed_manifest,
@@ -671,9 +850,21 @@ class SearchRuntime:
                 )
             if routing_summary.entries:
                 self._state_store.merge_provider_routing_stats(routing_summary)
+            if manifest is not None:
+                self._emit_progress(
+                    "run_failed",
+                    run_id=manifest.run_id,
+                    step_count=0 if session is None else session.step_count,
+                    budget_spent=0 if session is None else session.budget_spent,
+                    payload={
+                        "failure": str(exc),
+                        "failed_action": current_action,
+                    },
+                )
             raise
         finally:
             self._action_router = None
+            self._active_run_id = ""
 
     def _frame_problem(
         self,
@@ -1404,12 +1595,23 @@ class SearchRuntime:
     ):
         normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
         provider = self._provider_for_action(normalized_action)
+        if self._progress_verbose:
+            self._emit_progress(
+                "provider_invocation",
+                run_id=self._active_run_id,
+                step_count=0,
+                budget_spent=0,
+                payload={
+                    "action": normalized_action,
+                    "provider": provider.name,
+                },
+            )
         routing_tracker.record_invocation(
             action_name=normalized_action,
             provider_name=provider.name,
         )
         try:
-            return provider.run_action(
+            response = provider.run_action(
                 action_name=action_name,
                 problem_spec=problem_spec,
                 input_payload=input_payload,
@@ -1420,7 +1622,31 @@ class SearchRuntime:
                 action_name=normalized_action,
                 provider_name=provider.name,
             )
+            if self._progress_verbose:
+                self._emit_progress(
+                    "provider_failed",
+                    run_id=self._active_run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    payload={
+                        "action": normalized_action,
+                        "provider": provider.name,
+                    },
+                )
             raise
+        if self._progress_verbose:
+            self._emit_progress(
+                "provider_invocation",
+                run_id=self._active_run_id,
+                step_count=0,
+                budget_spent=0,
+                payload={
+                    "action": normalized_action,
+                    "provider": provider.name,
+                    "status": "ok",
+                },
+            )
+        return response
 
     def _dispatch_provider_requests(
         self,
@@ -1713,6 +1939,34 @@ class SearchRuntime:
             created_at=_utcnow(),
         )
         session.add_node(node)
+        event_payload: dict[str, JSONValue] = {
+            "node_id": node.node_id,
+            "action": action_type.value,
+            "provider": source_provider_name,
+            "thesis": candidate.thesis,
+            "island_id": island_id,
+            "parent_ids": list(parent_ids),
+        }
+        if island_id is not None:
+            selection_mode = session.island_policy(island_id).selection_mode
+            event_payload["selection_mode"] = selection_mode
+        if lifecycle_status is NodeLifecycleStatus.REJECTED:
+            event_payload["reason"] = novelty.summary
+            event_kind = "node_rejected"
+        elif lifecycle_status is NodeLifecycleStatus.FAILED:
+            event_payload["reason"] = "; ".join(assessment.score.hard_constraint_reasons)
+            event_kind = "node_failed"
+        else:
+            event_kind = "node_admitted"
+
+        self._emit_progress(
+            event_kind,
+            run_id=session.run_id,
+            step_count=session.step_count,
+            budget_spent=session.budget_spent,
+            payload=event_payload,
+        )
+
         if lifecycle_status is NodeLifecycleStatus.REJECTED:
             return node
         if lifecycle_status is NodeLifecycleStatus.FAILED:
@@ -2093,6 +2347,7 @@ class SearchRuntime:
 
     def _compile_final_recommendation(
         self,
+        run_id: str,
         state: SearchState,
         routing_tracker: "_RoutingTracker",
         reusable_learning_notes: Sequence[ReusableLearningNote],
@@ -2104,6 +2359,7 @@ class SearchRuntime:
         best, best_decisions = self._select_pairwise_candidate(
             state.problem_spec,
             candidates,
+            run_id=run_id,
             selection_label="Best bet",
             objective_name="best_overall",
             objective_description=(
@@ -2125,6 +2381,7 @@ class SearchRuntime:
         conservative, conservative_decisions = self._select_pairwise_candidate(
             state.problem_spec,
             conservative_candidates,
+            run_id=run_id,
             selection_label="Conservative option",
             objective_name="conservative_option",
             objective_description=(
@@ -2153,6 +2410,7 @@ class SearchRuntime:
         high_upside, high_upside_decisions = self._select_pairwise_candidate(
             state.problem_spec,
             high_upside_candidates,
+            run_id=run_id,
             selection_label="High-upside option",
             objective_name="high_upside_option",
             objective_description=(
@@ -2201,6 +2459,17 @@ class SearchRuntime:
             ],
             limit=5,
         )
+        self._emit_progress(
+            "selection_finalized",
+            run_id=run_id,
+            step_count=state.step_count,
+            budget_spent=state.budget_spent,
+            payload={
+                "best_bet": best.node_id,
+                "conservative": conservative.node_id,
+                "high_upside": high_upside.node_id,
+            },
+        )
         selection_checks = _pairwise_selection_notes(
             [
                 *best_decisions,
@@ -2245,6 +2514,7 @@ class SearchRuntime:
         problem_spec: ProblemSpec,
         nodes: Sequence[Node],
         *,
+        run_id: str,
         selection_label: str,
         objective_name: str,
         objective_description: str,
@@ -2255,6 +2525,18 @@ class SearchRuntime:
         candidates = list(nodes)
         if not candidates:
             return None, []
+        if len(candidates) > 1 and self._progress_verbose:
+            self._emit_progress(
+                "pairwise_round_started",
+                run_id=run_id,
+                step_count=0,
+                budget_spent=0,
+                payload={
+                    "selection_label": selection_label,
+                    "objective": objective_name,
+                    "candidate_count": len(candidates),
+                },
+            )
         ordered = (
             rank_nodes(candidates)
             if pre_rank_key is None
@@ -2290,6 +2572,21 @@ class SearchRuntime:
             win_counts[winner.node_id] += 1
             head_to_head[(winner.node_id, loser.node_id)] = 1
             head_to_head[(loser.node_id, winner.node_id)] = 0
+            if self._progress_verbose:
+                self._emit_progress(
+                    "pairwise_decision",
+                    run_id=run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    payload={
+                        "selection_label": selection_label,
+                        "left_node_id": left.node_id,
+                        "right_node_id": right.node_id,
+                        "winner_node_id": winner.node_id,
+                        "confidence": assessment.confidence,
+                        "summary": assessment.summary,
+                    },
+                )
             decisions.append(
                 _PairwiseDecisionRecord(
                     selection_label=selection_label,
@@ -2380,12 +2677,14 @@ class _MutableSession:
     def __init__(
         self,
         *,
+        run_id: str,
         problem_spec: ProblemSpec,
         root_node: Node,
         budget_spent: int,
         step_count: int,
         island_policies: Sequence[SearchIslandPolicy],
     ) -> None:
+        self.run_id = run_id
         self.problem_spec = problem_spec
         self.root_id = root_node.node_id
         self.nodes: dict[str, Node] = {root_node.node_id: root_node}
