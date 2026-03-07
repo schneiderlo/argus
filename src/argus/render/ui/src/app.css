@@ -1,0 +1,133 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap');
+
+:root {
+    /* Premium Dark Mode Palette */
+    --bg-base: #09090b;
+    --surface-color: rgba(24, 24, 27, 0.7);
+    --ink-primary: #fafafa;
+    --ink-secondary: #a1a1aa;
+    --ink-tertiary: #71717a;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-heavy: rgba(255, 255, 255, 0.15);
+    --glass-blur: blur(16px);
+    --shadow-glow: 0 0 20px rgba(0, 0, 0, 0.4);
+
+    --bg-radial-1: rgba(59, 130, 246, 0.15);
+    --bg-radial-2: rgba(168, 85, 247, 0.08);
+
+    --color-winner-bg: rgba(16, 185, 129, 0.15);
+    --color-winner-border: #34d399;
+    --color-winner-text: #6ee7b7;
+
+    --color-admitted-bg: rgba(59, 130, 246, 0.15);
+    --color-admitted-border: #60a5fa;
+    --color-admitted-text: #93c5fd;
+
+    --color-pending-bg: rgba(234, 179, 8, 0.15);
+    --color-pending-border: #facc15;
+    --color-pending-text: #fef08a;
+
+    --color-rejected-bg: rgba(239, 68, 68, 0.15);
+    --color-rejected-border: #f87171;
+    --color-rejected-text: #fca5a5;
+    
+    --color-failed-bg: rgba(249, 115, 22, 0.15);
+    --color-failed-border: #fb923c;
+    --color-failed-text: #fdba74;
+
+    --color-archived-bg: rgba(168, 85, 247, 0.15);
+    --color-archived-border: #c084fc;
+    --color-archived-text: #e9d5ff;
+
+    --color-pruned-bg: rgba(156, 163, 175, 0.15);
+    --color-pruned-border: #9ca3af;
+    --color-pruned-text: #d1d5db;
+
+    --font-ui: 'Outfit', -apple-system, sans-serif;
+    --font-mono: 'Geist Mono', monospace;
+}
+
+:root.light-mode {
+    --bg-base: #f4f4f5;
+    --surface-color: rgba(255, 255, 255, 0.85);
+    --ink-primary: #18181b;
+    --ink-secondary: #52525b;
+    --ink-tertiary: #a1a1aa;
+    --border-subtle: rgba(0, 0, 0, 0.08);
+    --border-heavy: rgba(0, 0, 0, 0.15);
+    --shadow-glow: 0 4px 15px rgba(0, 0, 0, 0.05);
+
+    --bg-radial-1: rgba(59, 130, 246, 0.08);
+    --bg-radial-2: rgba(168, 85, 247, 0.05);
+
+    --color-winner-bg: rgba(16, 185, 129, 0.15);
+    --color-winner-border: #059669;
+    --color-winner-text: #065f46;
+
+    --color-admitted-bg: rgba(59, 130, 246, 0.15);
+    --color-admitted-border: #2563eb;
+    --color-admitted-text: #1e40af;
+
+    --color-pending-bg: rgba(234, 179, 8, 0.15);
+    --color-pending-border: #ca8a04;
+    --color-pending-text: #854d0e;
+
+    --color-rejected-bg: rgba(239, 68, 68, 0.15);
+    --color-rejected-border: #dc2626;
+    --color-rejected-text: #991b1b;
+    
+    --color-failed-bg: rgba(249, 115, 22, 0.15);
+    --color-failed-border: #ea580c;
+    --color-failed-text: #9a3412;
+
+    --color-archived-bg: rgba(168, 85, 247, 0.15);
+    --color-archived-border: #9333ea;
+    --color-archived-text: #581c87;
+
+    --color-pruned-bg: rgba(156, 163, 175, 0.15);
+    --color-pruned-border: #4b5563;
+    --color-pruned-text: #1f2937;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-base);
+    background-image:
+        radial-gradient(circle at 100% 0%, var(--bg-radial-1) 0%, transparent 40%),
+        radial-gradient(circle at 0% 100%, var(--bg-radial-2) 0%, transparent 40%),
+        linear-gradient(var(--border-subtle) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+    background-attachment: fixed;
+    color: var(--ink-primary);
+    font-family: var(--font-ui);
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+* {
+    box-sizing: border-box;
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+h1, h2, h3, p {
+    margin: 0;
+}
+
+/* Base structural classes */
+.app-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+}
+
+.main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
