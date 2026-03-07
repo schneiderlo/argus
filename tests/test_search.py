@@ -392,12 +392,30 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(len(admitted_duplicates), 1)
         self.assertEqual(len(rejected_duplicates), 1)
         self.assertEqual(
+            len(
+                [
+                    call
+                    for call in provider.calls
+                    if call["action_name"] == "evaluate_candidate"
+                    and call["input_payload"]["candidate"]["thesis"]
+                    == "Workflow-native decision archive"
+                ]
+            ),
+            1,
+        )
+        self.assertEqual(
             rejected_duplicates[0].metadata["novelty"]["nearest_neighbor_id"],
             admitted_duplicates[0].node_id,
         )
         self.assertIn(
             "near-duplicate",
             rejected_duplicates[0].metadata["novelty"]["summary"].lower(),
+        )
+        self.assertIsNone(rejected_duplicates[0].score)
+        self.assertNotIn("evaluation", rejected_duplicates[0].metadata)
+        self.assertNotIn(
+            "evaluate_candidate",
+            rejected_duplicates[0].metadata["provider_routing"],
         )
 
     def test_runtime_supports_multi_island_search_with_independent_frontiers(self) -> None:
