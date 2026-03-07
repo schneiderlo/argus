@@ -92,6 +92,7 @@ class _AutoProgressRenderer(ProgressSink):
         self._best_bet: str | None = None
         self._conservative: str | None = None
         self._high_upside: str | None = None
+        self._previous_status_width = 0
 
     def emit(self, event: ProgressEvent) -> None:
         payload = event.payload
@@ -163,12 +164,16 @@ class _AutoProgressRenderer(ProgressSink):
         feed = list(self._recent_nodes)
 
         if self._interactive:
-            print(f"\r{status_line}", end="", file=sys.stderr)
+            status_padding = ""
+            if len(status_line) < self._previous_status_width:
+                status_padding = " " * (self._previous_status_width - len(status_line))
+            print(f"\r{status_line}{status_padding}", end="", file=sys.stderr)
             if feed:
                 print("", file=sys.stderr)
                 for line in feed:
                     print(f"  {line}", file=sys.stderr)
             print("", file=sys.stderr, end="\r")
+            self._previous_status_width = len(status_line)
             return
 
         print(status_line, file=sys.stderr)

@@ -9,7 +9,14 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from argus.cli import _build_provider, build_parser, main
+from argus.cli import (
+    _AutoProgressRenderer,
+    _RunProgressMetadata,
+    _build_provider,
+    build_parser,
+    main,
+)
+from argus.progress import build_event
 from argus.config import ArgusConfig
 from argus.errors import ArgusUserError
 from argus.inspection import ProviderInvocationSummary, RunStatusSummary, render_run_status_report
@@ -399,6 +406,43 @@ class CliTests(unittest.TestCase):
         parsed = json.loads(event_lines[0])
         self.assertIn("kind", parsed)
         self.assertIn(parsed["kind"], {"run_started", "run_completed", "run_failed"})
+
+    def test_interactive_progress_renderer_clears_stale_text(self) -> None:
+        metadata = _RunProgressMetadata(
+            run_id="run-20260307T000000Z",
+            request="Run for progress rendering checks.",
+            provider_pool=["codex"],
+            budget=12,
+            artifact_path=Path("/tmp"),
+        )
+        renderer = _AutoProgressRenderer(metadata, interactive=True)
+        buffer = io.StringIO()
+        with patch("argus.cli.sys.stderr", buffer):
+            renderer.emit(
+                build_event(
+                    kind="run_started",
+                    run_id=metadata.run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    timestamp=datetime(2026, 3, 7, tzinfo=timezone.utc),
+                    payload={"budget": 12},
+                )
+            )
+            renderer.emit(
+                build_event(
+                    kind="stage_started",
+                    run_id=metadata.run_id,
+                    step_count=1,
+                    budget_spent=0,
+                    timestamp=datetime(2026, 3, 7, 1, tzinfo=timezone.utc),
+                    payload={"label": "Exploring"},
+                )
+            )
+
+        output = buffer.getvalue()
+        self.assertIn("Current: initializing", output)
+        self.assertIn("Current: Exploring", output)
+        self.assertNotIn("Current: Exploringing", output)
 
     def test_run_command_plain_progress_mode_prints_line_feed(self) -> None:
         with TemporaryRepoRoot() as root:
