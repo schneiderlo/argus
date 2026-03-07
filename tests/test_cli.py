@@ -4,6 +4,7 @@ import io
 import json
 import os
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -30,6 +31,7 @@ from argus.models import (
     SearchState,
 )
 from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider
+from argus.search import SearchPolicy
 from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import SearchFixtureProvider
 
@@ -234,6 +236,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["provider_pool"], ["codex"])
         self.assertEqual(payload["provider_models"]["codex"], "gpt-5-codex")
 
+    def test_dry_run_command_reports_selected_cost_profile(self) -> None:
+        with TemporaryRepoRoot() as root:
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--cost-profile",
+                        "lean",
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(payload["cost_profile"], "lean")
+        self.assertEqual(payload["search_policy"]["seed_target"], 4)
+        self.assertEqual(payload["search_policy"]["provider_max_concurrency"], 2)
+
     def test_dry_run_command_rejects_when_both_request_and_prompt_file_are_provided(self) -> None:
         with TemporaryRepoRoot() as root:
             prompt_path = root / "request.txt"
@@ -381,6 +405,64 @@ class CliTests(unittest.TestCase):
             [("opencode", "opencode-test-model")],
         )
 
+    def test_run_command_passes_cost_profile_policy_to_runtime(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            captured: dict[str, object] = {}
+
+            class StubRuntime:
+                def __init__(self, **kwargs):
+                    captured["policy"] = kwargs.get("policy")
+
+                def run(self, *, request: str, budget: int, run_id: str):
+                    del request, budget, run_id
+                    return SimpleNamespace(
+                        manifest=SimpleNamespace(
+                            created_at=datetime(2026, 3, 7, tzinfo=timezone.utc),
+                            updated_at=datetime(2026, 3, 7, 0, 0, 5, tzinfo=timezone.utc),
+                        ),
+                        final_recommendation=SimpleNamespace(
+                            best_bet_node_id="node-0001",
+                            conservative_node_id=None,
+                            high_upside_node_id=None,
+                        ),
+                        state=SimpleNamespace(
+                            nodes={
+                                "node-0001": SimpleNamespace(
+                                    candidate=SimpleNamespace(
+                                        thesis="Lean profile candidate."
+                                    )
+                                )
+                            }
+                        ),
+                        summary_markdown="Argus Recommendation",
+                    )
+
+            with patch("argus.cli._build_provider", return_value=provider), patch(
+                "argus.cli.SearchRuntime",
+                StubRuntime,
+            ):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--cost-profile",
+                        "lean",
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Cost profile: lean", stderr)
+        policy = captured["policy"]
+        self.assertIsInstance(policy, SearchPolicy)
+        self.assertEqual(policy.seed_target, 4)
+        self.assertEqual(policy.provider_max_concurrency, 2)
+        self.assertIn("Argus Recommendation", stdout)
+
     def test_run_command_jsonl_mode_emits_progress_events(self) -> None:
         with TemporaryRepoRoot() as root:
             provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
@@ -414,6 +496,7 @@ class CliTests(unittest.TestCase):
             request="Run for progress rendering checks.",
             provider_pool=["codex"],
             budget=12,
+            cost_profile="standard",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
@@ -452,6 +535,7 @@ class CliTests(unittest.TestCase):
             request="Run for multiline progress rendering checks.",
             provider_pool=["codex"],
             budget=12,
+            cost_profile="standard",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
@@ -516,6 +600,7 @@ class CliTests(unittest.TestCase):
             request="Run for stage label checks.",
             provider_pool=["codex"],
             budget=12,
+            cost_profile="standard",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata)
@@ -713,6 +798,47 @@ class CliTests(unittest.TestCase):
                 ("gemini", "gemini-test-model"),
             ],
         )
+
+    def test_benchmark_command_passes_cost_profile_policy_to_harness(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            captured: dict[str, object] = {}
+
+            class StubHarness:
+                def __init__(self, **kwargs):
+                    captured["policy"] = kwargs.get("policy")
+
+                def run(self, *, case_name: str | None = None):
+                    del case_name
+                    return SimpleNamespace(
+                        manifest=SimpleNamespace(failed_count=0)
+                    )
+
+            with patch("argus.cli._build_provider", return_value=provider), patch(
+                "argus.cli.BenchmarkHarness",
+                StubHarness,
+            ), patch(
+                "argus.cli.render_benchmark_report",
+                return_value="benchmark_session=stub",
+            ):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "benchmark",
+                        "--cost-profile",
+                        "max",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("benchmark_session=stub", stdout)
+        policy = captured["policy"]
+        self.assertIsInstance(policy, SearchPolicy)
+        self.assertEqual(policy.seed_target, 12)
+        self.assertEqual(policy.combine_limit, 2)
+        self.assertEqual(policy.provider_max_concurrency, 6)
 
     def test_run_command_rejects_invalid_run_config(self) -> None:
         with TemporaryRepoRoot() as root:

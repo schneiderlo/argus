@@ -228,6 +228,53 @@ class SearchPolicy:
         }
 
 
+_COST_PROFILE_NAMES = ("lean", "standard", "max")
+
+
+def cost_profile_names() -> tuple[str, str, str]:
+    return _COST_PROFILE_NAMES
+
+
+def search_policy_for_cost_profile(profile_name: str) -> SearchPolicy:
+    normalized = _normalize_non_empty_string(profile_name, "profile_name").lower()
+    if normalized == "lean":
+        return SearchPolicy(
+            seed_target=4,
+            stress_test_limit=2,
+            deepen_limit=2,
+            mutate_limit=1,
+            combine_limit=1,
+            migration_cooldown=4,
+            frontier_limit=4,
+            rejected_limit=2,
+            max_learning_notes=2,
+            reusable_learning_limit=2,
+            provider_max_concurrency=2,
+            compression_interval=4,
+        )
+    if normalized == "standard":
+        return SearchPolicy()
+    if normalized == "max":
+        return SearchPolicy(
+            seed_target=12,
+            stress_test_limit=6,
+            deepen_limit=4,
+            mutate_limit=2,
+            combine_limit=2,
+            migration_cooldown=2,
+            frontier_limit=8,
+            rejected_limit=5,
+            max_learning_notes=6,
+            reusable_learning_limit=6,
+            provider_max_concurrency=6,
+            compression_interval=6,
+        )
+    supported = ", ".join(_COST_PROFILE_NAMES)
+    raise ArgusValidationError(
+        f"Unknown cost profile {profile_name!r}. Supported cost profiles: {supported}."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SearchRunResult:
     run_path: Path

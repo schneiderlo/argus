@@ -25,7 +25,7 @@ from argus.inspection import (
 )
 from argus.models import LearningNote, LearningNoteType, OutcomeFeedback, OutcomeFeedbackStatus
 from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider, Provider
-from argus.search import SearchRuntime
+from argus.search import SearchRuntime, cost_profile_names, search_policy_for_cost_profile
 from argus.storage import FileSystemStateStore
 from argus.progress import FileProgressSink, ProgressEvent, ProgressSink
 
@@ -36,6 +36,7 @@ _PROVIDER_TYPES = {
 }
 
 _PROGRESS_MODES = ("auto", "plain", "jsonl", "quiet")
+_COST_PROFILE_CHOICES = cost_profile_names()
 
 
 _ACTION_LABELS: dict[str, str] = {
@@ -57,6 +58,7 @@ class _RunProgressMetadata:
     request: str
     provider_pool: list[str]
     budget: int
+    cost_profile: str
     artifact_path: Path
 
 
@@ -314,6 +316,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum search steps to spend once the runtime is implemented.",
     )
     run_parser.add_argument(
+        "--cost-profile",
+        choices=_COST_PROFILE_CHOICES,
+        default="standard",
+        help=(
+            "Search-cost preset. `lean` trims frontier width and branch work, "
+            "`standard` uses the default policy, and `max` expands the search."
+        ),
+    )
+    run_parser.add_argument(
         "--provider",
         default=None,
         help=(
@@ -385,6 +396,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search budget to validate for a future run invocation.",
     )
     dry_run_parser.add_argument(
+        "--cost-profile",
+        choices=_COST_PROFILE_CHOICES,
+        default="standard",
+        help="Search-cost preset to validate for a future run invocation.",
+    )
+    dry_run_parser.add_argument(
         "--provider",
         default=None,
         help=(
@@ -418,6 +435,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="case_name",
         default=None,
         help="Optional benchmark case identifier to run. Defaults to all stored cases.",
+    )
+    benchmark_parser.add_argument(
+        "--cost-profile",
+        choices=_COST_PROFILE_CHOICES,
+        default="standard",
+        help="Search-cost preset to apply to each benchmark case.",
     )
     benchmark_parser.add_argument(
         "--provider",
@@ -595,6 +618,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         raise ArgusUserError("--budget must be a positive integer.")
 
     request = _resolve_run_request(args)
+    policy = search_policy_for_cost_profile(args.cost_profile)
 
     run_config = _load_run_config(args.run_config_path)
     provider_names = _resolve_provider_names(
@@ -616,6 +640,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         request=request,
         provider_pool=provider_names,
         budget=args.budget,
+        cost_profile=args.cost_profile,
         artifact_path=state_store.root_dir / run_id,
     )
     sink = _build_progress_sink(
@@ -645,6 +670,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         provider=provider,
         providers=providers,
         state_store=state_store,
+        policy=policy,
         progress_sink=sink,
         progress_verbose=args.verbose,
     )
@@ -664,6 +690,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         raise ArgusUserError("--budget must be a positive integer.")
 
     request = _resolve_run_request(args)
+    policy = search_policy_for_cost_profile(args.cost_profile)
     run_config = _load_run_config(args.run_config_path)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
@@ -684,6 +711,8 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         "request_source": "prompt_file" if args.prompt_file is not None else "inline",
         "request_chars": len(request),
         "budget": args.budget,
+        "cost_profile": args.cost_profile,
+        "search_policy": policy.to_dict(),
         "provider_pool": provider_names,
         "provider_models": {
             provider.name: getattr(provider, "model", None)
@@ -703,6 +732,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     print(f"request_source={payload['request_source']}")
     print(f"request_chars={payload['request_chars']}")
     print(f"budget={payload['budget']}")
+    print(f"cost_profile={payload['cost_profile']}")
     print("provider_pool=" + ",".join(provider_names))
     for provider in providers:
         print(f"provider_model[{provider.name}]={getattr(provider, 'model', None)}")
@@ -714,6 +744,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
 
 
 def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
+    policy = search_policy_for_cost_profile(args.cost_profile)
     run_config = _load_run_config(args.run_config_path)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
@@ -735,6 +766,7 @@ def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
         cases_dir=config.benchmark_cases_dir,
         output_root=config.benchmark_runs_dir,
         latest_pointer=config.latest_benchmark_run_pointer,
+        policy=policy,
     )
     result = harness.run(case_name=args.case_name)
     print(render_benchmark_report(result))
@@ -876,6 +908,7 @@ def _print_run_header(metadata: _RunProgressMetadata) -> None:
     print(f"Request: {request_line}", file=sys.stderr)
     print(f"Providers: {', '.join(metadata.provider_pool)}", file=sys.stderr)
     print(f"Search budget: {metadata.budget} steps", file=sys.stderr)
+    print(f"Cost profile: {metadata.cost_profile}", file=sys.stderr)
     print(f"Artifacts: {metadata.artifact_path}", file=sys.stderr)
     print(
         f"Tip: watch with `uv run argus status {metadata.run_id}`",

@@ -19,7 +19,9 @@ from argus.search import (
     SearchPolicy,
     SearchRuntime,
     balanced_island_policy,
+    cost_profile_names,
     conservative_island_policy,
+    search_policy_for_cost_profile,
     upside_island_policy,
 )
 from argus.storage import FileSystemStateStore, RunStatus
@@ -32,6 +34,29 @@ from tests.search_fixtures import (
 
 
 class SearchRuntimeTests(unittest.TestCase):
+    def test_cost_profiles_map_to_expected_search_policies(self) -> None:
+        self.assertEqual(cost_profile_names(), ("lean", "standard", "max"))
+
+        lean = search_policy_for_cost_profile("lean")
+        standard = search_policy_for_cost_profile("standard")
+        max_profile = search_policy_for_cost_profile("max")
+
+        self.assertEqual(lean.seed_target, 4)
+        self.assertEqual(lean.stress_test_limit, 2)
+        self.assertEqual(lean.frontier_limit, 4)
+        self.assertEqual(lean.provider_max_concurrency, 2)
+
+        self.assertEqual(standard, SearchPolicy())
+
+        self.assertEqual(max_profile.seed_target, 12)
+        self.assertEqual(max_profile.stress_test_limit, 6)
+        self.assertEqual(max_profile.combine_limit, 2)
+        self.assertEqual(max_profile.frontier_limit, 8)
+        self.assertEqual(max_profile.provider_max_concurrency, 6)
+
+        with self.assertRaises(ArgusValidationError):
+            search_policy_for_cost_profile("tiny")
+
     def test_runtime_executes_search_loop_and_persists_final_recommendation(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
