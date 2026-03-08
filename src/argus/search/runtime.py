@@ -267,7 +267,7 @@ def search_policy_for_cost_profile(profile_name: str) -> SearchPolicy:
             rejected_limit=5,
             max_learning_notes=6,
             reusable_learning_limit=6,
-            provider_max_concurrency=12,
+            provider_max_concurrency=4,
             compression_interval=6,
         )
     supported = ", ".join(_COST_PROFILE_NAMES)

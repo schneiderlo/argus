@@ -119,7 +119,7 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(max_profile.stress_test_limit, 6)
         self.assertEqual(max_profile.combine_limit, 2)
         self.assertEqual(max_profile.frontier_limit, 8)
-        self.assertEqual(max_profile.provider_max_concurrency, 12)
+        self.assertEqual(max_profile.provider_max_concurrency, 4)
 
         with self.assertRaises(ArgusValidationError):
             search_policy_for_cost_profile("tiny")

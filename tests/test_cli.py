@@ -1294,7 +1294,7 @@ class CliTests(unittest.TestCase):
         self.assertIsInstance(policy, SearchPolicy)
         self.assertEqual(policy.seed_target, 12)
         self.assertEqual(policy.combine_limit, 2)
-        self.assertEqual(policy.provider_max_concurrency, 12)
+        self.assertEqual(policy.provider_max_concurrency, 4)
 
     def test_run_command_rejects_invalid_run_config(self) -> None:
         with TemporaryRepoRoot() as root:
