@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from threading import Lock
 from typing import TypeVar
@@ -347,6 +348,7 @@ class _ActionRouter:
     default_provider_name: str
     routing_stats: ProviderRoutingStats
     min_invocations: int = 1
+    exploration_weight: float = 0.75
 
     def __post_init__(self) -> None:
         if not self.providers:
@@ -361,31 +363,47 @@ class _ActionRouter:
             raise ArgusValidationError(
                 "routing_stats must be a ProviderRoutingStats instance."
             )
+        if not isinstance(self.exploration_weight, int | float) or self.exploration_weight < 0:
+            raise ArgusValidationError(
+                "exploration_weight must be a non-negative number."
+            )
 
     def select(self, action_name: str) -> Provider:
         normalized_action = _normalize_non_empty_string(action_name, "action_name")
         if len(self.providers) == 1:
             return self.providers[self.default_provider_name]
 
-        candidates: list[tuple[float, int, int, str]] = []
+        action_entries = [
+            entry
+            for entry in self.routing_stats.entries
+            if entry.action_name == normalized_action
+            and entry.provider_name in self.providers
+            and entry.invocation_count >= self.min_invocations
+        ]
+        if not action_entries:
+            return self.providers[self.default_provider_name]
+
+        total_action_invocations = sum(entry.invocation_count for entry in action_entries)
+        candidates: list[tuple[float, float, int, int, str]] = []
         for entry in self.routing_stats.entries:
-            if entry.action_name != normalized_action or entry.provider_name not in self.providers:
+            if entry not in action_entries:
                 continue
-            if entry.invocation_count < self.min_invocations:
-                continue
-            if entry.total_reward <= 0:
-                continue
+            exploration_bonus = 0.0
+            if total_action_invocations > 1 and entry.invocation_count > 0:
+                exploration_bonus = self.exploration_weight * math.sqrt(
+                    math.log(total_action_invocations) / entry.invocation_count
+                )
+            ucb_score = entry.average_reward + exploration_bonus
             candidates.append(
                 (
+                    ucb_score,
                     entry.average_reward,
                     entry.invocation_count,
                     1 if entry.provider_name == self.default_provider_name else 0,
                     entry.provider_name,
                 )
             )
-        if not candidates:
-            return self.providers[self.default_provider_name]
-        return self.providers[max(candidates)[3]]
+        return self.providers[max(candidates)[4]]
 
 
 class SearchRuntime:

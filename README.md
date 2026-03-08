@@ -74,7 +74,8 @@ uv run argus run --provider opencode "Find the best retention strategy for a wor
 ```
 
 Run the search through a provider pool so Argus can route each action using persisted
-provider-routing stats while falling back to the first provider in the list:
+provider-routing stats with deterministic UCB-style exploration while falling back to the
+first provider in the list when no action history exists:
 
 ```bash
 uv run argus run --provider codex,gemini,opencode \
@@ -189,7 +190,7 @@ Current implementation status:
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
 - The provider layer now also supports `gemini` and `opencode` behind the same typed contract and `--provider` CLI flag. Codex remains the default and the best-supported path; the additional adapters reuse the same audited prompt, artifact, and validation flow while speaking each CLI's native headless JSON surface.
-- `argus run` and `argus benchmark` now also accept a comma-separated provider pool such as `--provider codex,gemini,opencode`. When a pool is present, Argus consults persisted provider-routing stats to choose which configured provider should handle each routed action, including `generate_seed`, `assess_novelty`, `evaluate_candidate`, and pairwise `rank`, while falling back to the first provider when the action has no strong prior signal yet.
+- `argus run` and `argus benchmark` now also accept a comma-separated provider pool such as `--provider codex,gemini,opencode`. When a pool is present, Argus consults persisted provider-routing stats to choose which configured provider should handle each routed action, including `generate_seed`, `assess_novelty`, `evaluate_candidate`, and pairwise `rank`, using a deterministic UCB-style score over average historical reward plus an exploration bonus while still falling back to the first provider when the action has no prior signal yet.
 - `argus run`, `argus dry-run`, and `argus benchmark` now also accept `--cost-profile lean|standard|max`, which maps to concrete `SearchPolicy` presets so operators can trade search breadth against provider spend without manually editing runtime knobs.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors, semantic novelty judgments, and pairwise `rank` decisions instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, seeds and de-duplicates candidates, then runs an adaptive frontier loop that can widen search again, stress-test promising branches early, deepen or mutate survivors, combine complementary nodes, migrate strong ideas into plateaued islands through provider-mediated rewrites, revisit archived stepping stones when stage capacity exceeds the current frontier, compress learnings, and write a compiled recommendation package to `artifacts/runs/<run_id>/`.

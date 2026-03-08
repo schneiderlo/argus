@@ -24,6 +24,7 @@ from argus.search import (
     search_policy_for_cost_profile,
     upside_island_policy,
 )
+from argus.search.runtime import _ActionRouter
 from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import (
     SearchFixtureProvider,
@@ -34,6 +35,72 @@ from tests.search_fixtures import (
 
 
 class SearchRuntimeTests(unittest.TestCase):
+    def test_action_router_uses_ucb_to_explore_under_sampled_provider(self) -> None:
+        codex_provider = SearchFixtureProvider(Path("/tmp/argus-router-codex"), name="codex")
+        gemini_provider = SearchFixtureProvider(Path("/tmp/argus-router-gemini"), name="gemini")
+        router = _ActionRouter(
+            providers={
+                "codex": codex_provider,
+                "gemini": gemini_provider,
+            },
+            default_provider_name="codex",
+            routing_stats=ProviderRoutingStats(
+                entries=[
+                    ProviderRoutingStatsEntry(
+                        provider_name="codex",
+                        action_name="evaluate_candidate",
+                        run_count=5,
+                        invocation_count=20,
+                        provider_failure_count=0,
+                        candidate_count=20,
+                        scored_node_count=20,
+                        admitted_count=14,
+                        rejected_count=3,
+                        hard_fail_count=3,
+                        strong_score_count=10,
+                        stress_test_survivor_count=8,
+                        winner_count=3,
+                        winner_contribution_count=5,
+                        critique_count=0,
+                        useful_critique_count=0,
+                        learning_note_count=0,
+                        accumulated_score=120.0,
+                        total_reward=18.0,
+                        last_run_id="run-router-codex",
+                        last_updated_at=datetime(2026, 3, 7, 12, 0, 0, tzinfo=timezone.utc),
+                    ),
+                    ProviderRoutingStatsEntry(
+                        provider_name="gemini",
+                        action_name="evaluate_candidate",
+                        run_count=1,
+                        invocation_count=3,
+                        provider_failure_count=0,
+                        candidate_count=3,
+                        scored_node_count=3,
+                        admitted_count=2,
+                        rejected_count=0,
+                        hard_fail_count=1,
+                        strong_score_count=1,
+                        stress_test_survivor_count=1,
+                        winner_count=1,
+                        winner_contribution_count=1,
+                        critique_count=0,
+                        useful_critique_count=0,
+                        learning_note_count=0,
+                        accumulated_score=18.0,
+                        total_reward=2.4,
+                        last_run_id="run-router-gemini",
+                        last_updated_at=datetime(2026, 3, 7, 12, 5, 0, tzinfo=timezone.utc),
+                    ),
+                ],
+                updated_at=datetime(2026, 3, 7, 12, 5, 0, tzinfo=timezone.utc),
+            ),
+        )
+
+        selected = router.select("evaluate_candidate")
+
+        self.assertEqual(selected.name, "gemini")
+
     def test_cost_profiles_map_to_expected_search_policies(self) -> None:
         self.assertEqual(cost_profile_names(), ("lean", "standard", "max"))
 
