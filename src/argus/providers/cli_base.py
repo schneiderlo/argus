@@ -22,6 +22,39 @@ from argus.providers.base import (
 )
 from argus.providers.prompting import render_provider_prompt
 
+_SCHEMA_META_KEYS = frozenset(
+    {
+        "$defs",
+        "$id",
+        "$ref",
+        "$schema",
+        "additionalProperties",
+        "allOf",
+        "anyOf",
+        "const",
+        "contains",
+        "default",
+        "description",
+        "enum",
+        "exclusiveMaximum",
+        "exclusiveMinimum",
+        "format",
+        "items",
+        "maxItems",
+        "maxLength",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minimum",
+        "oneOf",
+        "pattern",
+        "properties",
+        "required",
+        "title",
+        "type",
+    }
+)
+
 
 class CliProviderBase(ABC):
     name: str
@@ -218,9 +251,13 @@ class CliProviderBase(ABC):
             json.dumps(raw_payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        sanitized_payload, stripped_schema_keys = _strip_accidental_schema_metadata(
+            raw_payload,
+            output_schema.json_schema,
+        )
 
         try:
-            typed_payload = output_schema.validate(raw_payload)
+            typed_payload = output_schema.validate(sanitized_payload)
         except Exception as exc:
             return self._raise_failure(
                 artifacts=artifacts,
@@ -248,6 +285,8 @@ class CliProviderBase(ABC):
         metadata = response.metadata_dict()
         metadata["duration_ms"] = _duration_ms(started_at)
         metadata["status"] = "ok"
+        if stripped_schema_keys:
+            metadata["stripped_schema_metadata_keys"] = stripped_schema_keys
         artifacts.metadata_path.write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -431,6 +470,40 @@ def _resolve_model(value: str | None, *, env_var: str | None) -> str | None:
     if isinstance(env_value, str) and env_value.strip():
         return env_value.strip()
     return None
+
+
+def _strip_accidental_schema_metadata(
+    payload: object,
+    schema: Mapping[str, JSONValue],
+) -> tuple[object, list[str]]:
+    if not isinstance(payload, dict):
+        return payload, []
+
+    schema_type = schema.get("type")
+    if schema_type != "object" and not (
+        isinstance(schema_type, list) and "object" in schema_type
+    ):
+        return payload, []
+
+    raw_properties = schema.get("properties")
+    if not isinstance(raw_properties, Mapping):
+        return payload, []
+
+    allowed_properties = {str(key) for key in raw_properties}
+    stripped_keys = sorted(
+        str(key)
+        for key in payload
+        if str(key) not in allowed_properties and str(key) in _SCHEMA_META_KEYS
+    )
+    if not stripped_keys:
+        return payload, []
+
+    sanitized_payload = {
+        key: value
+        for key, value in payload.items()
+        if str(key) not in stripped_keys
+    }
+    return sanitized_payload, stripped_keys
 
 
 def _slugify(value: str) -> str:

@@ -169,6 +169,90 @@ class CodexProviderTests(unittest.TestCase):
         self.assertEqual(response_payload, {"thesis": "Missing the rest of the schema."})
         self.assertIn("failed schema validation", failure.message)
 
+    def test_run_action_ignores_accidental_top_level_schema_keywords(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(
+                        {
+                            **_novelty_payload(),
+                            "additionalProperties": False,
+                        }
+                    ),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name="assess_novelty",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "candidate": _candidate_payload(),
+                    "archive_candidates": [
+                        {
+                            "node_id": "node-001",
+                            "candidate": _candidate_payload(),
+                        }
+                    ],
+                    "similarity_threshold": 0.8,
+                },
+                output_schema=novelty_assessment_schema(),
+            )
+
+            metadata = json.loads(response.artifacts.metadata_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(response.payload, novelty_assessment_schema().validate(_novelty_payload()))
+        self.assertFalse(response.payload.is_novel)
+        self.assertEqual(response.raw_payload["additionalProperties"], False)
+        self.assertEqual(metadata["stripped_schema_metadata_keys"], ["additionalProperties"])
+
+    def test_run_action_still_rejects_non_schema_unexpected_keys(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(
+                        {
+                            **_novelty_payload(),
+                            "bogus": "unexpected",
+                        }
+                    ),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            with self.assertRaises(ProviderInvocationError) as captured:
+                provider.run_action(
+                    action_name="assess_novelty",
+                    problem_spec=_problem_spec(),
+                    input_payload={
+                        "candidate": _candidate_payload(),
+                        "archive_candidates": [
+                            {
+                                "node_id": "node-001",
+                                "candidate": _candidate_payload(),
+                            }
+                        ],
+                        "similarity_threshold": 0.8,
+                    },
+                    output_schema=novelty_assessment_schema(),
+                )
+
+        failure = captured.exception.failure
+        self.assertEqual(failure.error_type, "schema_validation")
+        self.assertIn("unexpected keys: bogus", failure.message)
+
     def test_run_action_serializes_timeout_failures(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(
