@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { fetchState } from '$lib/api';
+  import { renderRichMarkdown } from '$lib/markdown';
   import { uiState } from '$lib/stores.svelte';
 
   let currentRunId = $derived($page.params.id);
@@ -47,6 +48,11 @@
       uiState.searchState?.summary_markdown ??
       finalRecommendation()?.summary_markdown ??
       null;
+
+  const summaryHtml = () => {
+      const summary = recommendationSummary();
+      return summary ? renderRichMarkdown(summary) : null;
+  };
 
   const detailList = (values: string[] | undefined | null) =>
       Array.isArray(values) ? values.filter((value) => typeof value === 'string' && value.trim()) : [];
@@ -158,8 +164,14 @@
 
           {#if recommendationSummary()}
               <div class="report-card summary-card">
-                  <div class="section-label">Recommendation Summary</div>
-                  <div class="summary-markdown">{recommendationSummary()}</div>
+                  <div class="summary-header">
+                      <div>
+                          <div class="section-label">Recommendation Summary</div>
+                          <h2>Decision Memo</h2>
+                      </div>
+                      <div class="summary-kicker">Structured markdown rendered from persisted artifacts</div>
+                  </div>
+                  <div class="summary-markdown">{@html summaryHtml()}</div>
               </div>
           {/if}
 
@@ -335,6 +347,24 @@
       padding: 28px;
   }
 
+  .summary-card {
+      position: relative;
+      overflow: hidden;
+      background:
+          radial-gradient(circle at top right, rgba(96, 165, 250, 0.14), transparent 32%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+          var(--surface-color);
+  }
+
+  .summary-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: linear-gradient(180deg, #60a5fa, #34d399 55%, transparent);
+      opacity: 0.9;
+  }
+
   .card-header {
       display: flex;
       align-items: center;
@@ -394,10 +424,197 @@
   }
 
   .summary-markdown {
-      white-space: pre-wrap;
-      font-size: 15px;
-      line-height: 1.7;
+      font-size: 16px;
+      line-height: 1.8;
       color: var(--ink-primary);
+      max-width: 72ch;
+  }
+
+  .summary-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .summary-header h2 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: var(--ink-primary);
+  }
+
+  .summary-kicker {
+      max-width: 24ch;
+      text-align: right;
+      font-size: 11px;
+      line-height: 1.5;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-tertiary);
+      font-family: var(--font-mono);
+  }
+
+  @media (max-width: 720px) {
+      .summary-header {
+          align-items: flex-start;
+          flex-direction: column;
+      }
+
+      .summary-kicker {
+          max-width: none;
+          text-align: left;
+      }
+  }
+
+  .summary-markdown :global(h1),
+  .summary-markdown :global(h2),
+  .summary-markdown :global(h3),
+  .summary-markdown :global(h4) {
+      margin: 1.75em 0 0.7em;
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+      color: var(--ink-primary);
+  }
+
+  .summary-markdown :global(h1) {
+      font-size: clamp(32px, 4vw, 46px);
+  }
+
+  .summary-markdown :global(h2) {
+      font-size: clamp(24px, 3vw, 30px);
+      padding-top: 0.4em;
+      border-top: 1px solid var(--border-subtle);
+  }
+
+  .summary-markdown :global(h3) {
+      font-size: 19px;
+  }
+
+  .summary-markdown :global(p) {
+      margin: 0 0 1.1em;
+      color: var(--ink-secondary);
+      text-wrap: pretty;
+  }
+
+  .summary-markdown :global(strong) {
+      color: var(--ink-primary);
+      font-weight: 700;
+  }
+
+  .summary-markdown :global(em) {
+      color: var(--ink-primary);
+      font-style: italic;
+  }
+
+  .summary-markdown :global(ul),
+  .summary-markdown :global(ol) {
+      margin: 0 0 1.4em;
+      padding-left: 1.4rem;
+      color: var(--ink-secondary);
+  }
+
+  .summary-markdown :global(li) {
+      margin: 0.45em 0;
+      padding-left: 0.2rem;
+  }
+
+  .summary-markdown :global(li::marker) {
+      color: #60a5fa;
+  }
+
+  .summary-markdown :global(blockquote) {
+      margin: 1.6em 0;
+      padding: 1rem 1.1rem 1rem 1.25rem;
+      border-left: 3px solid rgba(96, 165, 250, 0.7);
+      background: rgba(96, 165, 250, 0.08);
+      border-radius: 0 14px 14px 0;
+  }
+
+  .summary-markdown :global(blockquote p) {
+      color: var(--ink-primary);
+      margin-bottom: 0.7em;
+  }
+
+  .summary-markdown :global(blockquote p:last-child) {
+      margin-bottom: 0;
+  }
+
+  .summary-markdown :global(code) {
+      font-family: var(--font-mono);
+      font-size: 0.92em;
+      padding: 0.15em 0.42em;
+      border-radius: 0.45rem;
+      background: rgba(255, 255, 255, 0.06);
+      color: #c4b5fd;
+  }
+
+  .summary-markdown :global(pre) {
+      margin: 1.5em 0;
+      padding: 1.1rem 1.2rem 1.2rem;
+      border-radius: 16px;
+      border: 1px solid var(--border-heavy);
+      background: rgba(5, 10, 24, 0.82);
+      overflow-x: auto;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .summary-markdown :global(pre code) {
+      display: block;
+      padding: 0;
+      background: transparent;
+      color: #d4d4d8;
+      line-height: 1.65;
+  }
+
+  .summary-markdown :global(.code-language) {
+      margin-bottom: 0.9rem;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #93c5fd;
+  }
+
+  .summary-markdown :global(a) {
+      color: #7dd3fc;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(125, 211, 252, 0.4);
+  }
+
+  .summary-markdown :global(a:hover) {
+      border-bottom-color: rgba(125, 211, 252, 0.85);
+  }
+
+  .summary-markdown :global(hr) {
+      border: 0;
+      height: 1px;
+      margin: 1.8em 0;
+      background: linear-gradient(90deg, transparent, var(--border-heavy), transparent);
+  }
+
+  :global(.light-mode) .summary-card {
+      background:
+          radial-gradient(circle at top right, rgba(37, 99, 235, 0.1), transparent 32%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.86)),
+          var(--surface-color);
+  }
+
+  :global(.light-mode) .summary-markdown :global(code) {
+      background: rgba(0, 0, 0, 0.05);
+      color: #6d28d9;
+  }
+
+  :global(.light-mode) .summary-markdown :global(pre) {
+      background: #10131c;
+  }
+
+  :global(.light-mode) .summary-markdown :global(blockquote) {
+      background: rgba(37, 99, 235, 0.06);
   }
 
   .option-grid {

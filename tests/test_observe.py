@@ -179,6 +179,23 @@ class ObserverReportSourceTests(unittest.TestCase):
         self.assertIn("winner_ids?.[0]", source)
         self.assertNotIn("manifest?.winner_id", source)
 
+    def test_report_route_renders_summary_markdown_as_html(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/runs/[id]/report/+page.svelte"
+        )
+        markdown_renderer_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/lib/markdown.ts"
+        )
+
+        route_source = route_path.read_text(encoding="utf-8")
+        renderer_source = markdown_renderer_path.read_text(encoding="utf-8")
+
+        self.assertIn("renderRichMarkdown", route_source)
+        self.assertIn("{@html summaryHtml()}", route_source)
+        self.assertIn("export function renderRichMarkdown", renderer_source)
+
 
 def _sample_problem_spec() -> ProblemSpec:
     return ProblemSpec(
