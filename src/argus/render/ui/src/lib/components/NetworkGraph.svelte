@@ -4,6 +4,7 @@
   import type { Edge, Node, Options } from 'vis-network';
   import { DataSet } from 'vis-data';
   import { uiState, getStyle } from '$lib/stores.svelte';
+  import type { SearchStatePayload } from '$lib/types';
 
   let container: HTMLElement;
   let network: Network;
@@ -121,15 +122,15 @@
       }
   });
 
-  function syncGraphData(json: any) {
-      if (!json || !json.nodes) return;
+  function syncGraphData(state: SearchStatePayload) {
+      if (!state.nodes) return;
 
-      const visNodes: any[] = [];
-      const visEdges: any[] = [];
+      const visNodes: Node[] = [];
+      const visEdges: Edge[] = [];
       const childToParents: Record<string, string[]> = {};
 
-      for (const nodeId in json.nodes) {
-          const node = json.nodes[nodeId];
+      for (const nodeId in state.nodes) {
+          const node = state.nodes[nodeId];
           if (node.parent_ids && node.parent_ids.length > 0) {
               childToParents[nodeId] = node.parent_ids;
               for (const parentId of node.parent_ids) {
@@ -168,8 +169,8 @@
           return nodeLevels[id];
       }
 
-      for (const nodeId in json.nodes) {
-          const node = json.nodes[nodeId];
+      for (const nodeId in state.nodes) {
+          const node = state.nodes[nodeId];
           const status = node.lifecycle_status;
           const style = getStyle(status);
 
@@ -178,22 +179,25 @@
               labelText += `\n★ ${node.score.total_score.toFixed(2)}`;
           }
 
-          let nodeConfig: any = {
+          const nodeConfig: Node = {
               id: nodeId,
               level: getLevel(nodeId),
               label: labelText,
               color: {
                   background: style.bg,
                   border: style.border,
-                  highlight: { background: style.bg, border: uiState.isLightMode ? '#000' : '#fff', shadow: { color: style.border, size: 20 } },
-                  hover: { background: style.bg, border: uiState.isLightMode ? '#000' : '#fff', shadow: { color: style.border, size: 15 } }
+                  highlight: { background: style.bg, border: uiState.isLightMode ? '#000' : '#fff' },
+                  hover: { background: style.bg, border: uiState.isLightMode ? '#000' : '#fff' }
               },
               font: { multi: 'html', color: style.text }
           };
 
           if (status === 'pruned' || status === 'rejected') {
               nodeConfig.shapeProperties = { borderDashes: [4, 4] };
-              nodeConfig.font.color = uiState.isLightMode ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
+              nodeConfig.font = {
+                  ...(typeof nodeConfig.font === 'object' ? nodeConfig.font : {}),
+                  color: uiState.isLightMode ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)',
+              };
           }
 
           visNodes.push(nodeConfig);

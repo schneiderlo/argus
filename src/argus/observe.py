@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from urllib.parse import parse_qs, urlparse
 
 from argus.config import ArgusConfig
+from argus.inspection import build_run_status_summary
 from argus.storage import FileSystemStateStore
 from argus.models import NodeLifecycleStatus
 
@@ -99,6 +100,10 @@ def _state_payload(persisted_run) -> dict[str, object]:
     return data
 
 
+def _status_payload(config: ArgusConfig, *, run_id: str | None = None) -> dict[str, object]:
+    return build_run_status_summary(config, run_id=run_id).to_dict()
+
+
 def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
     store = FileSystemStateStore(config.runs_dir)
     
@@ -158,6 +163,11 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
                             self._send_json({})
                         return
 
+                    if len(parts) == 4 and parts[1] == "runs" and parts[3] == "status":
+                        target_run_id = parts[2]
+                        self._send_json(_status_payload(config, run_id=target_run_id))
+                        return
+
                     if len(parts) == 4 and parts[1] == "runs" and parts[3] == "events":
                         target_run_id = parts[2]
                         limit = _parse_events_limit(parsed_query)
@@ -172,6 +182,10 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
                             self._send_json(data)
                         else:
                             self._send_json({})
+                        return
+
+                    if parsed_path == "/api/status" and default_run_id:
+                        self._send_json(_status_payload(config, run_id=default_run_id))
                         return
                         
                     if parsed_path == "/api/events" and default_run_id:

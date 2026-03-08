@@ -1,35 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fetchMemory } from '$lib/api';
+  import type { MemoryPayload, ReusableLearningNote, RoutingEntry } from '$lib/types';
 
-  type RoutingEntry = {
-      provider_name: string;
-      action_name: string;
-      invocation_count?: number;
-      winner_contribution_count?: number;
-      strong_score_count?: number;
-      provider_failure_count?: number;
-      total_reward?: number;
-      last_run_id?: string | null;
-  };
-
-  type ReusableLearningNote = {
-      note_id: string;
-      note_type: string;
-      text: string;
-      evidence_sources?: string[];
-      source_run_ids?: string[];
-      problem_statements?: string[];
-      observation_count?: number;
-      last_seen_at?: string;
-  };
-
-  type MemoryPayload = {
-      routing_stats?: { entries?: RoutingEntry[] };
-      learning_memory?: { entries?: ReusableLearningNote[] };
-  } | null;
-
-  let memoryData: MemoryPayload = $state(null);
+  let memoryData: MemoryPayload | null = $state(null);
   let isLoading = $state(true);
 
   onMount(async () => {
@@ -51,7 +25,7 @@
       return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
   };
 
-  const getProviderStats = (data: MemoryPayload) => {
+  const getProviderStats = (data: MemoryPayload | null) => {
       const entries = data?.routing_stats?.entries ?? [];
       const providers = new Map<string, {
           name: string;
@@ -105,7 +79,7 @@
           );
   };
 
-  const getLearningNotes = (data: MemoryPayload) => {
+  const getLearningNotes = (data: MemoryPayload | null) => {
       if (!data?.learning_memory?.entries) return [];
       return data.learning_memory.entries;
   };

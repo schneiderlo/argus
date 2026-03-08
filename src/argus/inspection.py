@@ -221,6 +221,10 @@ def build_run_status_summary(
         current_action = ", ".join(action_names)
     elif isinstance(metadata.get("failed_action"), str):
         current_action = str(metadata["failed_action"])
+    elif manifest.status is RunStatus.RUNNING:
+        current_action = _current_action_from_progress_events(
+            store.load_progress_events(manifest.run_id, limit=40)
+        )
 
     budget_spent = 0 if state is None else state.budget_spent
     step_count = 0 if state is None else state.step_count
@@ -249,6 +253,24 @@ def build_run_status_summary(
         active_provider_invocations=active_invocations,
         recent_provider_invocations=recent_invocations,
     )
+
+
+def _current_action_from_progress_events(events: list[dict[str, object]]) -> str | None:
+    for event in reversed(events):
+        kind = event.get("kind")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        action = payload.get("action")
+        if kind == "stage_started" and isinstance(action, str) and action.strip():
+            return action.strip()
+        if kind == "provider_invocation" and isinstance(action, str) and action.strip():
+            return action.strip()
+        if kind == "run_failed":
+            failed_action = payload.get("failed_action")
+            if isinstance(failed_action, str) and failed_action.strip():
+                return failed_action.strip()
+    return None
 
 
 def render_inspection_report(summary: InspectionSummary) -> str:

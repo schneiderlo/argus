@@ -1680,6 +1680,68 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["provider_name"], "codex")
         self.assertEqual(payload["budget_spent"], 2)
 
+    def test_status_command_uses_progress_events_when_no_provider_invocation_is_active(self) -> None:
+        with TemporaryRepoRoot() as root:
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            manifest = store.create_run(
+                problem_spec=ProblemSpec(
+                    request="Inspect current stage.",
+                    constraints=[],
+                    success_criteria=["Return the live stage."],
+                    context={},
+                ),
+                provider_name="codex",
+                budget=12,
+                run_id="run-progress-status",
+                created_at=datetime(2026, 3, 6, 2, 35, 59, tzinfo=timezone.utc),
+            )
+            store.save_snapshot(
+                manifest.run_id,
+                state=_feedback_ready_state(),
+                status=RunStatus.RUNNING,
+                updated_at=datetime(2026, 3, 6, 2, 44, 46, tzinfo=timezone.utc),
+            )
+            progress_path = store.progress_events_path(manifest.run_id)
+            progress_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            build_event(
+                                kind="stage_started",
+                                run_id=manifest.run_id,
+                                step_count=3,
+                                budget_spent=2,
+                                timestamp=datetime(2026, 3, 6, 2, 44, 40, tzinfo=timezone.utc),
+                                payload={"action": "deepen", "label": "Deepening"},
+                            ).to_dict(),
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            build_event(
+                                kind="frontier_refreshed",
+                                run_id=manifest.run_id,
+                                step_count=3,
+                                budget_spent=2,
+                                timestamp=datetime(2026, 3, 6, 2, 44, 44, tzinfo=timezone.utc),
+                                payload={"frontier": 1},
+                            ).to_dict(),
+                            sort_keys=True,
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            exit_code, stdout, stderr = _run_cli(
+                ["--root", str(root), "status", manifest.run_id]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("current_action=deepen", stdout)
+        self.assertIn("active_provider_invocations=0", stdout)
+
     def test_status_report_supports_colorized_rendering(self) -> None:
         report = render_run_status_report(
             RunStatusSummary(

@@ -1,14 +1,44 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listRuns } from '$lib/api';
+  import { fetchRunStatus, listRuns } from '$lib/api';
+  import type { RunManifest, RunStatusPayload } from '$lib/types';
 
-  let runs: any[] = $state([]);
+  let runs: RunManifest[] = $state([]);
+  let runStatuses: Record<string, RunStatusPayload> = $state({});
   let isLoading = $state(true);
+  let refreshInterval: number | undefined;
 
-  onMount(async () => {
-      runs = await listRuns();
-      isLoading = false;
+  onMount(() => {
+      void loadRuns();
+      refreshInterval = window.setInterval(() => {
+          void refreshRunningStatuses();
+      }, 5000);
+      return () => {
+          if (refreshInterval) {
+              window.clearInterval(refreshInterval);
+          }
+      };
   });
+
+  async function loadRuns() {
+      runs = await listRuns();
+      await refreshRunningStatuses();
+      isLoading = false;
+  }
+
+  async function refreshRunningStatuses() {
+      const runningRuns = runs.filter((run) => run.status === 'running');
+      const statuses = await Promise.all(
+          runningRuns.map(async (run) => [run.run_id, await fetchRunStatus(run.run_id)] as const)
+      );
+      const nextStatuses: Record<string, RunStatusPayload> = {};
+      for (const [runId, status] of statuses) {
+          if (status) {
+              nextStatuses[runId] = status;
+          }
+      }
+      runStatuses = nextStatuses;
+  }
 
   function formatDate(isoStr: string) {
       if (!isoStr) return 'Unknown';
@@ -16,6 +46,11 @@
       return Math.floor(Date.now() - d.getTime()) < 86400000 
           ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
           : d.toLocaleDateString();
+  }
+
+  function currentAction(run: RunManifest) {
+      if (run.status !== 'running') return '—';
+      return runStatuses[run.run_id]?.current_action ?? 'Starting';
   }
 </script>
 
@@ -46,7 +81,8 @@
                           <th>Run ID</th>
                           <th>Status</th>
                           <th>Provider</th>
-                          <th>Budget Used</th>
+                          <th>Current Action</th>
+                          <th>Search Budget</th>
                           <th>Created</th>
                           <th>Updated</th>
                       </tr>
@@ -61,9 +97,10 @@
                                   <span class="status-badge {run.status}">{run.status}</span>
                               </td>
                               <td class="provider-cell">{run.provider_name}</td>
+                              <td class="action-cell">{currentAction(run)}</td>
                               <td class="budget-cell">
                                   {run.budget} 
-                                  <span class="budget-unit">tokens</span>
+                                  <span class="budget-unit">steps</span>
                               </td>
                               <td class="date-cell">{formatDate(run.created_at)}</td>
                               <td class="date-cell">{formatDate(run.updated_at)}</td>
@@ -192,10 +229,15 @@
       border: 1px solid #059669;
   }
 
-  .provider-cell, .budget-cell, .date-cell {
+  .provider-cell, .budget-cell, .date-cell, .action-cell {
       font-family: var(--font-mono);
       font-size: 13px;
       color: var(--ink-secondary);
+  }
+
+  .action-cell {
+      max-width: 220px;
+      color: var(--ink-primary);
   }
 
   .budget-cell {

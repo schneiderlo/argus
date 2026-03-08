@@ -2,12 +2,30 @@
   import { page } from '$app/stores';
   import { uiState, toggleTheme, getStyle } from '$lib/stores.svelte';
 
-  const isRunning = $derived(uiState.searchState?.manifest?.status === 'running');
+  let now = $state(Date.now());
+
+  const isRunning = $derived((uiState.runStatus?.status ?? uiState.searchState?.manifest?.status) === 'running');
   const statusTheme = $derived(isRunning ? getStyle('pending') : getStyle('archived'));
-  const budgetSpent = $derived(uiState.searchState?.budget_spent || 0);
-  const budgetTotal = $derived(uiState.searchState?.manifest?.budget || 1);
+  const budgetSpent = $derived(uiState.runStatus?.budget_spent ?? uiState.searchState?.budget_spent ?? 0);
+  const budgetTotal = $derived(uiState.runStatus?.budget ?? uiState.searchState?.manifest?.budget ?? 1);
   const budgetPercentage = $derived(Math.min(100, (budgetSpent / budgetTotal) * 100));
-  const stepCount = $derived(uiState.searchState?.step_count || 0);
+  const stepCount = $derived(uiState.runStatus?.step_count ?? uiState.searchState?.step_count ?? 0);
+  const currentAction = $derived(uiState.runStatus?.current_action ?? null);
+  const activeInvocations = $derived(uiState.runStatus?.active_provider_invocation_count ?? 0);
+  const archiveCount = $derived(uiState.runStatus?.archive_count ?? uiState.searchState?.archive_ids?.length ?? 0);
+  const frontierCount = $derived(uiState.runStatus?.frontier_count ?? uiState.searchState?.frontier_ids?.length ?? 0);
+  const winnerCount = $derived(uiState.runStatus?.winner_count ?? uiState.searchState?.winner_ids?.length ?? 0);
+  const elapsed = $derived.by(() => {
+      const createdAt = uiState.runStatus?.created_at ?? uiState.searchState?.manifest?.created_at;
+      if (!createdAt) return null;
+      const start = new Date(createdAt).getTime();
+      if (Number.isNaN(start)) return null;
+      const endSource = isRunning ? now : new Date(uiState.runStatus?.updated_at ?? uiState.searchState?.manifest?.updated_at ?? createdAt).getTime();
+      const totalSeconds = Math.max(0, Math.floor((endSource - start) / 1000));
+      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+      const seconds = String(totalSeconds % 60).padStart(2, '0');
+      return `${minutes}:${seconds}`;
+  });
 
   // Derived routing helpers
   const currentPath = $derived($page.url.pathname);
@@ -16,6 +34,15 @@
   const isRunGraph = $derived(currentPath.startsWith('/runs/') && !currentPath.includes('/report'));
   const isRunReport = $derived(currentPath.startsWith('/runs/') && currentPath.includes('/report'));
   const activeRunParam = $derived($page.params.id);
+
+  $effect(() => {
+      if (!isRunning) return;
+      now = Date.now();
+      const interval = window.setInterval(() => {
+          now = Date.now();
+      }, 1000);
+      return () => window.clearInterval(interval);
+  });
 </script>
 
 <div id="top-bar">
@@ -41,12 +68,12 @@
       {#if uiState.searchState && (isRunGraph || isRunReport)}
           <div class="run-status">
               <span class="status-badge" style="color: {statusTheme.border}; box-shadow: 0 0 10px {statusTheme.border}40;">
-                  {uiState.searchState.manifest.status.toUpperCase()}
+                  {(uiState.runStatus?.status ?? uiState.searchState.manifest.status).toUpperCase()}
               </span>
 
               <div class="metric-container">
                   <div class="metric-header">
-                      <span class="metric-label">Token Budget</span>
+                      <span class="metric-label">Search Budget</span>
                       <span class="metric-value">{budgetSpent} / {budgetTotal}</span>
                   </div>
                   <div class="budget-track">
@@ -57,6 +84,26 @@
               <div class="metric-container compact">
                   <span class="metric-label">Steps</span>
                   <span class="metric-value">{stepCount}</span>
+              </div>
+
+              <div class="metric-container compact wide">
+                  <span class="metric-label">Current</span>
+                  <span class="metric-value action-value">{currentAction ?? 'Idle'}</span>
+              </div>
+
+              <div class="metric-container compact">
+                  <span class="metric-label">Active</span>
+                  <span class="metric-value">{activeInvocations}</span>
+              </div>
+
+              <div class="metric-container compact">
+                  <span class="metric-label">Elapsed</span>
+                  <span class="metric-value">{elapsed ?? '--:--'}</span>
+              </div>
+
+              <div class="metric-container compact counts">
+                  <span class="metric-label">A/F/W</span>
+                  <span class="metric-value">{archiveCount}/{frontierCount}/{winnerCount}</span>
               </div>
           </div>
       {/if}
@@ -204,6 +251,14 @@
       gap: 8px;
   }
 
+  .metric-container.compact.wide {
+      min-width: 180px;
+  }
+
+  .metric-container.compact.counts {
+      min-width: 86px;
+  }
+
   .metric-header {
       display: flex;
       justify-content: space-between;
@@ -222,6 +277,13 @@
       font-size: 14px;
       font-weight: 500;
       color: var(--ink-primary);
+  }
+
+  .action-value {
+      max-width: 180px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
   }
 
   .budget-track {

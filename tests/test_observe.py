@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import unittest
 
+from argus.config import ArgusConfig
 from argus.models import (
     ActionType,
     Candidate,
@@ -25,6 +26,7 @@ from argus.observe import (
     _memory_payload,
     _node_termination_reason,
     _state_payload,
+    _status_payload,
 )
 from argus.storage import PersistedRun, RunManifest, RunStatus
 
@@ -165,6 +167,30 @@ class ObserverPayloadTests(unittest.TestCase):
 
         self.assertEqual(_state_payload(persisted_run), {})
 
+    def test_status_payload_uses_run_status_summary_shape(self) -> None:
+        with unittest.mock.patch(
+            "argus.observe.build_run_status_summary"
+        ) as build_summary:
+            build_summary.return_value = unittest.mock.Mock(
+                to_dict=unittest.mock.Mock(
+                    return_value={
+                        "run_id": "run-observer-fixture",
+                        "status": "running",
+                        "current_action": "deepen",
+                        "active_provider_invocation_count": 1,
+                    }
+                )
+            )
+
+            payload = _status_payload(
+                ArgusConfig.discover(Path("/tmp/argus-status-payload")),
+                run_id="run-observer-fixture",
+            )
+
+        self.assertEqual(payload["run_id"], "run-observer-fixture")
+        self.assertEqual(payload["current_action"], "deepen")
+        self.assertEqual(payload["active_provider_invocation_count"], 1)
+
 
 class ObserverReportSourceTests(unittest.TestCase):
     def test_report_route_uses_typed_winner_fields_not_legacy_manifest_winner_id(self) -> None:
@@ -195,6 +221,41 @@ class ObserverReportSourceTests(unittest.TestCase):
         self.assertIn("renderRichMarkdown", route_source)
         self.assertIn("{@html summaryHtml()}", route_source)
         self.assertIn("export function renderRichMarkdown", renderer_source)
+
+    def test_observer_graph_route_uses_status_and_events_api(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/runs/[id]/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("fetchRunStatus", source)
+        self.assertIn("fetchRunEvents", source)
+        self.assertIn("EventTape", source)
+
+    def test_report_route_auto_refreshes_while_running(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/runs/[id]/report/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("fetchRunStatus", source)
+        self.assertIn("setInterval", source)
+        self.assertIn("refreshes automatically", source)
+
+    def test_top_bar_uses_search_budget_label(self) -> None:
+        component_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/lib/components/TopBar.svelte"
+        )
+
+        source = component_path.read_text(encoding="utf-8")
+
+        self.assertIn("Search Budget", source)
+        self.assertNotIn("Token Budget", source)
 
 
 def _sample_problem_spec() -> ProblemSpec:

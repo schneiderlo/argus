@@ -42,6 +42,11 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Later
 
+- [x] Move the observer UI off full-state polling onto typed status/event updates with periodic snapshot reconciliation, and expose a lightweight run-status API so the graph/report views can show current action, active invocations, and live event history without reloading the full search state every second.
+- [ ] Persist structured pairwise decision artifacts and surface them directly in the report view instead of relying on summary markdown alone.
+- [ ] Upgrade the observer graph from action/id labels to idea-first labels plus island, migration, novelty, and winner-lineage overlays.
+- [ ] Replace the memory ledger's provider-only aggregation with a provider x action matrix and reusable-learning filters that distinguish outcome-backed priors from search-only priors.
+
 - [x] **Phase 1: Setup Svelte 5 & API Expansion**
   - [x] Initialize Svelte 5 + Vite under `src/argus/render/ui`.
   - [x] Expand `observe.py` with standard REST endpoints: `/api/runs`, `/api/runs/{id}/state`, `/api/memory`.
@@ -102,4 +107,5 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - `argus run --observe` now starts the observer during the run and then keeps the server alive after the final recommendation is printed, so operators can leave the browser open on the just-finished run without launching a separate `argus observe` process.
 - Multi-provider routed actions now retry against the remaining configured providers when the first choice fails or times out, while still recording provider-failure counts for the failed attempts in routing telemetry and keeping admitted-node attribution tied to the provider that ultimately succeeded.
 - `./scripts/verify.sh` now gates observer UI changes with both `npm --prefix src/argus/render/ui run check` and `npm --prefix src/argus/render/ui run build`, so the served `src/argus/render/dist` bundle cannot silently drift behind the Svelte source tree.
+- The observer now exposes `/api/runs/{id}/status` plus `/api/status`, the Svelte UI consumes typed API contracts instead of `any`, the run graph polls status/events with periodic snapshot reconciliation, the report auto-refreshes while a run is active, and the dashboard/top bar now show search-budget terminology plus live current-action context.
 - The main remaining paper-aligned gap is deeper future policy learning beyond provider routing, especially stronger outcome-backed search-control updates and benchmark regimes that measure decision quality rather than only replayable runtime behavior.

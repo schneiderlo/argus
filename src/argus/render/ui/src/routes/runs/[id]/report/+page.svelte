@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { fetchState } from '$lib/api';
+  import { fetchRunStatus, fetchState } from '$lib/api';
   import { renderRichMarkdown } from '$lib/markdown';
   import { uiState } from '$lib/stores.svelte';
+  import type { FinalRecommendation, SearchNode } from '$lib/types';
 
   let currentRunId = $derived($page.params.id);
   let isLoading = $state(true);
+  let refreshInterval: number | undefined;
 
   const statusLabel = () => {
       const status = uiState.searchState?.manifest?.status;
@@ -24,12 +26,12 @@
 
   const isFinished = () => uiState.searchState?.manifest?.status === 'completed';
 
-  const getNode = (nodeId: string | null | undefined) => {
+  const getNode = (nodeId: string | null | undefined): SearchNode | null => {
       if (!nodeId || !uiState.searchState?.nodes) return null;
       return uiState.searchState.nodes[nodeId] ?? null;
   };
 
-  const finalRecommendation = () => uiState.searchState?.final_recommendation ?? null;
+  const finalRecommendation = (): FinalRecommendation | null => uiState.searchState?.final_recommendation ?? null;
 
   const winner = () => {
       const recommendation = finalRecommendation();
@@ -42,7 +44,7 @@
   const rejectedButInsightful = () =>
       (finalRecommendation()?.rejected_but_insightful_ids ?? [])
           .map((nodeId: string) => getNode(nodeId))
-          .filter(Boolean);
+          .filter((node): node is SearchNode => node !== null);
 
   const recommendationSummary = () =>
       uiState.searchState?.summary_markdown ??
@@ -85,20 +87,36 @@
   async function loadData() {
       isLoading = true;
       if (uiState.activeRunId) {
-          const state = await fetchState(uiState.activeRunId);
+          const [state, status] = await Promise.all([
+              fetchState(uiState.activeRunId),
+              fetchRunStatus(uiState.activeRunId),
+          ]);
           if (state) {
               uiState.searchState = state;
           }
+          uiState.runStatus = status;
       }
       isLoading = false;
   }
 
   onMount(() => {
+      refreshInterval = window.setInterval(() => {
+          if (uiState.runStatus?.status === 'running' || uiState.searchState?.manifest?.status === 'running') {
+              void loadData();
+          }
+      }, 3000);
+
       if (!uiState.searchState && currentRunId) {
-          loadData();
+          void loadData();
       } else {
           isLoading = false;
       }
+
+      return () => {
+          if (refreshInterval) {
+              window.clearInterval(refreshInterval);
+          }
+      };
   });
 </script>
 
@@ -114,6 +132,9 @@
               Run: <span class="run-id">{currentRunId}</span>
               <span class="status-badge {statusClass()}" style="margin-left: 12px;">{statusLabel()}</span>
           </p>
+          {#if !isFinished()}
+              <p class="live-note">This report refreshes automatically while the run is still executing.</p>
+          {/if}
           {#if searchProfileLabel() || islandCount() !== null}
               <div class="run-meta-row">
                   {#if searchProfileLabel()}
@@ -147,137 +168,139 @@
           {@const conservativeNode = conservativeOption()}
           {@const highUpsideNode = highUpsideOption()}
           {@const rejectedNodes = rejectedButInsightful()}
-          <div class="report-card winner-card">
-              <div class="card-header">
-                  <div class="winner-trophy">🏆</div>
-                  <div>
-                      <h2 style="margin: 0; font-size: 24px;">Best Bet</h2>
-                      <div class="node-id" style="margin-top: 4px;">Node: {winnerNode.node_id}</div>
-                  </div>
-              </div>
-
-              <div class="section-label">Thesis</div>
-              <p class="thesis-text">{winnerNode.candidate.thesis}</p>
-              
-              <div class="section-label">Mechanism</div>
-              <div class="mechanism-text">{winnerNode.candidate.mechanism}</div>
-              
-              <div class="divider"></div>
-              
-              <div class="section-label">Evaluation Matrix</div>
-              <div class="score-matrix">
-                  <div class="score-cell">
-                      <span class="score-cell-label">Total Score</span>
-                      <span class="score-cell-value" style="color: #34d399;">{winnerNode.score?.total_score?.toFixed(2) || 'N/A'}</span>
-                  </div>
-                  <div class="score-cell">
-                      <span class="score-cell-label">Confidence</span>
-                      <span class="score-cell-value">{((winnerNode.score?.confidence_estimate || 0) * 100).toFixed(0)}%</span>
-                  </div>
-                  <div class="score-cell">
-                      <span class="score-cell-label">Usefulness</span>
-                      <span class="score-cell-value">{winnerNode.score?.usefulness?.toFixed(2) || '0.00'}</span>
-                  </div>
-                  <div class="score-cell">
-                      <span class="score-cell-label">Distinctiveness</span>
-                      <span class="score-cell-value">{winnerNode.score?.distinctiveness?.toFixed(2) || '0.00'}</span>
-                  </div>
-              </div>
-
-              {#if winnerNode.critique?.summary}
-                  <div class="section-label">Evaluation Summary</div>
-                  <div class="critique-text">{winnerNode.critique.summary}</div>
-              {/if}
-          </div>
-
-          {#if recommendationSummary()}
-              <div class="report-card summary-card">
-                  <div class="summary-header">
+          {#if winnerNode}
+              <div class="report-card winner-card">
+                  <div class="card-header">
+                      <div class="winner-trophy">🏆</div>
                       <div>
-                          <div class="section-label">Recommendation Summary</div>
-                          <h2>Decision Memo</h2>
+                          <h2 style="margin: 0; font-size: 24px;">Best Bet</h2>
+                          <div class="node-id" style="margin-top: 4px;">Node: {winnerNode.node_id}</div>
                       </div>
-                      <div class="summary-kicker">Structured markdown rendered from persisted artifacts</div>
                   </div>
-                  <div class="summary-markdown">{@html summaryHtml()}</div>
-              </div>
-          {/if}
 
-          {#if conservativeNode || highUpsideNode || rejectedNodes.length > 0}
-              <div class="option-grid">
-                  {#if conservativeNode}
-                      <div class="report-card option-card">
-                          <div class="section-label">Conservative Option</div>
-                          <div class="node-id">{conservativeNode.node_id}</div>
-                          <p class="option-thesis">{conservativeNode.candidate.thesis}</p>
+                  <div class="section-label">Thesis</div>
+                  <p class="thesis-text">{winnerNode.candidate.thesis}</p>
+                  
+                  <div class="section-label">Mechanism</div>
+                  <div class="mechanism-text">{winnerNode.candidate.mechanism}</div>
+                  
+                  <div class="divider"></div>
+                  
+                  <div class="section-label">Evaluation Matrix</div>
+                  <div class="score-matrix">
+                      <div class="score-cell">
+                          <span class="score-cell-label">Total Score</span>
+                          <span class="score-cell-value" style="color: #34d399;">{winnerNode.score?.total_score?.toFixed(2) || 'N/A'}</span>
                       </div>
-                  {/if}
-                  {#if highUpsideNode}
-                      <div class="report-card option-card">
-                          <div class="section-label">High Upside Option</div>
-                          <div class="node-id">{highUpsideNode.node_id}</div>
-                          <p class="option-thesis">{highUpsideNode.candidate.thesis}</p>
+                      <div class="score-cell">
+                          <span class="score-cell-label">Confidence</span>
+                          <span class="score-cell-value">{((winnerNode.score?.confidence_estimate || 0) * 100).toFixed(0)}%</span>
                       </div>
+                      <div class="score-cell">
+                          <span class="score-cell-label">Usefulness</span>
+                          <span class="score-cell-value">{winnerNode.score?.usefulness?.toFixed(2) || '0.00'}</span>
+                      </div>
+                      <div class="score-cell">
+                          <span class="score-cell-label">Distinctiveness</span>
+                          <span class="score-cell-value">{winnerNode.score?.distinctiveness?.toFixed(2) || '0.00'}</span>
+                      </div>
+                  </div>
+
+                  {#if winnerNode.critique?.summary}
+                      <div class="section-label">Evaluation Summary</div>
+                      <div class="critique-text">{winnerNode.critique.summary}</div>
                   {/if}
-                  {#if rejectedNodes.length > 0}
-                      <div class="report-card option-card">
-                          <div class="section-label">Rejected But Insightful</div>
-                          <div class="rejected-list">
-                              {#each rejectedNodes as node}
-                                  <div class="rejected-item">
-                                      <div class="node-id">{node.node_id}</div>
-                                      <p class="option-thesis">{node.candidate.thesis}</p>
-                                  </div>
-                              {/each}
+              </div>
+
+              {#if recommendationSummary()}
+                  <div class="report-card summary-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Recommendation Summary</div>
+                              <h2>Decision Memo</h2>
                           </div>
+                          <div class="summary-kicker">Structured markdown rendered from persisted artifacts</div>
                       </div>
-                  {/if}
-              </div>
-          {/if}
+                      <div class="summary-markdown">{@html summaryHtml()}</div>
+                  </div>
+              {/if}
 
-          {#if recommendation}
-              <div class="option-grid details-grid">
-                  {#if detailList(recommendation.assumptions).length > 0}
-                      <div class="report-card detail-card">
-                          <div class="section-label">Assumptions</div>
-                          <ul class="detail-list">
-                              {#each detailList(recommendation.assumptions) as item}
-                                  <li>{item}</li>
-                              {/each}
-                          </ul>
-                      </div>
-                  {/if}
-                  {#if detailList(recommendation.failure_modes).length > 0}
-                      <div class="report-card detail-card">
-                          <div class="section-label">Failure Modes</div>
-                          <ul class="detail-list">
-                              {#each detailList(recommendation.failure_modes) as item}
-                                  <li>{item}</li>
-                              {/each}
-                          </ul>
-                      </div>
-                  {/if}
-                  {#if detailList(recommendation.reversal_conditions).length > 0}
-                      <div class="report-card detail-card">
-                          <div class="section-label">Reversal Conditions</div>
-                          <ul class="detail-list">
-                              {#each detailList(recommendation.reversal_conditions) as item}
-                                  <li>{item}</li>
-                              {/each}
-                          </ul>
-                      </div>
-                  {/if}
-                  {#if detailList(recommendation.next_experiments).length > 0}
-                      <div class="report-card detail-card">
-                          <div class="section-label">Next Experiments</div>
-                          <ul class="detail-list">
-                              {#each detailList(recommendation.next_experiments) as item}
-                                  <li>{item}</li>
-                              {/each}
-                          </ul>
-                      </div>
-                  {/if}
-              </div>
+              {#if conservativeNode || highUpsideNode || rejectedNodes.length > 0}
+                  <div class="option-grid">
+                      {#if conservativeNode}
+                          <div class="report-card option-card">
+                              <div class="section-label">Conservative Option</div>
+                              <div class="node-id">{conservativeNode.node_id}</div>
+                              <p class="option-thesis">{conservativeNode.candidate.thesis}</p>
+                          </div>
+                      {/if}
+                      {#if highUpsideNode}
+                          <div class="report-card option-card">
+                              <div class="section-label">High Upside Option</div>
+                              <div class="node-id">{highUpsideNode.node_id}</div>
+                              <p class="option-thesis">{highUpsideNode.candidate.thesis}</p>
+                          </div>
+                      {/if}
+                      {#if rejectedNodes.length > 0}
+                          <div class="report-card option-card">
+                              <div class="section-label">Rejected But Insightful</div>
+                              <div class="rejected-list">
+                                  {#each rejectedNodes as node}
+                                      <div class="rejected-item">
+                                          <div class="node-id">{node.node_id}</div>
+                                          <p class="option-thesis">{node.candidate.thesis}</p>
+                                      </div>
+                                  {/each}
+                              </div>
+                          </div>
+                      {/if}
+                  </div>
+              {/if}
+
+              {#if recommendation}
+                  <div class="option-grid details-grid">
+                      {#if detailList(recommendation.assumptions).length > 0}
+                          <div class="report-card detail-card">
+                              <div class="section-label">Assumptions</div>
+                              <ul class="detail-list">
+                                  {#each detailList(recommendation.assumptions) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                      {/if}
+                      {#if detailList(recommendation.failure_modes).length > 0}
+                          <div class="report-card detail-card">
+                              <div class="section-label">Failure Modes</div>
+                              <ul class="detail-list">
+                                  {#each detailList(recommendation.failure_modes) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                      {/if}
+                      {#if detailList(recommendation.reversal_conditions).length > 0}
+                          <div class="report-card detail-card">
+                              <div class="section-label">Reversal Conditions</div>
+                              <ul class="detail-list">
+                                  {#each detailList(recommendation.reversal_conditions) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                      {/if}
+                      {#if detailList(recommendation.next_experiments).length > 0}
+                          <div class="report-card detail-card">
+                              <div class="section-label">Next Experiments</div>
+                              <ul class="detail-list">
+                                  {#each detailList(recommendation.next_experiments) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                      {/if}
+                  </div>
+              {/if}
           {/if}
       {/if}
   </div>
@@ -312,6 +335,14 @@
       font-size: 16px;
       display: flex;
       align-items: center;
+  }
+
+  .live-note {
+      margin-top: 10px;
+      color: var(--ink-tertiary);
+      font-size: 13px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.02em;
   }
 
   .run-meta-row {

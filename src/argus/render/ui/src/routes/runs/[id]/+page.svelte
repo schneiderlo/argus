@@ -1,42 +1,76 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { page } from '$app/stores';
-  import { fetchState } from '$lib/api';
+  import { fetchRunEvents, fetchRunStatus, fetchState } from '$lib/api';
   import { uiState } from '$lib/stores.svelte';
 
+  import EventTape from '$lib/components/EventTape.svelte';
   import NetworkGraph from '$lib/components/NetworkGraph.svelte';
   import NodeSidebar from '$lib/components/NodeSidebar.svelte';
 
-  let syncInterval: number;
-  let isRunning = true;
+  let liveInterval: number | undefined;
+  let isMounted = true;
+  let tickCount = 0;
   
-  // Track current run ID from URL
   let currentRunId = $derived($page.params.id);
 
   $effect(() => {
-      // When the URL parameter changes, update the active run and trigger a sync
       if (currentRunId && currentRunId !== untrack(() => uiState.activeRunId)) {
           uiState.activeRunId = currentRunId;
-          uiState.selectedNodeId = null; // reset selection on navigation
-          sync();
+          uiState.selectedNodeId = null;
+          uiState.searchState = null;
+          uiState.runStatus = null;
+          uiState.runEvents = [];
+          tickCount = 0;
+          void syncState();
+          void syncLiveData();
       }
   });
 
-  async function sync() {
-      if (!isRunning || !uiState.activeRunId) return;
+  async function syncState() {
+      if (!isMounted || !uiState.activeRunId) return;
       const state = await fetchState(uiState.activeRunId);
       if (state) {
           uiState.searchState = state;
       }
   }
 
+  async function syncLiveData() {
+      if (!isMounted || !uiState.activeRunId) return;
+
+      const [status, events] = await Promise.all([
+          fetchRunStatus(uiState.activeRunId),
+          fetchRunEvents(uiState.activeRunId, 120),
+      ]);
+
+      if (status) {
+          uiState.runStatus = status;
+      }
+      uiState.runEvents = events;
+
+      tickCount += 1;
+      const shouldReconcile =
+          !uiState.searchState ||
+          (status?.status === 'running' && tickCount % 5 === 0) ||
+          (!!status && uiState.searchState?.manifest?.status !== status.status);
+
+      if (shouldReconcile) {
+          await syncState();
+      }
+  }
+
   onMount(() => {
-      // Start polling map
-      syncInterval = setInterval(sync, 1000) as unknown as number;
+      void syncState();
+      void syncLiveData();
+      liveInterval = window.setInterval(() => {
+          void syncLiveData();
+      }, 1000);
 
       return () => {
-          isRunning = false;
-          if (syncInterval) clearInterval(syncInterval);
+          isMounted = false;
+          if (liveInterval) {
+              window.clearInterval(liveInterval);
+          }
       };
   });
 </script>
@@ -45,8 +79,34 @@
   <title>Argus · Observer Graph</title>
 </svelte:head>
 
-<div class="main-content">
-  <NetworkGraph />
-  <div class="empty-push" style="flex: 1;"></div>
-  <NodeSidebar />
+<div class="run-shell">
+  <div class="main-content">
+      <div class="graph-stage">
+          <NetworkGraph />
+      </div>
+      <NodeSidebar />
+  </div>
+  <EventTape />
 </div>
+
+<style>
+  .run-shell {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      flex-direction: column;
+  }
+
+  .main-content {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+  }
+
+  .graph-stage {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+  }
+</style>

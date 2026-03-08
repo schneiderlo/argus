@@ -1,8 +1,12 @@
+import type { ProgressEventPayload, RunStatusPayload, SearchStatePayload } from '$lib/types';
+
 export const uiState = $state({
     isLightMode: false,
     selectedNodeId: null as string | null,
     activeRunId: null as string | null,
-    searchState: null as any,
+    searchState: null as SearchStatePayload | null,
+    runStatus: null as RunStatusPayload | null,
+    runEvents: [] as ProgressEventPayload[],
 });
 
 export const styleMap = {
