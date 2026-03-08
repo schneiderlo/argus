@@ -1,3 +1,4 @@
+search_profile = "portfolio"
 provider_pool = ["codex"]
 
 [providers.codex]

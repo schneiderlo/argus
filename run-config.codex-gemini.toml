@@ -1,4 +1,5 @@
 budget = 12
+search_profile = "portfolio"
 provider_pool = ["codex", "gemini"]
 
 [providers.codex]
