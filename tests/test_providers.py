@@ -361,6 +361,252 @@ class CodexProviderTests(unittest.TestCase):
         )
         self.assertIn("Do not paraphrase the source candidate.", prompt_text)
 
+    def test_run_action_materializes_action_specific_generation_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "target_count": 3,
+                    "framing_candidate": _candidate_payload(),
+                    "generation_policy": {
+                        "diversity_requirement": "Return materially distinct strategic directions.",
+                        "quality_requirement": "Prefer executable mechanisms with explicit tradeoffs.",
+                        "island_focus": "Favor well-rounded mechanisms that can win on substance.",
+                    },
+                },
+                output_schema=_candidate_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: seed generator for Argus.", prompt_text)
+        self.assertIn("Diversity rule: generate meaningfully different strategic directions", prompt_text)
+        self.assertIn("Target count: return exactly 3 seed candidates.", prompt_text)
+        self.assertIn("Island-specific focus: Favor well-rounded mechanisms", prompt_text)
+
+    def test_run_action_materializes_action_specific_stress_test_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(
+                        {
+                            "hidden_dependencies": ["Teams must already trust the archive."],
+                            "kill_shots": ["The ritual may not justify the setup cost."],
+                            "sharp_edges": ["Rollout could fail for casual teams."],
+                            "summary": "The candidate survives only if the weekly ritual already exists.",
+                        }
+                    ),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.STRESS_TEST,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "candidate": _candidate_payload(),
+                    "stress_test_policy": {
+                        "focus": [
+                            "hidden dependencies",
+                            "kill shots",
+                            "operational sharp edges",
+                        ]
+                    },
+                },
+                output_schema=StructuredOutputSchema(
+                    name="critique",
+                    json_schema={
+                        "type": "object",
+                        "required": ["hidden_dependencies", "kill_shots", "sharp_edges", "summary"],
+                        "properties": {
+                            "hidden_dependencies": {"type": "array", "items": {"type": "string"}},
+                            "kill_shots": {"type": "array", "items": {"type": "string"}},
+                            "sharp_edges": {"type": "array", "items": {"type": "string"}},
+                            "summary": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    validator=lambda payload: payload,
+                ),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: adversarial stress tester for Argus.", prompt_text)
+        self.assertIn("Your job is to attack the candidate, not to help it.", prompt_text)
+        self.assertIn("Ruthlessness rule: prefer concrete kill shots over polite generic critique.", prompt_text)
+        self.assertIn("Stress-test focus: hidden dependencies; kill shots; operational sharp edges.", prompt_text)
+
+    def test_run_action_materializes_action_specific_refinement_prompts(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            deepen_response = provider.run_action(
+                action_name=ActionType.DEEPEN,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "candidate": _candidate_payload(),
+                    "deepen_policy": {
+                        "goal": "Increase specificity and execution readiness without collapsing distinctiveness."
+                    },
+                },
+                output_schema=_candidate_schema(),
+            )
+            mutate_response = provider.run_action(
+                action_name=ActionType.MUTATE,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "candidate": _candidate_payload(),
+                    "mutation_policy": {
+                        "goal": "Address the sharpest weakness while preserving the core mechanism."
+                    },
+                },
+                output_schema=StructuredOutputSchema(
+                    name="candidate_batch",
+                    json_schema={
+                        "type": "object",
+                        "required": ["candidates", "batch_summary"],
+                        "properties": {
+                            "candidates": {"type": "array", "items": _candidate_schema().json_schema},
+                            "batch_summary": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    validator=lambda payload: payload,
+                ),
+            )
+            combine_response = provider.run_action(
+                action_name=ActionType.COMBINE,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "primary_candidate": _candidate_payload(),
+                    "secondary_candidate": _candidate_payload(),
+                    "combine_policy": {
+                        "goal": "Fuse compatible strengths only if the combined direction remains coherent and distinct."
+                    },
+                },
+                output_schema=StructuredOutputSchema(
+                    name="candidate_batch",
+                    json_schema={
+                        "type": "object",
+                        "required": ["candidates", "batch_summary"],
+                        "properties": {
+                            "candidates": {"type": "array", "items": _candidate_schema().json_schema},
+                            "batch_summary": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    validator=lambda payload: payload,
+                ),
+            )
+            deepen_prompt = deepen_response.artifacts.prompt_path.read_text(encoding="utf-8")
+            mutate_prompt = mutate_response.artifacts.prompt_path.read_text(encoding="utf-8")
+            combine_prompt = combine_response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: deepening worker for Argus.", deepen_prompt)
+        self.assertIn("Deepening goal: Increase specificity and execution readiness", deepen_prompt)
+        self.assertIn("Role: mutation worker for Argus.", mutate_prompt)
+        self.assertIn("Mutation goal: Address the sharpest weakness", mutate_prompt)
+        self.assertIn("Role: combination worker for Argus.", combine_prompt)
+        self.assertIn("Combination rule: keep only the compatible strengths.", combine_prompt)
+
+    def test_run_action_materializes_action_specific_learning_compression_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(
+                        {
+                            "notes": [
+                                {
+                                    "note_type": "winning_pattern",
+                                    "text": "Workflow-native artifacts compound into repeated usage.",
+                                    "source_node_ids": ["node-0002"],
+                                }
+                            ],
+                            "summary": "The run rewarded workflow-native review loops.",
+                        }
+                    ),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.COMPRESS_LEARNING,
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "archived_nodes": [],
+                    "pruned_nodes": [],
+                    "max_notes": 4,
+                    "compression_policy": {
+                        "goal": "Extract reusable patterns, failure modes, and constraints from the current search state."
+                    },
+                },
+                output_schema=StructuredOutputSchema(
+                    name="learning_compression",
+                    json_schema={
+                        "type": "object",
+                        "required": ["notes", "summary"],
+                        "properties": {
+                            "notes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["note_type", "text", "source_node_ids"],
+                                    "properties": {
+                                        "note_type": {"type": "string"},
+                                        "text": {"type": "string"},
+                                        "source_node_ids": {"type": "array", "items": {"type": "string"}},
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "summary": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    validator=lambda payload: payload,
+                ),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: learning compression worker for Argus.", prompt_text)
+        self.assertIn("Note budget: return at most 4 compressed learning notes.", prompt_text)
+        self.assertIn("Compression goal: Extract reusable patterns, failure modes, and constraints", prompt_text)
+
     def test_run_action_pairwise_prompt_mentions_outcome_feedback_priors(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(

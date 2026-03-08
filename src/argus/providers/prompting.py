@@ -75,6 +75,20 @@ def _action_specific_instructions(
     input_payload: Mapping[str, JSONValue],
 ) -> list[str]:
     normalized_action = action_name.strip().lower()
+    if normalized_action == "frame_problem":
+        return _frame_problem_instructions(input_payload)
+    if normalized_action == "generate_seed":
+        return _generate_seed_instructions(input_payload)
+    if normalized_action == "stress_test":
+        return _stress_test_instructions(input_payload)
+    if normalized_action == "deepen":
+        return _deepen_candidate_instructions(input_payload)
+    if normalized_action == "mutate":
+        return _mutate_candidate_instructions(input_payload)
+    if normalized_action == "combine":
+        return _combine_candidates_instructions(input_payload)
+    if normalized_action == "compress_learning":
+        return _compress_learning_instructions(input_payload)
     if normalized_action == "evaluate_candidate":
         return _evaluate_candidate_instructions(input_payload)
     if normalized_action == "assess_novelty":
@@ -111,6 +125,61 @@ def _evaluate_candidate_instructions(
     return instructions
 
 
+def _frame_problem_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: problem framer for Argus. Rewrite the raw request into the sharpest decision-ready frame before search expands.",
+        "Authoritative evidence, in order: the raw request; explicit constraints and success criteria already present in the problem spec; reusable learning notes only as supporting priors.",
+        "Clarify the true problem instead of paraphrasing the request. Surface the real decision axis, the hard constraints, and the success criteria the search should optimize for.",
+        "The framing candidate must be useful search scaffolding, not an answer disguised as framing. It should capture the governing mechanism, tradeoffs, and what would make later candidates substantively better or worse.",
+        "Normalize framing_notes into compact operator-facing guidance that later generation, evaluation, and critique steps can reuse.",
+        "Do not invent market facts, evidence, or constraints that are absent from the request and payload.",
+        "Output contract: return a refined problem_spec plus one framing candidate that makes downstream search more precise, adversarial, and auditable.",
+    ]
+    budget = input_payload.get("budget")
+    if isinstance(budget, int):
+        instructions.append(
+            f"Budget awareness: the current run budget is {budget}; prefer a framing sharp enough to guide search efficiently without collapsing diversity too early."
+        )
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes to remember patterns that previously mattered, but do not let old runs override the specific wording and constraints of the current problem."
+        )
+    return instructions
+
+
+def _generate_seed_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: seed generator for Argus. Produce an initial batch of materially distinct candidate directions for the framed problem.",
+        "Authoritative evidence, in order: the framed problem; the framing candidate; island context and generation focus if present; archived learning notes and reusable learning notes only as priors.",
+        "Diversity rule: generate meaningfully different strategic directions with different mechanisms, dependencies, or tradeoff shapes. Do not return paraphrases or minor parameter tweaks of the same idea.",
+        "Quality rule: every candidate must have a concrete mechanism, explicit assumptions, likely failure modes, and unknowns that can be evaluated and stress-tested later.",
+        "Avoid decorative ideas, generic feature lists, and style-first answers that sound plausible without changing the causal path to success.",
+        "If the payload includes island context, bias the batch toward that island's generation_focus while preserving novelty and auditability.",
+        "Output contract: honor target_count, return one coherent candidate object per direction, and make the batch_summary explain the strategic spread of the generated options.",
+    ]
+    diversity_requirement = _nested_string(input_payload, "generation_policy", "diversity_requirement")
+    quality_requirement = _nested_string(input_payload, "generation_policy", "quality_requirement")
+    island_focus = _nested_string(input_payload, "generation_policy", "island_focus")
+    target_count = input_payload.get("target_count")
+    if isinstance(target_count, int):
+        instructions.append(f"Target count: return exactly {target_count} seed candidates.")
+    if diversity_requirement is not None:
+        instructions.append(f"Diversity emphasis: {diversity_requirement}")
+    if quality_requirement is not None:
+        instructions.append(f"Quality emphasis: {quality_requirement}")
+    if island_focus is not None:
+        instructions.append(f"Island-specific focus: {island_focus}")
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes as prior art on what has worked or failed before, especially outcome-backed notes, but still generate genuinely new directions instead of cargo-culting old winners."
+        )
+    return instructions
+
+
 def _assess_novelty_instructions() -> list[str]:
     return [
         "Role: semantic novelty judge for Argus archive admission.",
@@ -123,6 +192,116 @@ def _assess_novelty_instructions() -> list[str]:
         "Duplicate signals must be concrete. Name the overlapping mechanism, rollout, dependency, or tradeoff rather than saying the ideas feel similar.",
         "Output contract: novelty_score should rise with meaningful distinctness, max_similarity should reflect the strongest competing overlap in the archive, and summary should clearly say whether this is a near-duplicate, a shared tactic with a different strategic frame, or a genuinely distinct direction.",
     ]
+
+
+def _stress_test_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: adversarial stress tester for Argus. Your job is to attack the candidate, not to help it.",
+        "Authoritative evidence, in order: explicit problem constraints and success criteria; the candidate mechanism and assumptions; prior score evidence and learning notes only as supporting context.",
+        "Adversarial rule: actively look for hidden dependencies, unstated assumptions, operational pain, false comparisons against weak baselines, and real reasons the plan could fail in use.",
+        "Ruthlessness rule: prefer concrete kill shots over polite generic critique. If the candidate survives, explain why despite your strongest attacks.",
+        "Do not propose a new candidate. Produce a critique that makes later mutate/deepen decisions sharper and more evidence-seeking.",
+        "Output contract: hidden_dependencies, kill_shots, and sharp_edges should be specific enough that the operator could falsify or mitigate them.",
+    ]
+    focus_values = _string_list(input_payload, "stress_test_policy", "focus")
+    if focus_values:
+        instructions.append(
+            "Stress-test focus: " + "; ".join(focus_values) + "."
+        )
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes, especially outcome-backed failure patterns, as prompts for where this candidate is likely to break."
+        )
+    return instructions
+
+
+def _deepen_candidate_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: deepening worker for Argus. Increase the specificity and execution-readiness of a promising candidate without changing its core mechanism gratuitously.",
+        "Authoritative evidence, in order: the candidate itself; prior score and critique evidence; island focus when present; reusable learning notes as supporting priors.",
+        "Deepening rule: preserve the candidate's core strategic direction while making the rollout, mechanism, dependencies, and implementation shape more concrete.",
+        "Do not flatten the idea into generic detail. Improve the exact places where ambiguity, missing implementation shape, or critique pressure currently weaken the candidate.",
+        "If the payload includes critique evidence, address the most material sharp edges directly instead of ignoring them.",
+        "Output contract: return one improved candidate with more operational detail, clearer assumptions, and more falsifiable unknowns.",
+    ]
+    deepen_goal = _nested_string(input_payload, "deepen_policy", "goal")
+    if deepen_goal is not None:
+        instructions.append(f"Deepening goal: {deepen_goal}")
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes as evidence about which details tend to matter in execution, but do not rewrite the candidate into a different strategy unless the original mechanism collapses."
+        )
+    return instructions
+
+
+def _mutate_candidate_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: mutation worker for Argus. Repair or redirect a candidate by changing the weakest part of the plan while preserving what still matters.",
+        "Authoritative evidence, in order: the candidate; critique evidence; prior score evidence; island context and reusable learning notes as supporting priors.",
+        "Mutation rule: respond to the sharpest weakness or critique pressure. Do not produce a cosmetic rewrite of the same fragile plan.",
+        "Preserve the causal insight that still works, but change assumptions, rollout shape, or mechanism details enough that the mutation has a real chance of surviving the critique.",
+        "If the critique reveals a fatal flaw, pivot around it explicitly instead of pretending the original mechanism is still intact.",
+        "Output contract: return a small batch of materially different repair attempts only when the schema asks for a batch; each candidate should explain a distinct repair path rather than paraphrasing one fix.",
+    ]
+    mutation_goal = _nested_string(input_payload, "mutation_policy", "goal")
+    if mutation_goal is not None:
+        instructions.append(f"Mutation goal: {mutation_goal}")
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes, especially failure patterns and outcome-backed constraints, to avoid repeating known dead ends during mutation."
+        )
+    return instructions
+
+
+def _combine_candidates_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: combination worker for Argus. Fuse two candidates only if the resulting hybrid becomes stronger, not more bloated.",
+        "Authoritative evidence, in order: the primary and secondary candidates; any score or critique context; island focus and reusable learning notes only as priors.",
+        "Combination rule: keep only the compatible strengths. If the candidates pull in conflicting directions, prefer one coherent mechanism over a kitchen-sink hybrid.",
+        "Seam analysis rule: make the combined mechanism explicit. The operator should be able to see why the parts fit together and where the hybrid could break.",
+        "Do not average two candidates into vague compromise language. The hybrid must still be distinctive, evaluable, and operationally concrete.",
+        "Output contract: if you return more than one candidate, each must represent a different integration seam or synthesis thesis rather than a paraphrase set.",
+    ]
+    combine_goal = _nested_string(input_payload, "combine_policy", "goal")
+    if combine_goal is not None:
+        instructions.append(f"Combination goal: {combine_goal}")
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes as evidence about which combinations tend to work or fail, especially when prior runs exposed brittle seams or hidden dependencies."
+        )
+    return instructions
+
+
+def _compress_learning_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: learning compression worker for Argus. Distill the current search state into reusable lessons that later runs can actually benefit from.",
+        "Authoritative evidence, in order: archived nodes, pruned nodes, existing learning notes, island context, and reusable learning notes only as prior memory.",
+        "Compression rule: extract patterns, failure modes, constraints, and routing hints that are reusable beyond one exact candidate. Do not merely restate the winning thesis.",
+        "Specificity rule: each note should say what pattern was observed and why it mattered. Avoid bland advice like 'be more specific' or 'consider tradeoffs'.",
+        "Balance rule: include both winning and losing lessons when they are genuinely reusable. Preserve the strongest constraints and repeated failure shapes, not just positive takeaways.",
+        "Output contract: honor max_notes, keep note types appropriate, and ensure source_node_ids point to the concrete nodes that generated the lesson.",
+    ]
+    max_notes = input_payload.get("max_notes")
+    if isinstance(max_notes, int):
+        instructions.append(f"Note budget: return at most {max_notes} compressed learning notes.")
+    compression_goal = _nested_string(input_payload, "compression_policy", "goal")
+    if compression_goal is not None:
+        instructions.append(f"Compression goal: {compression_goal}")
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: compare the current run against reusable_learning_notes so you preserve genuinely new lessons and reinforce recurring patterns with clearer wording."
+        )
+    return instructions
 
 
 def _pairwise_rank_instructions(input_payload: Mapping[str, JSONValue]) -> list[str]:
@@ -219,6 +398,27 @@ def _nested_string(
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _string_list(
+    payload: Mapping[str, JSONValue],
+    parent_key: str,
+    child_key: str,
+) -> list[str]:
+    parent = payload.get(parent_key)
+    if not isinstance(parent, Mapping):
+        return []
+    value = parent.get(child_key)
+    if not isinstance(value, list):
+        return []
+    results: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip()
+        if normalized:
+            results.append(normalized)
+    return results
 
 
 def _format_instruction_lines(lines: list[str]) -> list[str]:
