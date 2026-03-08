@@ -40,6 +40,8 @@ Provider implementations should also support a bounded-concurrency execution mod
 
 When the operator configures more than one provider for a run, the orchestrator should treat that as a provider pool rather than as a fixed one-provider run. In that mode the orchestrator may choose the provider per action using persisted provider-routing statistics and action-level reward signals, while still keeping one explicit fallback provider for actions with no strong historical signal. This routing should apply not just to generation and critique actions, but also to provider-backed novelty checks, candidate evaluation, and pairwise ranking, with the runtime persisting enough attribution metadata to fold downstream node outcomes back into the routing ledger for those judge actions.
 
+If a routed provider attempt fails, the orchestrator should retry the same action against the remaining configured providers in a deterministic order before failing the run. Provider-failure telemetry must still be recorded for the failed attempts.
+
 ## Initial Provider Scope
 
 The first implementation only needs a production-quality Codex adapter. Gemini CLI and OpenCode can arrive later, but the interface must not make their addition awkward.

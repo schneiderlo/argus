@@ -18,13 +18,17 @@ class SearchFixtureProvider:
         *,
         name: str = "fixture",
         fail_on_action: str | None = None,
+        fail_actions: set[str] | None = None,
         sleep_by_action: dict[str, float] | None = None,
         seed_candidates: list[Candidate] | None = None,
         seed_candidates_by_island: dict[str, list[Candidate]] | None = None,
     ) -> None:
         self.root_dir = root_dir
         self.name = name
-        self.fail_on_action = fail_on_action
+        normalized_fail_actions = set(fail_actions or set())
+        if fail_on_action is not None:
+            normalized_fail_actions.add(fail_on_action)
+        self.fail_actions = normalized_fail_actions
         self.sleep_by_action = dict(sleep_by_action or {})
         if seed_candidates is not None and not seed_candidates:
             raise ArgusValidationError("seed_candidates must not be empty when provided.")
@@ -71,7 +75,7 @@ class SearchFixtureProvider:
             if delay > 0:
                 time.sleep(delay)
 
-            if self.fail_on_action == normalized_action:
+            if normalized_action in self.fail_actions:
                 raise ArgusValidationError(f"fixture provider failed during {normalized_action}.")
 
             handler = getattr(self, f"_handle_{normalized_action}")

@@ -826,6 +826,200 @@ class SearchRuntimeTests(unittest.TestCase):
                 len(result.state.nodes) - 1,
             )
 
+    def test_runtime_falls_back_to_other_providers_when_routed_provider_fails(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            store.merge_provider_routing_stats(
+                ProviderRoutingStats(
+                    entries=[
+                        ProviderRoutingStatsEntry(
+                            provider_name="gemini",
+                            action_name="generate_seed",
+                            run_count=2,
+                            invocation_count=4,
+                            provider_failure_count=0,
+                            candidate_count=8,
+                            scored_node_count=8,
+                            admitted_count=6,
+                            rejected_count=1,
+                            hard_fail_count=1,
+                            strong_score_count=4,
+                            stress_test_survivor_count=3,
+                            winner_count=1,
+                            winner_contribution_count=2,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=25.2,
+                            total_reward=10.5,
+                            last_run_id="run-routing-gemini-generate",
+                            last_updated_at=datetime(2026, 3, 6, 15, 30, 0, tzinfo=timezone.utc),
+                        ),
+                        ProviderRoutingStatsEntry(
+                            provider_name="gemini",
+                            action_name="assess_novelty",
+                            run_count=2,
+                            invocation_count=4,
+                            provider_failure_count=0,
+                            candidate_count=8,
+                            scored_node_count=8,
+                            admitted_count=6,
+                            rejected_count=1,
+                            hard_fail_count=1,
+                            strong_score_count=4,
+                            stress_test_survivor_count=3,
+                            winner_count=1,
+                            winner_contribution_count=2,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=25.2,
+                            total_reward=10.5,
+                            last_run_id="run-routing-gemini-novelty",
+                            last_updated_at=datetime(2026, 3, 6, 15, 30, 15, tzinfo=timezone.utc),
+                        ),
+                        ProviderRoutingStatsEntry(
+                            provider_name="opencode",
+                            action_name="evaluate_candidate",
+                            run_count=2,
+                            invocation_count=4,
+                            provider_failure_count=0,
+                            candidate_count=8,
+                            scored_node_count=8,
+                            admitted_count=6,
+                            rejected_count=1,
+                            hard_fail_count=1,
+                            strong_score_count=4,
+                            stress_test_survivor_count=3,
+                            winner_count=1,
+                            winner_contribution_count=2,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=25.2,
+                            total_reward=10.5,
+                            last_run_id="run-routing-opencode-eval",
+                            last_updated_at=datetime(2026, 3, 6, 15, 30, 30, tzinfo=timezone.utc),
+                        ),
+                        ProviderRoutingStatsEntry(
+                            provider_name="opencode",
+                            action_name="rank",
+                            run_count=2,
+                            invocation_count=3,
+                            provider_failure_count=0,
+                            candidate_count=0,
+                            scored_node_count=0,
+                            admitted_count=0,
+                            rejected_count=0,
+                            hard_fail_count=0,
+                            strong_score_count=0,
+                            stress_test_survivor_count=0,
+                            winner_count=0,
+                            winner_contribution_count=0,
+                            critique_count=0,
+                            useful_critique_count=0,
+                            learning_note_count=0,
+                            accumulated_score=0.0,
+                            total_reward=3.0,
+                            last_run_id="run-routing-opencode-rank",
+                            last_updated_at=datetime(2026, 3, 6, 15, 31, 0, tzinfo=timezone.utc),
+                        ),
+                    ],
+                    updated_at=datetime(2026, 3, 6, 15, 31, 0, tzinfo=timezone.utc),
+                )
+            )
+            codex_provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "codex",
+                name="codex",
+            )
+            gemini_provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "gemini",
+                name="gemini",
+                fail_actions={"generate_seed", "assess_novelty"},
+            )
+            opencode_provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations" / "opencode",
+                name="opencode",
+                fail_actions={"evaluate_candidate", "rank"},
+            )
+            runtime = SearchRuntime(
+                provider=codex_provider,
+                providers=[codex_provider, gemini_provider, opencode_provider],
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=2,
+                    deepen_limit=2,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=4,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=9,
+                run_id="run-search-provider-fallback",
+            )
+            loaded = store.load_run("run-search-provider-fallback")
+
+        self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+        self.assertEqual(loaded.manifest.status, RunStatus.COMPLETED)
+        self.assertTrue(any(call["action_name"] == "generate_seed" for call in gemini_provider.calls))
+        self.assertTrue(any(call["action_name"] == "assess_novelty" for call in gemini_provider.calls))
+        self.assertTrue(any(call["action_name"] == "evaluate_candidate" for call in opencode_provider.calls))
+        self.assertTrue(any(call["action_name"] == "rank" for call in opencode_provider.calls))
+        self.assertTrue(any(call["action_name"] == "generate_seed" for call in codex_provider.calls))
+        self.assertTrue(any(call["action_name"] == "assess_novelty" for call in codex_provider.calls))
+        self.assertTrue(any(call["action_name"] == "evaluate_candidate" for call in codex_provider.calls))
+        self.assertTrue(any(call["action_name"] == "rank" for call in codex_provider.calls))
+        self.assertTrue(
+            all(
+                node.provider_name == "codex"
+                for node in result.state.nodes.values()
+                if node.action_type is ActionType.GENERATE_SEED
+            )
+        )
+        root_routing = result.state.nodes[result.state.root_id].metadata["provider_routing"]
+        self.assertEqual(root_routing["evaluate_candidate"], ["codex"])
+        for node in result.state.nodes.values():
+            if node.node_id == result.state.root_id:
+                continue
+            provider_routing = node.metadata["provider_routing"]
+            self.assertEqual(provider_routing["assess_novelty"], ["codex"])
+            self.assertEqual(provider_routing["evaluate_candidate"], ["codex"])
+        routing_entries = {
+            (entry.provider_name, entry.action_name): entry
+            for entry in loaded.routing_summary.entries
+        }
+        self.assertGreaterEqual(
+            routing_entries[("gemini", "generate_seed")].provider_failure_count,
+            1,
+        )
+        self.assertGreaterEqual(
+            routing_entries[("gemini", "assess_novelty")].provider_failure_count,
+            1,
+        )
+        self.assertGreaterEqual(
+            routing_entries[("opencode", "evaluate_candidate")].provider_failure_count,
+            1,
+        )
+        self.assertGreaterEqual(
+            routing_entries[("opencode", "rank")].provider_failure_count,
+            1,
+        )
+        self.assertGreaterEqual(
+            routing_entries[("codex", "generate_seed")].candidate_count,
+            1,
+        )
+        self.assertGreaterEqual(
+            routing_entries[("codex", "evaluate_candidate")].candidate_count,
+            len(result.state.nodes),
+        )
+
     def test_pairwise_tournament_can_rescue_a_third_ranked_finalist(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

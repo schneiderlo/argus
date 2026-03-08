@@ -1666,58 +1666,17 @@ class SearchRuntime:
         output_schema,
     ):
         normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
-        provider = self._provider_for_action(normalized_action)
-        if self._progress_verbose:
-            self._emit_progress(
-                "provider_invocation",
-                run_id=self._active_run_id,
-                step_count=0,
-                budget_spent=0,
-                payload={
-                    "action": normalized_action,
-                    "provider": provider.name,
-                },
-            )
-        routing_tracker.record_invocation(
+        response, _ = self._run_with_provider_fallback(
+            routing_tracker,
             action_name=normalized_action,
-            provider_name=provider.name,
-        )
-        try:
-            response = provider.run_action(
+            attempt=lambda provider: provider.run_action(
                 action_name=action_name,
                 problem_spec=problem_spec,
                 input_payload=input_payload,
                 output_schema=output_schema,
-            )
-        except Exception:
-            routing_tracker.record_provider_failure(
-                action_name=normalized_action,
-                provider_name=provider.name,
-            )
-            if self._progress_verbose:
-                self._emit_progress(
-                    "provider_failed",
-                    run_id=self._active_run_id,
-                    step_count=0,
-                    budget_spent=0,
-                    payload={
-                        "action": normalized_action,
-                        "provider": provider.name,
-                    },
-                )
-            raise
-        if self._progress_verbose:
-            self._emit_progress(
-                "provider_invocation",
-                run_id=self._active_run_id,
-                step_count=0,
-                budget_spent=0,
-                payload={
-                    "action": normalized_action,
-                    "provider": provider.name,
-                    "status": "ok",
-                },
-            )
+            ),
+            emit_progress=True,
+        )
         return response
 
     def _dispatch_provider_requests(
@@ -1744,24 +1703,15 @@ class SearchRuntime:
         archive_nodes: Sequence[Node],
         routing_tracker: "_RoutingTracker",
     ) -> tuple[NoveltyAssessment, str]:
-        provider = self._provider_for_action(_ASSESS_NOVELTY_ACTION)
-        routing_tracker.record_invocation(
+        return self._run_with_provider_fallback(
+            routing_tracker,
             action_name=_ASSESS_NOVELTY_ACTION,
-            provider_name=provider.name,
-        )
-        try:
-            novelty = self._novelty_filter_for_provider(provider.name).assess(
+            attempt=lambda provider: self._novelty_filter_for_provider(provider.name).assess(
                 problem_spec=problem_spec,
                 candidate=candidate,
                 archive_nodes=archive_nodes,
-            )
-        except Exception:
-            routing_tracker.record_provider_failure(
-                action_name=_ASSESS_NOVELTY_ACTION,
-                provider_name=provider.name,
-            )
-            raise
-        return novelty, provider.name
+            ),
+        )
 
     def _evaluate_candidate(
         self,
@@ -1772,25 +1722,16 @@ class SearchRuntime:
         reusable_learning_notes: Sequence[ReusableLearningNote],
         routing_tracker: "_RoutingTracker",
     ) -> tuple[EvaluationAssessment, str]:
-        provider = self._provider_for_action(_EVALUATE_CANDIDATE_ACTION)
-        routing_tracker.record_invocation(
+        return self._run_with_provider_fallback(
+            routing_tracker,
             action_name=_EVALUATE_CANDIDATE_ACTION,
-            provider_name=provider.name,
-        )
-        try:
-            assessment = self._evaluator_for_provider(provider.name).evaluate(
+            attempt=lambda provider: self._evaluator_for_provider(provider.name).evaluate(
                 problem_spec,
                 candidate,
                 novelty_score=novelty_score,
                 reusable_learning_notes=reusable_learning_notes,
-            )
-        except Exception:
-            routing_tracker.record_provider_failure(
-                action_name=_EVALUATE_CANDIDATE_ACTION,
-                provider_name=provider.name,
-            )
-            raise
-        return assessment, provider.name
+            ),
+        )
 
     def _run_bounded_tasks(
         self,
@@ -2697,26 +2638,85 @@ class SearchRuntime:
         routing_tracker: "_RoutingTracker",
         reusable_learning_notes: Sequence[ReusableLearningNote],
     ) -> PairwiseRankingAssessment:
-        provider = self._provider_for_action(ActionType.RANK.value)
-        routing_tracker.record_invocation(
+        assessment, _ = self._run_with_provider_fallback(
+            routing_tracker,
             action_name=ActionType.RANK.value,
-            provider_name=provider.name,
-        )
-        try:
-            return self._evaluator_for_provider(provider.name).compare_nodes(
+            attempt=lambda provider: self._evaluator_for_provider(provider.name).compare_nodes(
                 problem_spec,
                 left,
                 right,
                 objective=objective_name,
                 objective_description=objective_description,
                 reusable_learning_notes=reusable_learning_notes,
-            )
-        except Exception:
-            routing_tracker.record_provider_failure(
-                action_name=ActionType.RANK.value,
+            ),
+        )
+        return assessment
+
+    def _run_with_provider_fallback(
+        self,
+        routing_tracker: "_RoutingTracker",
+        *,
+        action_name: ActionType | str,
+        attempt: Callable[[Provider], T],
+        emit_progress: bool = False,
+    ) -> tuple[T, str]:
+        normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
+        failures: list[Exception] = []
+        for provider in self._providers_for_action(normalized_action):
+            if emit_progress and self._progress_verbose:
+                self._emit_progress(
+                    "provider_invocation",
+                    run_id=self._active_run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    payload={
+                        "action": normalized_action,
+                        "provider": provider.name,
+                    },
+                )
+            routing_tracker.record_invocation(
+                action_name=normalized_action,
                 provider_name=provider.name,
             )
-            raise
+            try:
+                result = attempt(provider)
+            except Exception as exc:
+                failures.append(exc)
+                routing_tracker.record_provider_failure(
+                    action_name=normalized_action,
+                    provider_name=provider.name,
+                )
+                if emit_progress and self._progress_verbose:
+                    self._emit_progress(
+                        "provider_failed",
+                        run_id=self._active_run_id,
+                        step_count=0,
+                        budget_spent=0,
+                        payload={
+                            "action": normalized_action,
+                            "provider": provider.name,
+                        },
+                    )
+                continue
+            if emit_progress and self._progress_verbose:
+                self._emit_progress(
+                    "provider_invocation",
+                    run_id=self._active_run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    payload={
+                        "action": normalized_action,
+                        "provider": provider.name,
+                        "status": "ok",
+                    },
+                )
+            return result, provider.name
+
+        if not failures:
+            raise ArgusValidationError(
+                f"No providers are available for action {normalized_action!r}."
+            )
+        raise failures[0]
 
     def _provider_for_action(self, action_name: ActionType | str) -> Provider:
         normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
@@ -2724,6 +2724,21 @@ class SearchRuntime:
         if router is None:
             return self._provider
         return router.select(normalized_action)
+
+    def _providers_for_action(self, action_name: ActionType | str) -> list[Provider]:
+        normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
+        primary = self._provider_for_action(normalized_action)
+        providers: list[Provider] = [primary]
+        seen_provider_names = {primary.name}
+        if self._provider.name not in seen_provider_names:
+            providers.append(self._provider)
+            seen_provider_names.add(self._provider.name)
+        for provider_name, provider in self._providers.items():
+            if provider_name in seen_provider_names:
+                continue
+            providers.append(provider)
+            seen_provider_names.add(provider_name)
+        return providers
 
     def _evaluator_for_provider(self, provider_name: str) -> AgenticEvaluator:
         return self._evaluators[_normalize_non_empty_string(provider_name, "provider_name")]
