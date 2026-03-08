@@ -7,11 +7,15 @@ observe_port = 8080
 # Optional request input. Set either `request` or `prompt_file`, not both.
 # request = """Find the best retention strategy for a workflow-heavy product."""
 prompt_file = "new_paradigm.md"
-provider_pool = ["gemini_flash", "gemini_25_pro", "gemini_31_pro_preview"]
+provider_pool = ["gemini_31_pro_preview", "gemini_flash", "gemini_25_pro"]
 
 # [providers.codex_spark]
 # type = "codex"
 # model = "gpt-5.3-codex-spark"
+
+[providers.gemini_31_pro_preview]
+type = "gemini"
+model = "gemini-3.1-pro-preview"
 
 [providers.gemini_flash]
 type = "gemini"
@@ -20,10 +24,6 @@ model = "gemini-3-flash-preview"
 [providers.gemini_25_pro]
 type = "gemini"
 model = "gemini-2.5-pro"
-
-[providers.gemini_31_pro_preview]
-type = "gemini"
-model = "gemini-3.1-pro-preview"
 
 # [providers.gemini_flash_lite]
 # type = "gemini"
