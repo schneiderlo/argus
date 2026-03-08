@@ -1,4 +1,12 @@
 budget = 12
+cost_profile = "standard"
+progress = "auto"
+verbose = false
+observe = false
+observe_port = 8080
+# Optional request input. Set either `request` or `prompt_file`, not both.
+# request = """Find the best retention strategy for a workflow-heavy product."""
+prompt_file = "workspace.md"
 provider_pool = ["codex_spark", "gemini_flash", "gemini_flash_lite"]
 
 [providers.codex_spark]

@@ -33,6 +33,13 @@ class ProviderRunConfig:
 class RunConfig:
     provider_pool: tuple[str, ...]
     budget: int | None = None
+    request: str | None = None
+    prompt_file: Path | None = None
+    cost_profile: str | None = None
+    progress: str | None = None
+    verbose: bool | None = None
+    observe: bool | None = None
+    observe_port: int | None = None
     providers: dict[str, ProviderRunConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -55,6 +62,50 @@ class RunConfig:
                 self,
                 "budget",
                 _normalize_positive_int(self.budget, "budget"),
+            )
+        if self.request is not None:
+            object.__setattr__(
+                self,
+                "request",
+                _normalize_non_empty_string(self.request, "request"),
+            )
+        if self.prompt_file is not None and not isinstance(self.prompt_file, Path):
+            raise ArgusValidationError(
+                f"prompt_file must be a filesystem path, got {type(self.prompt_file).__name__}."
+            )
+        if self.request is not None and self.prompt_file is not None:
+            raise ArgusValidationError(
+                "Run config may set only one of `request` or `prompt_file`."
+            )
+        if self.cost_profile is not None:
+            object.__setattr__(
+                self,
+                "cost_profile",
+                _normalize_non_empty_string(self.cost_profile, "cost_profile"),
+            )
+        if self.progress is not None:
+            object.__setattr__(
+                self,
+                "progress",
+                _normalize_non_empty_string(self.progress, "progress"),
+            )
+        if self.verbose is not None:
+            object.__setattr__(
+                self,
+                "verbose",
+                _normalize_bool(self.verbose, "verbose"),
+            )
+        if self.observe is not None:
+            object.__setattr__(
+                self,
+                "observe",
+                _normalize_bool(self.observe, "observe"),
+            )
+        if self.observe_port is not None:
+            object.__setattr__(
+                self,
+                "observe_port",
+                _normalize_positive_int(self.observe_port, "observe_port"),
             )
 
         normalized_providers: dict[str, ProviderRunConfig] = {}
@@ -92,6 +143,25 @@ class RunConfig:
             ) from exc
         if not isinstance(payload, dict):
             raise ArgusValidationError("Run config must decode to a TOML table.")
+        allowed_top_level_keys = {
+            "provider",
+            "provider_pool",
+            "providers",
+            "budget",
+            "request",
+            "prompt_file",
+            "cost_profile",
+            "progress",
+            "verbose",
+            "observe",
+            "observe_port",
+        }
+        extra_top_level_keys = sorted(set(payload) - allowed_top_level_keys)
+        if extra_top_level_keys:
+            raise ArgusValidationError(
+                "Run config contains unsupported top-level keys: "
+                + ", ".join(extra_top_level_keys)
+            )
 
         provider_table = payload.get("providers", {})
         if not isinstance(provider_table, dict):
@@ -129,7 +199,27 @@ class RunConfig:
 
         provider_pool = _load_provider_pool(payload, providers)
         budget = None if "budget" not in payload else payload["budget"]
-        return cls(provider_pool=provider_pool, budget=budget, providers=providers)
+        request = None if "request" not in payload else payload["request"]
+        prompt_file = None
+        if "prompt_file" in payload:
+            prompt_path = Path(
+                _normalize_non_empty_string(payload["prompt_file"], "prompt_file")
+            ).expanduser()
+            if not prompt_path.is_absolute():
+                prompt_path = resolved_path.parent / prompt_path
+            prompt_file = prompt_path.resolve()
+        return cls(
+            provider_pool=provider_pool,
+            budget=budget,
+            request=request,
+            prompt_file=prompt_file,
+            cost_profile=None if "cost_profile" not in payload else payload["cost_profile"],
+            progress=None if "progress" not in payload else payload["progress"],
+            verbose=None if "verbose" not in payload else payload["verbose"],
+            observe=None if "observe" not in payload else payload["observe"],
+            observe_port=None if "observe_port" not in payload else payload["observe_port"],
+            providers=providers,
+        )
 
     def provider_model(self, provider_name: str) -> str | None:
         normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
@@ -220,4 +310,12 @@ def _normalize_positive_int(value: object, field_name: str) -> int:
         )
     if value <= 0:
         raise ArgusValidationError(f"{field_name} must be a positive integer.")
+    return value
+
+
+def _normalize_bool(value: object, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ArgusValidationError(
+            f"{field_name} must be a boolean, got {type(value).__name__}."
+        )
     return value

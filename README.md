@@ -93,11 +93,19 @@ uv run argus run --provider codex,gemini,opencode \
   "Find the best retention strategy for a workflow-heavy product."
 ```
 
-Run through a TOML run-config that defines the provider pool, optional budget, and per-provider model overrides:
+Run through a TOML run-config that defines the provider pool plus common execution defaults such as budget, cost profile, and observer behavior:
 
 ```toml
 # run-config.toml
 budget = 12
+cost_profile = "standard"
+progress = "quiet"
+observe = true
+observe_port = 8080
+# Optional: move the request into the config instead of the CLI.
+# Set either `request` or `prompt_file`, not both.
+# request = """Find the best retention strategy for a workflow-heavy product."""
+# prompt_file = "request.txt"
 provider_pool = ["codex", "gemini", "opencode"]
 
 [providers.codex]
@@ -116,8 +124,36 @@ uv run argus run --run-config run-config.toml \
 uv run argus benchmark --run-config run-config.toml
 ```
 
-`--provider` still works and overrides `provider_pool` from the run-config for that command.
-`--budget` still works and overrides `budget` from the run-config for `argus run` and `argus dry-run`.
+`--provider`, `--budget`, `--cost-profile`, `--progress`, `--observe`, `--no-observe`, and `--observe-port` still work and override the corresponding run-config values for that command.
+
+You can also let the run-config carry the request input:
+
+```toml
+request = """
+Find the best retention strategy for a workflow-heavy product.
+Focus on weekly workflow habits and explicit failure modes.
+"""
+
+provider_pool = ["codex"]
+
+[providers.codex]
+model = "gpt-5-codex"
+```
+
+```bash
+uv run argus run --run-config run-config.toml
+uv run argus dry-run --run-config run-config.toml
+```
+
+Or point the config at a request file relative to the config file itself:
+
+```toml
+prompt_file = "request.txt"
+provider_pool = ["codex"]
+
+[providers.codex]
+model = "gpt-5-codex"
+```
 
 You can also define logical provider aliases so different models from the same backend are
 routed and tracked independently:
@@ -152,12 +188,21 @@ provider resolution, and local provider binary availability.
 Run-config rules:
 
 - `budget` is optional and applies to `argus run` and `argus dry-run`.
+- `request` and `prompt_file` are optional and apply to `argus run` and `argus dry-run`.
+- Set only one of `request` or `prompt_file` in a run-config.
+- `prompt_file` is resolved relative to the run-config file when it is not absolute.
+- `cost_profile` is optional and applies to `argus run`, `argus dry-run`, and `argus benchmark`.
+- `progress` is optional and applies to `argus run`.
+- `verbose` is optional and applies to `argus run`.
+- `observe` and `observe_port` are optional and apply to `argus run`.
 - `provider_pool` is the ordered provider fallback/routing pool for the run.
 - Every provider listed in `provider_pool` must have a matching `[providers.<name>]` table.
 - `type` is optional when the provider table name is already `codex`, `gemini`, or `opencode`. Use `type` for aliases such as `codex_fast` or `gemini_flash_lite`.
 - `model` is optional per provider; if omitted, the provider default/env behavior is used.
 - If `--provider` is passed, that value is used instead of `provider_pool` from the file.
+- If a positional request or `--prompt-file` is passed, that value is used instead of `request` or `prompt_file` from the file.
 - If `--budget` is passed, that value is used instead of `budget` from the file.
+- CLI flags win over run-config values when both are provided.
 
 Run the stored benchmark suite, or a single case:
 

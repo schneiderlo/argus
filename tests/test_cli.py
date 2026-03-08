@@ -124,6 +124,44 @@ class CliTests(unittest.TestCase):
         self.assertEqual(start_observer.call_args.args[2], 9091)
         wait_for_observer.assert_called_once_with(observer_thread, port=9091)
 
+    def test_run_command_uses_observe_settings_from_run_config(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            observer_thread = SimpleNamespace(is_alive=lambda: False)
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "codex-test-model"},
+                observe=True,
+                observe_port=9092,
+            )
+            with patch("argus.cli._build_provider", return_value=provider), patch(
+                "argus.cli._start_observer_server_in_background",
+                return_value=observer_thread,
+            ) as start_observer, patch(
+                "argus.cli._wait_for_observer_thread",
+            ) as wait_for_observer:
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Argus Recommendation", stdout)
+        self.assertIn("Observer launching on http://localhost:9092", stderr)
+        start_observer.assert_called_once()
+        self.assertEqual(start_observer.call_args.args[2], 9092)
+        wait_for_observer.assert_called_once_with(observer_thread, port=9092)
+
     def test_run_command_accepts_prompt_file_instead_of_positional_request(self) -> None:
         with TemporaryRepoRoot() as root:
             provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
@@ -140,6 +178,66 @@ class CliTests(unittest.TestCase):
                         "run",
                         "--prompt-file",
                         str(prompt_path),
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Completed in", stderr)
+        self.assertIn("Argus Recommendation", stdout)
+
+    def test_run_command_uses_request_from_run_config_when_cli_request_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "codex-test-model"},
+                request="Find the best retention strategy for a workflow-heavy product.",
+            )
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "--run-config",
+                        str(run_config_path),
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Completed in", stderr)
+        self.assertIn("Argus Recommendation", stdout)
+
+    def test_run_command_cli_request_overrides_run_config_prompt_file(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            prompt_path = root / "request.txt"
+            prompt_path.write_text(
+                "Use the request from the config file instead.",
+                encoding="utf-8",
+            )
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "codex-test-model"},
+                prompt_file="request.txt",
+            )
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Prefer the inline CLI request instead.",
+                        "--run-config",
+                        str(run_config_path),
                         "--progress",
                         "quiet",
                     ]
@@ -240,6 +338,61 @@ class CliTests(unittest.TestCase):
         self.assertIn("provider_model[codex]=gpt-5-codex", stdout)
         self.assertIn("provider_model[gemini]=gemini-3.1-pro-preview", stdout)
 
+    def test_dry_run_command_uses_request_from_run_config_when_cli_request_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                request="Find the best retention strategy for a workflow-heavy product.",
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "--run-config",
+                        str(run_config_path),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("request_source=inline", stdout)
+        self.assertIn("request_chars=62", stdout)
+
+    def test_dry_run_command_uses_prompt_file_from_run_config_when_cli_request_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            prompt_path = root / "request.txt"
+            prompt_path.write_text(
+                "Find the best retention strategy for a workflow-heavy product.",
+                encoding="utf-8",
+            )
+            run_config_path = root / "configs" / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                prompt_file="../request.txt",
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "--run-config",
+                        str(run_config_path),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("request_source=prompt_file", stdout)
+        self.assertIn(f"prompt_file={prompt_path.resolve()}", stdout)
+
     def test_dry_run_command_supports_json_output(self) -> None:
         with TemporaryRepoRoot() as root:
             run_config_path = root / "run-config.toml"
@@ -321,6 +474,34 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         self.assertIn("budget=5", stdout)
 
+    def test_dry_run_command_uses_cost_profile_from_run_config_when_flag_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                cost_profile="lean",
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(payload["cost_profile"], "lean")
+        self.assertEqual(payload["search_policy"]["seed_target"], 4)
+
     def test_dry_run_command_reports_selected_cost_profile(self) -> None:
         with TemporaryRepoRoot() as root:
             with patch("argus.cli._validate_provider_binaries", return_value=None):
@@ -363,6 +544,29 @@ class CliTests(unittest.TestCase):
             "Provide either positional request text or --prompt-file, not both.",
             stderr,
         )
+
+    def test_dry_run_command_rejects_run_config_with_both_request_and_prompt_file(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                request="Find the best retention strategy.",
+                prompt_file="request.txt",
+            )
+            exit_code, _, stderr = _run_cli(
+                [
+                    "--root",
+                    str(root),
+                    "dry-run",
+                    "--run-config",
+                    str(run_config_path),
+                ]
+            )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("Run config may set only one of `request` or `prompt_file`.", stderr)
 
     def test_dry_run_command_rejects_invalid_budget(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -550,6 +754,33 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("Search budget: 5 steps", stderr)
+
+    def test_run_command_uses_cost_profile_from_run_config_when_flag_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "codex-test-model"},
+                cost_profile="lean",
+            )
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, _, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Cost profile: lean", stderr)
 
     def test_wait_for_observer_thread_reports_persistent_monitor_mode(self) -> None:
         class FakeThread:
@@ -1408,11 +1639,32 @@ def _write_run_config_fixture(
     provider_models: dict[str, str],
     provider_types: dict[str, str] | None = None,
     budget: int | None = None,
+    request: str | None = None,
+    prompt_file: str | None = None,
+    cost_profile: str | None = None,
+    progress: str | None = None,
+    verbose: bool | None = None,
+    observe: bool | None = None,
+    observe_port: int | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     if budget is not None:
         lines.extend([f"budget = {budget}", ""])
+    if request is not None:
+        lines.extend([f'request = """{request}"""', ""])
+    if prompt_file is not None:
+        lines.extend([f'prompt_file = "{prompt_file}"', ""])
+    if cost_profile is not None:
+        lines.extend([f'cost_profile = "{cost_profile}"', ""])
+    if progress is not None:
+        lines.extend([f'progress = "{progress}"', ""])
+    if verbose is not None:
+        lines.extend([f"verbose = {_toml_bool(verbose)}", ""])
+    if observe is not None:
+        lines.extend([f"observe = {_toml_bool(observe)}", ""])
+    if observe_port is not None:
+        lines.extend([f"observe_port = {observe_port}", ""])
     lines.extend(
         [
             "provider_pool = [" + ", ".join(f'"{name}"' for name in provider_pool) + "]",
@@ -1430,6 +1682,10 @@ def _write_run_config_fixture(
             ]
         )
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def _feedback_ready_state() -> SearchState:

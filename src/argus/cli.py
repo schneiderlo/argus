@@ -63,6 +63,13 @@ class _RunProgressMetadata:
     artifact_path: Path
 
 
+@dataclass(frozen=True)
+class _ResolvedRunRequest:
+    text: str
+    source: str
+    prompt_file: Path | None = None
+
+
 class _ComposedProgressSink(ProgressSink):
     def __init__(self, sinks: Sequence[ProgressSink] | None = None):
         self._sinks: list[ProgressSink] = list(sinks or [])
@@ -322,10 +329,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--cost-profile",
         choices=_COST_PROFILE_CHOICES,
-        default="standard",
+        default=None,
         help=(
             "Search-cost preset. `lean` trims frontier width and branch work, "
-            "`standard` uses the default policy, and `max` expands the search."
+            "`standard` uses the default policy, and `max` expands the search. "
+            "Overrides `cost_profile` from --run-config when both are provided."
         ),
     )
     run_parser.add_argument(
@@ -349,27 +357,51 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--progress",
         choices=_PROGRESS_MODES,
-        default="auto",
+        default=None,
         help=(
             "Progress mode: auto for tty/plain adaptation, plain line stream, "
-            "jsonl raw event stream, or quiet."
+            "jsonl raw event stream, or quiet. Overrides `progress` from "
+            "--run-config when both are provided."
         ),
     )
     run_parser.add_argument(
         "--verbose",
         action="store_true",
+        default=None,
         help="Show verbose internal progress details.",
     )
     run_parser.add_argument(
+        "--no-verbose",
+        dest="verbose",
+        action="store_false",
+        default=None,
+        help="Disable verbose internal progress details even if enabled in --run-config.",
+    )
+    run_parser.add_argument(
         "--observe",
+        dest="observe",
         action="store_true",
-        help="Automatically launch the Argus web dashboard to monitor the run.",
+        default=None,
+        help=(
+            "Automatically launch the Argus web dashboard to monitor the run. "
+            "Overrides `observe` from --run-config when provided."
+        ),
+    )
+    run_parser.add_argument(
+        "--no-observe",
+        dest="observe",
+        action="store_false",
+        default=None,
+        help="Disable observer launch even if enabled in --run-config.",
     )
     run_parser.add_argument(
         "--observe-port",
         type=int,
-        default=8080,
-        help="Port to run the observation server on if --observe is set.",
+        default=None,
+        help=(
+            "Port to run the observation server on if --observe is set. "
+            "Overrides `observe_port` from --run-config when both are provided."
+        ),
     )
     run_parser.set_defaults(handler=_handle_run)
 
@@ -405,8 +437,11 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run_parser.add_argument(
         "--cost-profile",
         choices=_COST_PROFILE_CHOICES,
-        default="standard",
-        help="Search-cost preset to validate for a future run invocation.",
+        default=None,
+        help=(
+            "Search-cost preset to validate for a future run invocation. "
+            "Overrides `cost_profile` from --run-config when both are provided."
+        ),
     )
     dry_run_parser.add_argument(
         "--provider",
@@ -446,8 +481,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument(
         "--cost-profile",
         choices=_COST_PROFILE_CHOICES,
-        default="standard",
-        help="Search-cost preset to apply to each benchmark case.",
+        default=None,
+        help=(
+            "Search-cost preset to apply to each benchmark case. Overrides "
+            "`cost_profile` from --run-config when both are provided."
+        ),
     )
     benchmark_parser.add_argument(
         "--provider",
@@ -621,10 +659,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
-    request = _resolve_run_request(args)
-    policy = search_policy_for_cost_profile(args.cost_profile)
-
     run_config = _load_run_config(args.run_config_path)
+    resolved_request = _resolve_run_request(args, run_config=run_config)
+    request = resolved_request.text
+    cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
+    progress_mode = _resolve_progress_mode(args=args, run_config=run_config)
+    verbose = _resolve_verbose(args=args, run_config=run_config)
+    observe = _resolve_observe(args=args, run_config=run_config)
+    observe_port = _resolve_observe_port(args=args, run_config=run_config)
+    policy = search_policy_for_cost_profile(cost_profile)
     budget = _resolve_budget(args=args, run_config=run_config)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
@@ -646,22 +689,20 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         request=request,
         provider_pool=provider_names,
         budget=budget,
-        cost_profile=args.cost_profile,
+        cost_profile=cost_profile,
         artifact_path=state_store.root_dir / run_id,
     )
     sink = _build_progress_sink(
         run_id=run_id,
         metadata=metadata,
-        mode=args.progress,
-        verbose=args.verbose,
+        mode=progress_mode,
+        verbose=verbose,
         state_store=state_store,
     )
     _print_run_header(metadata)
 
     observer_thread: threading.Thread | None = None
-    observe_port: int | None = None
-    if getattr(args, "observe", False):
-        observe_port = getattr(args, "observe_port", 8080)
+    if observe:
         observer_thread = _start_observer_server_in_background(
             config,
             run_id,
@@ -679,7 +720,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         state_store=state_store,
         policy=policy,
         progress_sink=sink,
-        progress_verbose=args.verbose,
+        progress_verbose=verbose,
     )
     result = runtime.run(
         request=request,
@@ -695,9 +736,11 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
 
 
 def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
-    request = _resolve_run_request(args)
-    policy = search_policy_for_cost_profile(args.cost_profile)
     run_config = _load_run_config(args.run_config_path)
+    resolved_request = _resolve_run_request(args, run_config=run_config)
+    request = resolved_request.text
+    cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
+    policy = search_policy_for_cost_profile(cost_profile)
     budget = _resolve_budget(args=args, run_config=run_config)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
@@ -716,10 +759,10 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
 
     payload: dict[str, object] = {
         "status": "ok",
-        "request_source": "prompt_file" if args.prompt_file is not None else "inline",
+        "request_source": resolved_request.source,
         "request_chars": len(request),
         "budget": budget,
-        "cost_profile": args.cost_profile,
+        "cost_profile": cost_profile,
         "search_policy": policy.to_dict(),
         "provider_pool": provider_names,
         "provider_models": {
@@ -729,8 +772,8 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     }
     if args.run_config_path is not None:
         payload["run_config_path"] = str(args.run_config_path.expanduser().resolve())
-    if args.prompt_file is not None:
-        payload["prompt_file"] = str(args.prompt_file.expanduser().resolve())
+    if resolved_request.prompt_file is not None:
+        payload["prompt_file"] = str(resolved_request.prompt_file)
 
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -752,8 +795,9 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
 
 
 def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
-    policy = search_policy_for_cost_profile(args.cost_profile)
     run_config = _load_run_config(args.run_config_path)
+    cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
+    policy = search_policy_for_cost_profile(cost_profile)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
         run_config=run_config,
@@ -1051,6 +1095,77 @@ def _resolve_budget(
     return budget
 
 
+def _resolve_cost_profile(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+) -> str:
+    cost_profile = args.cost_profile
+    if cost_profile is None and run_config is not None:
+        cost_profile = run_config.cost_profile
+    if cost_profile is None:
+        return "standard"
+    normalized = cost_profile.strip().lower()
+    if normalized not in _COST_PROFILE_CHOICES:
+        supported = ", ".join(_COST_PROFILE_CHOICES)
+        raise ArgusUserError(f"cost_profile must be one of: {supported}.")
+    return normalized
+
+
+def _resolve_progress_mode(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+) -> str:
+    progress = args.progress
+    if progress is None and run_config is not None:
+        progress = run_config.progress
+    if progress is None:
+        return "auto"
+    normalized = progress.strip().lower()
+    if normalized not in _PROGRESS_MODES:
+        supported = ", ".join(_PROGRESS_MODES)
+        raise ArgusUserError(f"progress must be one of: {supported}.")
+    return normalized
+
+
+def _resolve_verbose(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+) -> bool:
+    verbose = args.verbose
+    if verbose is None and run_config is not None and run_config.verbose is not None:
+        return run_config.verbose
+    return bool(verbose)
+
+
+def _resolve_observe(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+) -> bool:
+    observe = args.observe
+    if observe is None and run_config is not None and run_config.observe is not None:
+        return run_config.observe
+    return bool(observe)
+
+
+def _resolve_observe_port(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+) -> int:
+    observe_port = args.observe_port
+    if observe_port is None and run_config is not None:
+        observe_port = run_config.observe_port
+    if observe_port is None:
+        return 8080
+    if not isinstance(observe_port, int) or observe_port <= 0:
+        raise ArgusUserError("--observe-port must be a positive integer.")
+    return observe_port
+
+
 def _load_run_config(path: Path | None) -> RunConfig | None:
     if path is None:
         return None
@@ -1194,7 +1309,11 @@ def _supports_color_output() -> bool:
     return sys.stdout.isatty()
 
 
-def _resolve_run_request(args: argparse.Namespace) -> str:
+def _resolve_run_request(
+    args: argparse.Namespace,
+    *,
+    run_config: RunConfig | None = None,
+) -> _ResolvedRunRequest:
     raw_request = args.request
     prompt_file = args.prompt_file
 
@@ -1204,26 +1323,54 @@ def _resolve_run_request(args: argparse.Namespace) -> str:
         raise ArgusUserError(
             "Provide either positional request text or --prompt-file, not both."
         )
-    if not has_inline_request and not has_prompt_file:
-        raise ArgusUserError(
-            "Provide request text or --prompt-file."
-        )
 
     if has_prompt_file:
         assert prompt_file is not None
-        resolved_path = prompt_file.expanduser().resolve()
-        if not resolved_path.is_file():
-            raise ArgusUserError(f"--prompt-file does not exist: {resolved_path}")
-        text = resolved_path.read_text(encoding="utf-8").strip()
-        if not text:
-            raise ArgusUserError("--prompt-file must contain non-empty request text.")
-        return text
+        return _load_request_from_file(
+            prompt_file,
+            missing_message_prefix="--prompt-file does not exist",
+            empty_message="--prompt-file must contain non-empty request text.",
+        )
 
-    assert isinstance(raw_request, str)
-    normalized_request = raw_request.strip()
-    if not normalized_request:
-        raise ArgusUserError("request must not be empty.")
-    return normalized_request
+    if has_inline_request:
+        assert isinstance(raw_request, str)
+        normalized_request = raw_request.strip()
+        if not normalized_request:
+            raise ArgusUserError("request must not be empty.")
+        return _ResolvedRunRequest(text=normalized_request, source="inline")
+
+    if run_config is not None:
+        if run_config.prompt_file is not None:
+            return _load_request_from_file(
+                run_config.prompt_file,
+                missing_message_prefix="run-config prompt_file does not exist",
+                empty_message="run-config prompt_file must contain non-empty request text.",
+            )
+        if run_config.request is not None:
+            return _ResolvedRunRequest(text=run_config.request, source="inline")
+
+    raise ArgusUserError(
+        "Provide request text or --prompt-file, or set `request`/`prompt_file` in --run-config."
+    )
+
+
+def _load_request_from_file(
+    prompt_file: Path,
+    *,
+    missing_message_prefix: str,
+    empty_message: str,
+) -> _ResolvedRunRequest:
+    resolved_path = prompt_file.expanduser().resolve()
+    if not resolved_path.is_file():
+        raise ArgusUserError(f"{missing_message_prefix}: {resolved_path}")
+    text = resolved_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ArgusUserError(empty_message)
+    return _ResolvedRunRequest(
+        text=text,
+        source="prompt_file",
+        prompt_file=resolved_path,
+    )
 
 
 def _node_id_or_dash(node_id: str | None) -> str:
