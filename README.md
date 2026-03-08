@@ -288,7 +288,7 @@ Benchmarks intentionally keep shared learning memory disabled so stored output d
 
 Process guardrails:
 
-- `./scripts/verify.sh` uses `uv run --python 3.12 ...` to avoid silently validating against the wrong interpreter.
+- `./scripts/verify.sh` uses `uv run --python 3.12 ...` to avoid silently validating against the wrong interpreter, and it also runs `npm --prefix src/argus/render/ui run check` so observer UI type and Svelte regressions fail the Ralph loop.
 - `uv.lock` is expected to stay committed and in sync with `pyproject.toml`; verification should fail rather than rewriting the lockfile during a normal loop iteration.
 - Python cache directories and bytecode files are ignored so loop runs do not dirty the tree with generated junk.
 - A successful iteration is expected to end in a clean, committed repository state.

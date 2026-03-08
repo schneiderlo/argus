@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Network } from 'vis-network';
+  import type { Edge, Node, Options } from 'vis-network';
   import { DataSet } from 'vis-data';
   import { uiState, getStyle } from '$lib/stores.svelte';
 
   let container: HTMLElement;
   let network: Network;
-  let nodes = new DataSet();
-  let edges = new DataSet();
+  let nodes = new DataSet<Node, 'id'>();
+  let edges = new DataSet<Edge, 'id'>();
 
-  function getVisOptions() {
+  function getVisOptions(): Options {
       const textColor = uiState.isLightMode ? '#18181b' : '#fafafa';
       const shadowColor = uiState.isLightMode ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.6)';
       const edgeColor = uiState.isLightMode ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.15)';
@@ -58,7 +59,12 @@
                   hover: highlightColor
               },
               width: 2,
-              smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.6 }
+              smooth: {
+                  enabled: true,
+                  type: 'cubicBezier',
+                  forceDirection: 'horizontal',
+                  roundness: 0.6
+              }
           },
           interaction: {
               hover: true,

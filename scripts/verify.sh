@@ -49,6 +49,28 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+UI_DIR="src/argus/render/ui"
+
+if [[ ! -f "$UI_DIR/package.json" ]]; then
+  echo "Observer UI scaffold missing: expected $UI_DIR/package.json" >&2
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required for frontend verification" >&2
+  exit 1
+fi
+
+if [[ ! -f "$UI_DIR/package-lock.json" ]]; then
+  echo "Frontend lockfile missing: expected $UI_DIR/package-lock.json" >&2
+  exit 1
+fi
+
+if [[ ! -d "$UI_DIR/node_modules" ]]; then
+  echo "Frontend dependencies missing under $UI_DIR/node_modules. Run 'npm --prefix $UI_DIR ci' and retry verification." >&2
+  exit 1
+fi
+
 if [[ ! -f uv.lock ]]; then
   echo "uv.lock is required for verification. Run 'uv lock' or 'uv sync --group dev' and commit the lockfile." >&2
   exit 1
@@ -59,5 +81,6 @@ uv run --locked --no-sync --python 3.12 python -V
 uv run --locked --no-sync --python 3.12 python -m compileall src tests
 uv run --locked --no-sync --python 3.12 python -m unittest discover -s tests -t .
 uv run --locked --no-sync --python 3.12 ruff check .
+npm --prefix "$UI_DIR" run check
 
 echo "Verification complete."
