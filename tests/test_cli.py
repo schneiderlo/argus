@@ -91,6 +91,39 @@ class CliTests(unittest.TestCase):
             self.assertTrue((runs[0] / "routing-summary.json").is_file())
             self.assertTrue((runs[0] / "summary.md").is_file())
 
+    def test_run_command_observe_starts_monitor_server_and_waits_after_completion(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            observer_thread = SimpleNamespace(is_alive=lambda: False)
+            with patch("argus.cli._build_provider", return_value=provider), patch(
+                "argus.cli._start_observer_server_in_background",
+                return_value=observer_thread,
+            ) as start_observer, patch(
+                "argus.cli._wait_for_observer_thread",
+            ) as wait_for_observer:
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--budget",
+                        "9",
+                        "--observe",
+                        "--observe-port",
+                        "9091",
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Argus Recommendation", stdout)
+        self.assertIn("Observer launching on http://localhost:9091", stderr)
+        start_observer.assert_called_once()
+        self.assertEqual(start_observer.call_args.args[2], 9091)
+        wait_for_observer.assert_called_once_with(observer_thread, port=9091)
+
     def test_run_command_accepts_prompt_file_instead_of_positional_request(self) -> None:
         with TemporaryRepoRoot() as root:
             provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
@@ -236,6 +269,58 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["provider_pool"], ["codex"])
         self.assertEqual(payload["provider_models"]["codex"], "gpt-5-codex")
 
+    def test_dry_run_command_uses_budget_from_run_config_when_flag_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                budget=7,
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("budget=7", stdout)
+
+    def test_dry_run_command_budget_flag_overrides_run_config_budget(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                budget=7,
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--budget",
+                        "5",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("budget=5", stdout)
+
     def test_dry_run_command_reports_selected_cost_profile(self) -> None:
         with TemporaryRepoRoot() as root:
             with patch("argus.cli._validate_provider_binaries", return_value=None):
@@ -306,15 +391,16 @@ class CliTests(unittest.TestCase):
                     "gemini": "gemini-test-model",
                 },
             )
-            built: list[tuple[str, str | None]] = []
+            built: list[tuple[str, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
                 provider_name: str,
                 *,
+                provider_type: str | None = None,
                 model: str | None = None,
             ):
-                built.append((provider_name, model))
+                built.append((provider_name, provider_type, model))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -346,10 +432,147 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             built,
             [
-                ("codex", "codex-test-model"),
-                ("gemini", "gemini-test-model"),
+                ("codex", "codex", "codex-test-model"),
+                ("gemini", "gemini", "gemini-test-model"),
             ],
         )
+
+    def test_run_command_supports_provider_aliases_from_run_config(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex_fast", "gemini_flash_lite"],
+                provider_models={
+                    "codex_fast": "gpt-5.3-codex-spark",
+                    "gemini_flash_lite": "gemini-3.1-flash-lite-preview",
+                },
+                provider_types={
+                    "codex_fast": "codex",
+                    "gemini_flash_lite": "gemini",
+                },
+                budget=6,
+            )
+            built: list[tuple[str, str | None, str | None]] = []
+
+            def _build_provider_with_capture(
+                config: ArgusConfig,
+                provider_name: str,
+                *,
+                provider_type: str | None = None,
+                model: str | None = None,
+            ):
+                built.append((provider_name, provider_type, model))
+                return SearchFixtureProvider(
+                    root / "artifacts" / "provider_invocations" / provider_name,
+                    name=provider_name,
+                )
+
+            with patch(
+                "argus.cli._build_provider",
+                side_effect=_build_provider_with_capture,
+            ):
+                exit_code, _, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Providers: codex_fast, gemini_flash_lite", stderr)
+        self.assertEqual(
+            built,
+            [
+                ("codex_fast", "codex", "gpt-5.3-codex-spark"),
+                ("gemini_flash_lite", "gemini", "gemini-3.1-flash-lite-preview"),
+            ],
+        )
+
+    def test_run_command_uses_budget_from_run_config_when_flag_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "codex-test-model"},
+                budget=7,
+            )
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, _, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Search budget: 7 steps", stderr)
+
+    def test_run_command_budget_flag_overrides_run_config_budget(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "codex-test-model"},
+                budget=7,
+            )
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, _, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--budget",
+                        "5",
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Search budget: 5 steps", stderr)
+
+    def test_wait_for_observer_thread_reports_persistent_monitor_mode(self) -> None:
+        class FakeThread:
+            def __init__(self) -> None:
+                self._alive = True
+                self.join_calls = 0
+
+            def is_alive(self) -> bool:
+                return self._alive
+
+            def join(self, timeout: float | None = None) -> None:
+                self.join_calls += 1
+                self._alive = False
+
+        thread = FakeThread()
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            from argus.cli import _wait_for_observer_thread
+
+            _wait_for_observer_thread(thread, port=8080)
+
+        self.assertEqual(thread.join_calls, 1)
+        self.assertIn("Observer remains available on http://localhost:8080", stderr.getvalue())
 
     def test_run_command_provider_flag_overrides_run_config_provider_pool(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -363,15 +586,16 @@ class CliTests(unittest.TestCase):
                     "opencode": "opencode-test-model",
                 },
             )
-            built: list[tuple[str, str | None]] = []
+            built: list[tuple[str, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
                 provider_name: str,
                 *,
+                provider_type: str | None = None,
                 model: str | None = None,
             ):
-                built.append((provider_name, model))
+                built.append((provider_name, provider_type, model))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -402,7 +626,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Completed in", stderr)
         self.assertEqual(
             built,
-            [("opencode", "opencode-test-model")],
+            [("opencode", "opencode", "opencode-test-model")],
         )
 
     def test_run_command_passes_cost_profile_policy_to_runtime(self) -> None:
@@ -758,15 +982,16 @@ class CliTests(unittest.TestCase):
                     "gemini": "gemini-test-model",
                 },
             )
-            built: list[tuple[str, str | None]] = []
+            built: list[tuple[str, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
                 provider_name: str,
                 *,
+                provider_type: str | None = None,
                 model: str | None = None,
             ):
-                built.append((provider_name, model))
+                built.append((provider_name, provider_type, model))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -794,8 +1019,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             built,
             [
-                ("codex", "codex-test-model"),
-                ("gemini", "gemini-test-model"),
+                ("codex", "codex", "codex-test-model"),
+                ("gemini", "gemini", "gemini-test-model"),
             ],
         )
 
@@ -1181,16 +1406,25 @@ def _write_run_config_fixture(
     *,
     provider_pool: list[str],
     provider_models: dict[str, str],
+    provider_types: dict[str, str] | None = None,
+    budget: int | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        "provider_pool = [" + ", ".join(f'"{name}"' for name in provider_pool) + "]",
-        "",
-    ]
+    lines: list[str] = []
+    if budget is not None:
+        lines.extend([f"budget = {budget}", ""])
+    lines.extend(
+        [
+            "provider_pool = [" + ", ".join(f'"{name}"' for name in provider_pool) + "]",
+            "",
+        ]
+    )
     for provider_name, model in provider_models.items():
+        provider_type = None if provider_types is None else provider_types.get(provider_name)
         lines.extend(
             [
                 f"[providers.{provider_name}]",
+                *([] if provider_type is None else [f'type = "{provider_type}"']),
                 f'model = "{model}"',
                 "",
             ]

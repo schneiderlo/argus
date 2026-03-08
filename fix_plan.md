@@ -56,6 +56,8 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Add multi-island search so different optimization priors can evolve semi-independently.
 - [x] Add outcome-feedback ingestion so shipped experiment results can influence future evaluation.
 - [x] Add learning compression persistence so reusable patterns survive across runs.
+- [x] Align the observer Svelte memory and report views with the typed observer payloads so the UI reads `routing_stats.entries`, reusable learning provenance, `winner_ids`, and persisted `final_recommendation` artifacts instead of stale legacy field names.
+- [x] Make `argus run --observe` keep the observer server alive after the search completes instead of dropping the daemon thread when the CLI exits.
 
 ## Notes
 
@@ -85,8 +87,11 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - `argus status` now reports the latest or selected run's persisted progress plus recent and active provider invocations, so the operator can see what stage is running without manually spelunking artifact directories.
 - Final answer compilation now runs a bounded provider-backed pairwise tournament over a small finalist pool for `best_bet`, `conservative_option`, and `high_upside_option`, so a third- or fourth-ranked archived node can still win on direct head-to-head merit instead of being eliminated by a top-two pre-rank shortcut.
 - `argus run` and `argus benchmark` now load optional TOML run-config files via `--run-config`, applying `provider_pool` and per-provider model overrides from `RunConfig` while still letting explicit `--provider` override the configured pool for that invocation.
+- Run-config files now also support optional `budget` plus logical provider aliases via `[providers.<alias>] type = "codex|gemini|opencode"`, so the same backend can be routed as multiple distinct model-backed workers with separate routing attribution.
 - `argus run` now also supports `--prompt-file <path>` so multi-line requests can be supplied from disk instead of a single quoted positional argument, with explicit validation for missing/empty/conflicting request inputs.
 - `argus dry-run` now validates request inputs (`--prompt-file` or inline), run-config/provider resolution, and local provider binary availability without executing provider actions, so operators can catch setup errors before spending provider calls.
 - `argus run`, `argus dry-run`, and `argus benchmark` now accept `--cost-profile lean|standard|max`, mapping common operator intent onto concrete `SearchPolicy` presets instead of forcing manual policy tuning for low-cost versus high-exploration runs.
 - `argus observe` now annotates terminal nodes with a derived `termination_reason` (novelty rejection summary, hard-constraint failure reasons, or manual prune reason), and the observer sidebar renders that reason in a dedicated "Decision Reason" section so rejected branches are auditable at a glance.
+- `argus run --observe` now starts the observer during the run and then keeps the server alive after the final recommendation is printed, so operators can leave the browser open on the just-finished run without launching a separate `argus observe` process.
+- Python verification still does not execute the Svelte app. Observer UI changes should therefore be accompanied by a manual `npm --prefix src/argus/render/ui run check` pass until frontend verification is added to `./scripts/verify.sh`.
 - The main remaining paper-aligned gap is deeper future policy learning beyond provider routing, especially stronger outcome-backed search-control updates and benchmark regimes that measure decision quality rather than only replayable runtime behavior.

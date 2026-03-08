@@ -1,0 +1,14 @@
+budget = 12
+provider_pool = ["codex_spark", "gemini_flash", "gemini_flash_lite"]
+
+[providers.codex_spark]
+type = "codex"
+model = "gpt-5.3-codex-spark"
+
+[providers.gemini_flash]
+type = "gemini"
+model = "gemini-3-flash-preview"
+
+[providers.gemini_flash_lite]
+type = "gemini"
+model = "gemini-3.1-flash-lite-preview"

@@ -2,7 +2,34 @@
   import { onMount } from 'svelte';
   import { fetchMemory } from '$lib/api';
 
-  let memoryData: any = $state(null);
+  type RoutingEntry = {
+      provider_name: string;
+      action_name: string;
+      invocation_count?: number;
+      winner_contribution_count?: number;
+      strong_score_count?: number;
+      provider_failure_count?: number;
+      total_reward?: number;
+      last_run_id?: string | null;
+  };
+
+  type ReusableLearningNote = {
+      note_id: string;
+      note_type: string;
+      text: string;
+      evidence_sources?: string[];
+      source_run_ids?: string[];
+      problem_statements?: string[];
+      observation_count?: number;
+      last_seen_at?: string;
+  };
+
+  type MemoryPayload = {
+      routing_stats?: { entries?: RoutingEntry[] };
+      learning_memory?: { entries?: ReusableLearningNote[] };
+  } | null;
+
+  let memoryData: MemoryPayload = $state(null);
   let isLoading = $state(true);
 
   onMount(async () => {
@@ -10,19 +37,77 @@
       isLoading = false;
   });
 
-  const getProviderStats = (data: any) => {
-      if (!data?.routing_stats?.stats) return [];
-      return Object.entries(data.routing_stats.stats).map(([name, stat]: [string, any]) => {
-          const totalAttempts = stat.trials || 0;
-          const totalWins = stat.wins || 0;
-          const winRate = totalAttempts > 0 ? (totalWins / totalAttempts) * 100 : 0;
-          return { name, totalAttempts, totalWins, winRate };
-      }).sort((a, b) => b.winRate - a.winRate);
+  const labelize = (value: string) => value.replaceAll('_', ' ');
+
+  const formatRunIds = (runIds: string[] = []) => {
+      if (runIds.length === 0) return null;
+      const visible = runIds.slice(0, 2);
+      const remainder = runIds.length - visible.length;
+      return remainder > 0 ? `${visible.join(', ')} +${remainder} more` : visible.join(', ');
   };
 
-  const getLearningNotes = (data: any) => {
+  const formatDate = (value: string | undefined) => {
+      if (!value) return null;
+      return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
+  };
+
+  const getProviderStats = (data: MemoryPayload) => {
+      const entries = data?.routing_stats?.entries ?? [];
+      const providers = new Map<string, {
+          name: string;
+          actionCount: number;
+          totalInvocations: number;
+          winnerContributions: number;
+          strongScores: number;
+          providerFailures: number;
+          totalReward: number;
+          lastRunId: string | null;
+      }>();
+
+      for (const entry of entries) {
+          const provider = providers.get(entry.provider_name) ?? {
+              name: entry.provider_name,
+              actionCount: 0,
+              totalInvocations: 0,
+              winnerContributions: 0,
+              strongScores: 0,
+              providerFailures: 0,
+              totalReward: 0,
+              lastRunId: null,
+          };
+          provider.actionCount += 1;
+          provider.totalInvocations += entry.invocation_count ?? 0;
+          provider.winnerContributions += entry.winner_contribution_count ?? 0;
+          provider.strongScores += entry.strong_score_count ?? 0;
+          provider.providerFailures += entry.provider_failure_count ?? 0;
+          provider.totalReward += entry.total_reward ?? 0;
+          provider.lastRunId = entry.last_run_id ?? provider.lastRunId;
+          providers.set(entry.provider_name, provider);
+      }
+
+      return Array.from(providers.values())
+          .map((provider) => ({
+              ...provider,
+              contributionRate:
+                  provider.totalInvocations > 0
+                      ? (provider.winnerContributions / provider.totalInvocations) * 100
+                      : 0,
+              averageReward:
+                  provider.totalInvocations > 0
+                      ? provider.totalReward / provider.totalInvocations
+                      : 0,
+          }))
+          .sort(
+              (a, b) =>
+                  b.averageReward - a.averageReward ||
+                  b.contributionRate - a.contributionRate ||
+                  b.totalInvocations - a.totalInvocations
+          );
+  };
+
+  const getLearningNotes = (data: MemoryPayload) => {
       if (!data?.learning_memory?.entries) return [];
-      return data.learning_memory.entries; // assuming latest first if Python sorted it, else we sort here
+      return data.learning_memory.entries;
   };
 </script>
 
@@ -34,7 +119,7 @@
   <div class="content-wrapper">
       <header class="page-header">
           <h1>Learning Memory Ledger</h1>
-          <p>Cross-run compressed knowledge and provider win-rate analytics.</p>
+          <p>Cross-run compressed knowledge and provider routing telemetry.</p>
       </header>
 
       {#if isLoading}
@@ -55,15 +140,20 @@
                                   <li class="provider-item">
                                       <div class="provider-header">
                                           <span class="provider-name">{provider.name}</span>
-                                          <span class="provider-winrate">{provider.winRate.toFixed(1)}% Win Rate</span>
+                                          <span class="provider-winrate">{provider.contributionRate.toFixed(1)}% Winner Contribution</span>
                                       </div>
-                                      <div class="progress-track" title="{provider.totalWins} wins / {provider.totalAttempts} total">
-                                          <div class="progress-fill" style="width: {provider.winRate}%;"></div>
+                                      <div class="progress-track" title="{provider.winnerContributions} winner contributions / {provider.totalInvocations} invocations">
+                                          <div class="progress-fill" style="width: {provider.contributionRate}%;"></div>
                                       </div>
                                       <div class="provider-meta">
-                                          <span>Trials: <span class="data-value">{provider.totalAttempts}</span></span>
-                                          <span>Wins: <span class="data-value">{provider.totalWins}</span></span>
+                                          <span>Actions: <span class="data-value">{provider.actionCount}</span></span>
+                                          <span>Invocations: <span class="data-value">{provider.totalInvocations}</span></span>
+                                          <span>Winner contrib: <span class="data-value">{provider.winnerContributions}</span></span>
+                                          <span>Avg reward: <span class="data-value">{provider.averageReward.toFixed(2)}</span></span>
                                       </div>
+                                      {#if provider.lastRunId}
+                                          <div class="provider-run">Last run: {provider.lastRunId}</div>
+                                      {/if}
                                   </li>
                               {/each}
                           </ul>
@@ -83,12 +173,24 @@
                           {#each getLearningNotes(memoryData) as note}
                               <div class="card note-card">
                                   <div class="note-header">
-                                      <span class="note-type">{note.note_type.replace('_', ' ')}</span>
-                                      {#if note.discovery_run_id}
-                                          <span class="note-source">From: {note.discovery_run_id}</span>
+                                      <span class="note-type">{labelize(note.note_type)}</span>
+                                      <span class="note-source">{note.observation_count ?? 0} observations</span>
+                                  </div>
+                                  <div class="note-provenance">
+                                      {#if note.evidence_sources?.length}
+                                          <span>Evidence: {note.evidence_sources.map(labelize).join(', ')}</span>
+                                      {/if}
+                                      {#if note.source_run_ids?.length}
+                                          <span>Runs: {formatRunIds(note.source_run_ids)}</span>
                                       {/if}
                                   </div>
                                   <p class="note-text">{note.text}</p>
+                                  {#if note.problem_statements?.length}
+                                      <p class="note-problem">Seen in: {note.problem_statements[0]}</p>
+                                  {/if}
+                                  {#if formatDate(note.last_seen_at)}
+                                      <div class="note-updated">Updated: {formatDate(note.last_seen_at)}</div>
+                                  {/if}
                               </div>
                           {/each}
                       {/if}
@@ -215,12 +317,19 @@
   }
 
   .provider-meta {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 16px;
       font-size: 12px;
       color: var(--ink-secondary);
       text-transform: uppercase;
       letter-spacing: 0.05em;
+  }
+
+  .provider-run {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--ink-tertiary);
   }
 
   .data-value {
@@ -280,10 +389,33 @@
       color: var(--ink-tertiary);
   }
 
+  .note-provenance {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--ink-secondary);
+  }
+
   .note-text {
       font-size: 15px;
       line-height: 1.6;
       color: var(--ink-primary);
+  }
+
+  .note-problem {
+      margin-top: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink-secondary);
+  }
+
+  .note-updated {
+      margin-top: 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--ink-tertiary);
   }
 
   /* Empty States */

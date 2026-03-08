@@ -10,10 +10,17 @@ from argus.errors import ArgusValidationError
 @dataclass(frozen=True, slots=True)
 class ProviderRunConfig:
     name: str
+    provider_type: str | None = None
     model: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _normalize_non_empty_string(self.name, "name"))
+        if self.provider_type is not None:
+            object.__setattr__(
+                self,
+                "provider_type",
+                _normalize_non_empty_string(self.provider_type, "provider_type"),
+            )
         if self.model is not None:
             object.__setattr__(
                 self,
@@ -25,6 +32,7 @@ class ProviderRunConfig:
 @dataclass(frozen=True, slots=True)
 class RunConfig:
     provider_pool: tuple[str, ...]
+    budget: int | None = None
     providers: dict[str, ProviderRunConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -42,6 +50,12 @@ class RunConfig:
         if not normalized_pool:
             raise ArgusValidationError("provider_pool must include at least one provider.")
         object.__setattr__(self, "provider_pool", tuple(normalized_pool))
+        if self.budget is not None:
+            object.__setattr__(
+                self,
+                "budget",
+                _normalize_positive_int(self.budget, "budget"),
+            )
 
         normalized_providers: dict[str, ProviderRunConfig] = {}
         for provider_name, provider_config in self.providers.items():
@@ -90,7 +104,7 @@ class RunConfig:
                 raise ArgusValidationError(
                     f"[providers.{normalized_name}] must be a TOML table."
                 )
-            allowed_keys = {"model"}
+            allowed_keys = {"model", "type"}
             extra_keys = sorted(set(raw_provider_config) - allowed_keys)
             if extra_keys:
                 raise ArgusValidationError(
@@ -99,6 +113,12 @@ class RunConfig:
                 )
             providers[normalized_name] = ProviderRunConfig(
                 name=normalized_name,
+                provider_type=None
+                if "type" not in raw_provider_config
+                else _normalize_non_empty_string(
+                    raw_provider_config["type"],
+                    f"providers.{normalized_name}.type",
+                ),
                 model=None
                 if "model" not in raw_provider_config
                 else _normalize_non_empty_string(
@@ -108,7 +128,8 @@ class RunConfig:
             )
 
         provider_pool = _load_provider_pool(payload, providers)
-        return cls(provider_pool=provider_pool, providers=providers)
+        budget = None if "budget" not in payload else payload["budget"]
+        return cls(provider_pool=provider_pool, budget=budget, providers=providers)
 
     def provider_model(self, provider_name: str) -> str | None:
         normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
@@ -116,6 +137,15 @@ class RunConfig:
         if provider is None:
             return None
         return provider.model
+
+    def provider_type_name(self, provider_name: str) -> str:
+        normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
+        provider = self.providers.get(normalized_name)
+        if provider is None:
+            return normalized_name
+        if provider.provider_type is not None:
+            return provider.provider_type
+        return normalized_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,3 +211,13 @@ def _normalize_non_empty_string(value: object, field_name: str) -> str:
     if not normalized:
         raise ArgusValidationError(f"{field_name} must not be empty.")
     return normalized
+
+
+def _normalize_positive_int(value: object, field_name: str) -> int:
+    if not isinstance(value, int):
+        raise ArgusValidationError(
+            f"{field_name} must be an integer, got {type(value).__name__}."
+        )
+    if value <= 0:
+        raise ArgusValidationError(f"{field_name} must be a positive integer.")
+    return value

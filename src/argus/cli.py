@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 import shutil
 import sys
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Deque
 from datetime import datetime, timedelta, timezone
@@ -312,8 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--budget",
         type=int,
-        default=12,
-        help="Maximum search steps to spend once the runtime is implemented.",
+        default=None,
+        help=(
+            "Maximum search steps to spend. Overrides `budget` from --run-config when "
+            "both are provided."
+        ),
     )
     run_parser.add_argument(
         "--cost-profile",
@@ -392,8 +396,11 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run_parser.add_argument(
         "--budget",
         type=int,
-        default=12,
-        help="Search budget to validate for a future run invocation.",
+        default=None,
+        help=(
+            "Search budget to validate for a future run invocation. Overrides `budget` "
+            "from --run-config when both are provided."
+        ),
     )
     dry_run_parser.add_argument(
         "--cost-profile",
@@ -614,13 +621,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
-    if args.budget <= 0:
-        raise ArgusUserError("--budget must be a positive integer.")
-
     request = _resolve_run_request(args)
     policy = search_policy_for_cost_profile(args.cost_profile)
 
     run_config = _load_run_config(args.run_config_path)
+    budget = _resolve_budget(args=args, run_config=run_config)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
         run_config=run_config,
@@ -631,6 +636,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         _build_provider(
             config,
             provider_name,
+            provider_type=None if run_config is None else run_config.provider_type_name(provider_name),
             model=None if run_config is None else run_config.provider_model(provider_name),
         )
         for provider_name in provider_names
@@ -639,7 +645,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         run_id=run_id,
         request=request,
         provider_pool=provider_names,
-        budget=args.budget,
+        budget=budget,
         cost_profile=args.cost_profile,
         artifact_path=state_store.root_dir / run_id,
     )
@@ -651,20 +657,21 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         state_store=state_store,
     )
     _print_run_header(metadata)
-    
+
+    observer_thread: threading.Thread | None = None
+    observe_port: int | None = None
     if getattr(args, "observe", False):
-        import threading
-        from argus.observe import start_observer_server
-        port = getattr(args, "observe_port", 8080)
-        
-        server_thread = threading.Thread(
-            target=start_observer_server,
-            args=(config, run_id, port),
-            daemon=True,
+        observe_port = getattr(args, "observe_port", 8080)
+        observer_thread = _start_observer_server_in_background(
+            config,
+            run_id,
+            observe_port,
         )
-        server_thread.start()
-        print(f"Observation server running on http://localhost:{port}", file=sys.stderr)
-        
+        print(
+            f"Observer launching on http://localhost:{observe_port} for run {run_id}",
+            file=sys.stderr,
+        )
+
     provider = providers[0]
     runtime = SearchRuntime(
         provider=provider,
@@ -676,31 +683,32 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     )
     result = runtime.run(
         request=request,
-        budget=args.budget,
+        budget=budget,
         run_id=run_id,
     )
     elapsed = result.manifest.updated_at - result.manifest.created_at
     _print_run_recap(result=result, metadata=metadata, elapsed=elapsed)
     print(result.summary_markdown.rstrip())
+    if observer_thread is not None and observe_port is not None:
+        _wait_for_observer_thread(observer_thread, port=observe_port)
     return 0
 
 
 def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
-    if args.budget <= 0:
-        raise ArgusUserError("--budget must be a positive integer.")
-
     request = _resolve_run_request(args)
     policy = search_policy_for_cost_profile(args.cost_profile)
     run_config = _load_run_config(args.run_config_path)
+    budget = _resolve_budget(args=args, run_config=run_config)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
         run_config=run_config,
     )
-    _validate_provider_binaries(provider_names)
+    _validate_provider_binaries(provider_names, run_config=run_config)
     providers = [
         _build_provider(
             config,
             provider_name,
+            provider_type=None if run_config is None else run_config.provider_type_name(provider_name),
             model=None if run_config is None else run_config.provider_model(provider_name),
         )
         for provider_name in provider_names
@@ -710,7 +718,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         "status": "ok",
         "request_source": "prompt_file" if args.prompt_file is not None else "inline",
         "request_chars": len(request),
-        "budget": args.budget,
+        "budget": budget,
         "cost_profile": args.cost_profile,
         "search_policy": policy.to_dict(),
         "provider_pool": provider_names,
@@ -754,6 +762,7 @@ def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
         _build_provider(
             config,
             provider_name,
+            provider_type=None if run_config is None else run_config.provider_type_name(provider_name),
             model=None if run_config is None else run_config.provider_model(provider_name),
         )
         for provider_name in provider_names
@@ -953,23 +962,66 @@ def _handle_observe(args: argparse.Namespace, config: ArgusConfig) -> int:
     return 0
 
 
+def _start_observer_server_in_background(
+    config: ArgusConfig,
+    run_id: str,
+    port: int,
+) -> threading.Thread:
+    from argus.observe import start_observer_server
+
+    server_thread = threading.Thread(
+        target=start_observer_server,
+        args=(config, run_id, port),
+        daemon=True,
+    )
+    server_thread.start()
+    return server_thread
+
+
+def _wait_for_observer_thread(server_thread: threading.Thread, *, port: int) -> None:
+    if not server_thread.is_alive():
+        return
+
+    print(
+        (
+            f"Observer remains available on http://localhost:{port} "
+            "until you press Ctrl-C."
+        ),
+        file=sys.stderr,
+    )
+    try:
+        while server_thread.is_alive():
+            server_thread.join(timeout=0.5)
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        print("Stopping observer.", file=sys.stderr)
+
+
 def _build_provider(
     config: ArgusConfig,
     provider_name: str,
     *,
+    provider_type: str | None = None,
     model: str | None = None,
 ) -> Provider:
-    normalized_provider = provider_name.strip().lower()
-    provider_type = _PROVIDER_TYPES.get(normalized_provider)
-    if provider_type is None:
+    logical_name = provider_name.strip().lower()
+    if not logical_name:
+        raise ArgusUserError("Provider name must not be empty.")
+    normalized_provider_type = (
+        logical_name if provider_type is None else provider_type.strip().lower()
+    )
+    provider_class = _PROVIDER_TYPES.get(normalized_provider_type)
+    if provider_class is None:
         supported = ", ".join(sorted(_PROVIDER_TYPES))
         raise ArgusUserError(
-            f"Unknown provider {provider_name!r}. Supported providers: {supported}."
+            f"Unknown provider type {normalized_provider_type!r}. Supported providers: {supported}."
         )
-    return provider_type(
+    provider = provider_class(
         artifacts_root=config.provider_invocations_dir,
         model=model,
     )
+    provider.name = logical_name
+    return provider
 
 
 def _resolve_provider_names(
@@ -982,6 +1034,21 @@ def _resolve_provider_names(
     if run_config is not None:
         return list(run_config.provider_pool)
     return ["codex"]
+
+
+def _resolve_budget(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+) -> int:
+    budget = args.budget
+    if budget is None and run_config is not None:
+        budget = run_config.budget
+    if budget is None:
+        budget = 12
+    if not isinstance(budget, int) or budget <= 0:
+        raise ArgusUserError("--budget must be a positive integer.")
+    return budget
 
 
 def _load_run_config(path: Path | None) -> RunConfig | None:
@@ -1008,15 +1075,29 @@ def _parse_provider_names(value: str) -> list[str]:
     return provider_names
 
 
-def _validate_provider_binaries(provider_names: Sequence[str]) -> None:
+def _validate_provider_binaries(
+    provider_names: Sequence[str],
+    *,
+    run_config: RunConfig | None = None,
+) -> None:
     missing: list[str] = []
     for provider_name in provider_names:
-        provider_type = _PROVIDER_TYPES.get(provider_name)
-        if provider_type is None:
+        resolved_provider_type = (
+            provider_name
+            if run_config is None
+            else run_config.provider_type_name(provider_name)
+        ).strip().lower()
+        provider_class = _PROVIDER_TYPES.get(resolved_provider_type)
+        if provider_class is None:
             continue
-        binary = provider_type.default_binary
+        binary = provider_class.default_binary
         if shutil.which(binary) is None:
-            missing.append(f"{provider_name} (missing `{binary}` in PATH)")
+            if resolved_provider_type == provider_name:
+                missing.append(f"{provider_name} (missing `{binary}` in PATH)")
+            else:
+                missing.append(
+                    f"{provider_name} -> {resolved_provider_type} (missing `{binary}` in PATH)"
+                )
     if missing:
         raise ArgusUserError(
             "Provider binaries not found: " + ", ".join(missing) + "."

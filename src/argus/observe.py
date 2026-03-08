@@ -12,6 +12,13 @@ from argus.storage import FileSystemStateStore
 from argus.models import NodeLifecycleStatus
 
 
+def _memory_payload(store: FileSystemStateStore) -> dict[str, object]:
+    return {
+        "learning_memory": store.load_learning_memory().to_dict(),
+        "routing_stats": store.load_provider_routing_stats().to_dict(),
+    }
+
+
 def _node_termination_reason(node_payload: Mapping[str, object]) -> str | None:
     lifecycle_status = node_payload.get("lifecycle_status")
     metadata = node_payload.get("metadata")
@@ -70,6 +77,28 @@ def _annotate_nodes_with_termination_reason(nodes_payload: object) -> object:
     return annotated
 
 
+def _state_payload(persisted_run) -> dict[str, object]:
+    state = persisted_run.state
+    if state is None:
+        return {}
+
+    data = state.to_dict()
+    data["nodes"] = _annotate_nodes_with_termination_reason(data.get("nodes"))
+    data["manifest"] = persisted_run.manifest.to_dict()
+    data["final_recommendation"] = (
+        None
+        if persisted_run.final_recommendation is None
+        else persisted_run.final_recommendation.to_dict()
+    )
+    data["summary_markdown"] = persisted_run.summary_markdown
+    data["routing_summary"] = (
+        None
+        if persisted_run.routing_summary is None
+        else persisted_run.routing_summary.to_dict()
+    )
+    return data
+
+
 def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
     store = FileSystemStateStore(config.runs_dir)
     
@@ -116,20 +145,14 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
                         return
                         
                     if len(parts) == 2 and parts[1] == "memory":
-                        self._send_json({
-                            "learning_memory": store.load_learning_memory().to_dict(),
-                            "routing_stats": store.load_provider_routing_stats().to_dict(),
-                        })
+                        self._send_json(_memory_payload(store))
                         return
 
                     if len(parts) == 4 and parts[1] == "runs" and parts[3] == "state":
                         target_run_id = parts[2]
                         persisted_run = store.load_run(target_run_id)
-                        state = persisted_run.state
-                        if state:
-                            data = state.to_dict()
-                            data["nodes"] = _annotate_nodes_with_termination_reason(data.get("nodes"))
-                            data["manifest"] = persisted_run.manifest.to_dict()
+                        data = _state_payload(persisted_run)
+                        if data:
                             self._send_json(data)
                         else:
                             self._send_json({})
@@ -144,11 +167,8 @@ def start_observer_server(config: ArgusConfig, run_id: str | None, port: int):
 
                     if parsed_path == "/api/state" and default_run_id:
                         persisted_run = store.load_run(default_run_id)
-                        state = persisted_run.state
-                        if state:
-                            data = state.to_dict()
-                            data["nodes"] = _annotate_nodes_with_termination_reason(data.get("nodes"))
-                            data["manifest"] = persisted_run.manifest.to_dict()
+                        data = _state_payload(persisted_run)
+                        if data:
                             self._send_json(data)
                         else:
                             self._send_json({})

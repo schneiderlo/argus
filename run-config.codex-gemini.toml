@@ -1,0 +1,10 @@
+budget = 12
+provider_pool = ["codex", "gemini"]
+
+[providers.codex]
+# Optional: replace with your preferred Codex model id.
+model = "gpt-5.3-codex-spark"
+
+[providers.gemini]
+# Optional: replace with your preferred Gemini model id.
+model = "gemini-3-flash-preview"

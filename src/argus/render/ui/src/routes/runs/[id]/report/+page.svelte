@@ -7,14 +7,49 @@
   let currentRunId = $derived($page.params.id);
   let isLoading = $state(true);
 
-  // Derive the winner from the state
-  const isFinished = $derived(uiState.searchState?.manifest?.status === 'success' || uiState.searchState?.manifest?.status === 'completed');
-  const winnerNode = $derived(() => {
-    if (!uiState.searchState?.nodes || !uiState.searchState?.manifest?.winner_id) return null;
-    return uiState.searchState.nodes[uiState.searchState.manifest.winner_id];
-  });
-  
-  const winner = $derived(winnerNode());
+  const statusLabel = () => {
+      const status = uiState.searchState?.manifest?.status;
+      if (status === 'completed') return 'Completed';
+      if (status === 'failed') return 'Failed';
+      return 'In Progress';
+  };
+
+  const statusClass = () => {
+      const status = uiState.searchState?.manifest?.status;
+      if (status === 'completed') return 'success';
+      if (status === 'failed') return 'failed';
+      return 'running';
+  };
+
+  const isFinished = () => uiState.searchState?.manifest?.status === 'completed';
+
+  const getNode = (nodeId: string | null | undefined) => {
+      if (!nodeId || !uiState.searchState?.nodes) return null;
+      return uiState.searchState.nodes[nodeId] ?? null;
+  };
+
+  const finalRecommendation = () => uiState.searchState?.final_recommendation ?? null;
+
+  const winner = () => {
+      const recommendation = finalRecommendation();
+      return getNode(recommendation?.best_bet_node_id ?? uiState.searchState?.winner_ids?.[0]);
+  };
+
+  const conservativeOption = () => getNode(finalRecommendation()?.conservative_node_id);
+  const highUpsideOption = () => getNode(finalRecommendation()?.high_upside_node_id);
+
+  const rejectedButInsightful = () =>
+      (finalRecommendation()?.rejected_but_insightful_ids ?? [])
+          .map((nodeId: string) => getNode(nodeId))
+          .filter(Boolean);
+
+  const recommendationSummary = () =>
+      uiState.searchState?.summary_markdown ??
+      finalRecommendation()?.summary_markdown ??
+      null;
+
+  const detailList = (values: string[] | undefined | null) =>
+      Array.isArray(values) ? values.filter((value) => typeof value === 'string' && value.trim()) : [];
 
   $effect(() => {
       if (currentRunId && currentRunId !== uiState.activeRunId) {
@@ -53,44 +88,45 @@
           <h1>Final Recommendation Report</h1>
           <p>
               Run: <span class="run-id">{currentRunId}</span>
-              {#if isFinished}
-                  <span class="status-badge success" style="margin-left: 12px;">Completed</span>
-              {:else}
-                  <span class="status-badge running" style="margin-left: 12px;">In Progress</span>
-              {/if}
+              <span class="status-badge {statusClass()}" style="margin-left: 12px;">{statusLabel()}</span>
           </p>
       </header>
 
       {#if isLoading}
           <div class="loading-state">Loading run data...</div>
-      {:else if !isFinished}
+      {:else if !isFinished()}
           <div class="empty-state">
               <div class="empty-icon">⏳</div>
               <h2>Search In Progress</h2>
               <p>The final recommendation will be available once the Argus search loop concludes.</p>
               <a href="/runs/{currentRunId}" class="action-button mt-4" style="text-decoration: none; display: inline-block;">Return to Observer Graph</a>
           </div>
-      {:else if !winner}
+      {:else if !winner()}
           <div class="empty-state">
               <div class="empty-icon">⚠️</div>
               <h2>No Winner Selected</h2>
               <p>The search loop concluded without designating a winning candidate.</p>
           </div>
       {:else}
+          {@const recommendation = finalRecommendation()}
+          {@const winnerNode = winner()}
+          {@const conservativeNode = conservativeOption()}
+          {@const highUpsideNode = highUpsideOption()}
+          {@const rejectedNodes = rejectedButInsightful()}
           <div class="report-card winner-card">
               <div class="card-header">
                   <div class="winner-trophy">🏆</div>
                   <div>
-                      <h2 style="margin: 0; font-size: 24px;">Winning Candidate</h2>
-                      <div class="node-id" style="margin-top: 4px;">Node: {winner.node_id}</div>
+                      <h2 style="margin: 0; font-size: 24px;">Best Bet</h2>
+                      <div class="node-id" style="margin-top: 4px;">Node: {winnerNode.node_id}</div>
                   </div>
               </div>
 
               <div class="section-label">Thesis</div>
-              <p class="thesis-text">{winner.candidate.thesis}</p>
+              <p class="thesis-text">{winnerNode.candidate.thesis}</p>
               
               <div class="section-label">Mechanism</div>
-              <div class="mechanism-text">{winner.candidate.mechanism}</div>
+              <div class="mechanism-text">{winnerNode.candidate.mechanism}</div>
               
               <div class="divider"></div>
               
@@ -98,27 +134,111 @@
               <div class="score-matrix">
                   <div class="score-cell">
                       <span class="score-cell-label">Total Score</span>
-                      <span class="score-cell-value" style="color: #34d399;">{winner.score.total_score?.toFixed(2) || 'N/A'}</span>
+                      <span class="score-cell-value" style="color: #34d399;">{winnerNode.score?.total_score?.toFixed(2) || 'N/A'}</span>
                   </div>
                   <div class="score-cell">
                       <span class="score-cell-label">Confidence</span>
-                      <span class="score-cell-value">{((winner.score.confidence_estimate || 0) * 100).toFixed(0)}%</span>
+                      <span class="score-cell-value">{((winnerNode.score?.confidence_estimate || 0) * 100).toFixed(0)}%</span>
                   </div>
                   <div class="score-cell">
                       <span class="score-cell-label">Usefulness</span>
-                      <span class="score-cell-value">{winner.score.usefulness?.toFixed(2) || '0.00'}</span>
+                      <span class="score-cell-value">{winnerNode.score?.usefulness?.toFixed(2) || '0.00'}</span>
                   </div>
                   <div class="score-cell">
                       <span class="score-cell-label">Distinctiveness</span>
-                      <span class="score-cell-value">{winner.score.distinctiveness?.toFixed(2) || '0.00'}</span>
+                      <span class="score-cell-value">{winnerNode.score?.distinctiveness?.toFixed(2) || '0.00'}</span>
                   </div>
               </div>
 
-              {#if winner.critique?.summary}
+              {#if winnerNode.critique?.summary}
                   <div class="section-label">Evaluation Summary</div>
-                  <div class="critique-text">{winner.critique.summary}</div>
+                  <div class="critique-text">{winnerNode.critique.summary}</div>
               {/if}
           </div>
+
+          {#if recommendationSummary()}
+              <div class="report-card summary-card">
+                  <div class="section-label">Recommendation Summary</div>
+                  <div class="summary-markdown">{recommendationSummary()}</div>
+              </div>
+          {/if}
+
+          {#if conservativeNode || highUpsideNode || rejectedNodes.length > 0}
+              <div class="option-grid">
+                  {#if conservativeNode}
+                      <div class="report-card option-card">
+                          <div class="section-label">Conservative Option</div>
+                          <div class="node-id">{conservativeNode.node_id}</div>
+                          <p class="option-thesis">{conservativeNode.candidate.thesis}</p>
+                      </div>
+                  {/if}
+                  {#if highUpsideNode}
+                      <div class="report-card option-card">
+                          <div class="section-label">High Upside Option</div>
+                          <div class="node-id">{highUpsideNode.node_id}</div>
+                          <p class="option-thesis">{highUpsideNode.candidate.thesis}</p>
+                      </div>
+                  {/if}
+                  {#if rejectedNodes.length > 0}
+                      <div class="report-card option-card">
+                          <div class="section-label">Rejected But Insightful</div>
+                          <div class="rejected-list">
+                              {#each rejectedNodes as node}
+                                  <div class="rejected-item">
+                                      <div class="node-id">{node.node_id}</div>
+                                      <p class="option-thesis">{node.candidate.thesis}</p>
+                                  </div>
+                              {/each}
+                          </div>
+                      </div>
+                  {/if}
+              </div>
+          {/if}
+
+          {#if recommendation}
+              <div class="option-grid details-grid">
+                  {#if detailList(recommendation.assumptions).length > 0}
+                      <div class="report-card detail-card">
+                          <div class="section-label">Assumptions</div>
+                          <ul class="detail-list">
+                              {#each detailList(recommendation.assumptions) as item}
+                                  <li>{item}</li>
+                              {/each}
+                          </ul>
+                      </div>
+                  {/if}
+                  {#if detailList(recommendation.failure_modes).length > 0}
+                      <div class="report-card detail-card">
+                          <div class="section-label">Failure Modes</div>
+                          <ul class="detail-list">
+                              {#each detailList(recommendation.failure_modes) as item}
+                                  <li>{item}</li>
+                              {/each}
+                          </ul>
+                      </div>
+                  {/if}
+                  {#if detailList(recommendation.reversal_conditions).length > 0}
+                      <div class="report-card detail-card">
+                          <div class="section-label">Reversal Conditions</div>
+                          <ul class="detail-list">
+                              {#each detailList(recommendation.reversal_conditions) as item}
+                                  <li>{item}</li>
+                              {/each}
+                          </ul>
+                      </div>
+                  {/if}
+                  {#if detailList(recommendation.next_experiments).length > 0}
+                      <div class="report-card detail-card">
+                          <div class="section-label">Next Experiments</div>
+                          <ul class="detail-list">
+                              {#each detailList(recommendation.next_experiments) as item}
+                                  <li>{item}</li>
+                              {/each}
+                          </ul>
+                      </div>
+                  {/if}
+              </div>
+          {/if}
       {/if}
   </div>
 </div>
@@ -182,6 +302,12 @@
       color: #34d399;
       border: 1px solid #059669;
   }
+
+  .status-badge.failed {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid #dc2626;
+  }
   
   .node-id {
       font-family: var(--font-mono);
@@ -200,6 +326,13 @@
   .winner-card {
       border-color: rgba(16, 185, 129, 0.3);
       background: linear-gradient(180deg, rgba(16, 185, 129, 0.05) 0%, rgba(0,0,0,0) 200px), var(--surface-color);
+  }
+
+  .summary-card,
+  .option-card,
+  .detail-card {
+      margin-top: 24px;
+      padding: 28px;
   }
 
   .card-header {
@@ -258,6 +391,55 @@
       height: 1px;
       background: var(--border-subtle);
       margin: 40px 0;
+  }
+
+  .summary-markdown {
+      white-space: pre-wrap;
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--ink-primary);
+  }
+
+  .option-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+      margin-top: 24px;
+  }
+
+  .details-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @media (max-width: 900px) {
+      .option-grid,
+      .details-grid {
+          grid-template-columns: 1fr;
+      }
+  }
+
+  .option-thesis {
+      margin: 12px 0 0;
+      color: var(--ink-primary);
+      line-height: 1.6;
+  }
+
+  .rejected-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+  }
+
+  .rejected-item + .rejected-item {
+      padding-top: 16px;
+      border-top: 1px solid var(--border-subtle);
+  }
+
+  .detail-list {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--ink-primary);
+      line-height: 1.7;
   }
 
   /* Matrix Layout */

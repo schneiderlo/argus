@@ -45,6 +45,17 @@ Run a single Argus search:
 uv run argus run "Find the best retention strategy for a workflow-heavy product."
 ```
 
+Run a search and keep the observer web UI open for that run:
+
+```bash
+uv run argus run --observe --observe-port 8080 \
+  "Find the best retention strategy for a workflow-heavy product."
+```
+
+`--observe` starts the observer during the run and keeps it available afterward until you press
+`Ctrl-C`. Use plain `uv run argus observe` when you want to inspect an existing run without
+starting a new one.
+
 Choose how aggressively Argus spends search effort:
 
 ```bash
@@ -82,10 +93,11 @@ uv run argus run --provider codex,gemini,opencode \
   "Find the best retention strategy for a workflow-heavy product."
 ```
 
-Run through a TOML run-config that defines the provider pool and per-provider model overrides:
+Run through a TOML run-config that defines the provider pool, optional budget, and per-provider model overrides:
 
 ```toml
 # run-config.toml
+budget = 12
 provider_pool = ["codex", "gemini", "opencode"]
 
 [providers.codex]
@@ -105,6 +117,27 @@ uv run argus benchmark --run-config run-config.toml
 ```
 
 `--provider` still works and overrides `provider_pool` from the run-config for that command.
+`--budget` still works and overrides `budget` from the run-config for `argus run` and `argus dry-run`.
+
+You can also define logical provider aliases so different models from the same backend are
+routed and tracked independently:
+
+```toml
+budget = 12
+provider_pool = ["codex_fast", "gemini_flash", "gemini_flash_lite"]
+
+[providers.codex_fast]
+type = "codex"
+model = "gpt-5.3-codex-spark"
+
+[providers.gemini_flash]
+type = "gemini"
+model = "gemini-3-flash-preview"
+
+[providers.gemini_flash_lite]
+type = "gemini"
+model = "gemini-3.1-flash-lite-preview"
+```
 
 Validate prompt/config/provider setup before running a real search:
 
@@ -118,10 +151,13 @@ provider resolution, and local provider binary availability.
 
 Run-config rules:
 
+- `budget` is optional and applies to `argus run` and `argus dry-run`.
 - `provider_pool` is the ordered provider fallback/routing pool for the run.
 - Every provider listed in `provider_pool` must have a matching `[providers.<name>]` table.
+- `type` is optional when the provider table name is already `codex`, `gemini`, or `opencode`. Use `type` for aliases such as `codex_fast` or `gemini_flash_lite`.
 - `model` is optional per provider; if omitted, the provider default/env behavior is used.
 - If `--provider` is passed, that value is used instead of `provider_pool` from the file.
+- If `--budget` is passed, that value is used instead of `budget` from the file.
 
 Run the stored benchmark suite, or a single case:
 
@@ -214,4 +250,4 @@ Process guardrails:
 
 # Current tests
 
-uv run argus run --cost-profile max --run-config run-config.gemini.toml --prompt-file workspace.md
+uv run argus run --cost-profile max --run-config run-config.codex-gemini-trio.toml --prompt-file workspace.md
