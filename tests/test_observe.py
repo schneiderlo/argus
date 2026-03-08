@@ -166,6 +166,20 @@ class ObserverPayloadTests(unittest.TestCase):
         self.assertEqual(_state_payload(persisted_run), {})
 
 
+class ObserverReportSourceTests(unittest.TestCase):
+    def test_report_route_uses_typed_winner_fields_not_legacy_manifest_winner_id(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/runs/[id]/report/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("best_bet_node_id", source)
+        self.assertIn("winner_ids?.[0]", source)
+        self.assertNotIn("manifest?.winner_id", source)
+
+
 def _sample_problem_spec() -> ProblemSpec:
     return ProblemSpec(
         request="Design a replayable observer report for Argus runs.",

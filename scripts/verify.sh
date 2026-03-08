@@ -82,5 +82,6 @@ uv run --locked --no-sync --python 3.12 python -m compileall src tests
 uv run --locked --no-sync --python 3.12 python -m unittest discover -s tests -t .
 uv run --locked --no-sync --python 3.12 ruff check .
 npm --prefix "$UI_DIR" run check
+npm --prefix "$UI_DIR" run build
 
 echo "Verification complete."
