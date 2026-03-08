@@ -230,14 +230,74 @@ class SearchPolicy:
 
 
 _COST_PROFILE_NAMES = ("lean", "standard", "max")
+_SEARCH_PROFILE_NAMES = ("balanced", "portfolio")
 
 
 def cost_profile_names() -> tuple[str, str, str]:
     return _COST_PROFILE_NAMES
 
 
-def search_policy_for_cost_profile(profile_name: str) -> SearchPolicy:
+def search_profile_names() -> tuple[str, str]:
+    return _SEARCH_PROFILE_NAMES
+
+
+def normalize_search_profile_name(search_profile: str) -> str:
+    normalized = _normalize_non_empty_string(search_profile, "search_profile").lower()
+    if normalized not in _SEARCH_PROFILE_NAMES:
+        supported = ", ".join(_SEARCH_PROFILE_NAMES)
+        raise ArgusValidationError(
+            f"Unknown search profile {search_profile!r}. Supported search profiles: {supported}."
+        )
+    return normalized
+
+
+def default_search_profile_for_cost_profile(profile_name: str) -> str:
     normalized = _normalize_non_empty_string(profile_name, "profile_name").lower()
+    if normalized not in _COST_PROFILE_NAMES:
+        supported = ", ".join(_COST_PROFILE_NAMES)
+        raise ArgusValidationError(
+            f"Unknown cost profile {profile_name!r}. Supported cost profiles: {supported}."
+        )
+    if normalized == "lean":
+        return "balanced"
+    return "portfolio"
+
+
+def _island_policies_for_search_profile(
+    search_profile: str,
+) -> tuple[SearchIslandPolicy, ...]:
+    normalized = normalize_search_profile_name(search_profile)
+    if normalized == "balanced":
+        return (balanced_island_policy(),)
+    return (
+        balanced_island_policy(),
+        conservative_island_policy(),
+        upside_island_policy(),
+    )
+
+
+def _search_profile_name_for_island_policies(
+    island_policies: Sequence[SearchIslandPolicy],
+) -> str:
+    island_ids = tuple(policy.island_id for policy in island_policies)
+    if island_ids == ("balanced",):
+        return "balanced"
+    if island_ids == ("balanced", "conservative", "upside"):
+        return "portfolio"
+    return "custom"
+
+
+def search_policy_for_cost_profile(
+    profile_name: str,
+    *,
+    search_profile: str | None = None,
+) -> SearchPolicy:
+    normalized = _normalize_non_empty_string(profile_name, "profile_name").lower()
+    resolved_search_profile = (
+        default_search_profile_for_cost_profile(normalized)
+        if search_profile is None
+        else normalize_search_profile_name(search_profile)
+    )
     if normalized == "lean":
         return SearchPolicy(
             seed_target=4,
@@ -252,9 +312,12 @@ def search_policy_for_cost_profile(profile_name: str) -> SearchPolicy:
             reusable_learning_limit=2,
             provider_max_concurrency=2,
             compression_interval=4,
+            island_policies=_island_policies_for_search_profile(resolved_search_profile),
         )
     if normalized == "standard":
-        return SearchPolicy()
+        return SearchPolicy(
+            island_policies=_island_policies_for_search_profile(resolved_search_profile),
+        )
     if normalized == "max":
         return SearchPolicy(
             seed_target=12,
@@ -269,6 +332,7 @@ def search_policy_for_cost_profile(profile_name: str) -> SearchPolicy:
             reusable_learning_limit=6,
             provider_max_concurrency=4,
             compression_interval=6,
+            island_policies=_island_policies_for_search_profile(resolved_search_profile),
         )
     supported = ", ".join(_COST_PROFILE_NAMES)
     raise ArgusValidationError(
@@ -602,6 +666,12 @@ class SearchRuntime:
             metadata={
                 "runtime": "search_v1",
                 "provider_pool": list(self._providers),
+                "search_profile": _search_profile_name_for_island_policies(
+                    self._policy.island_policies
+                ),
+                "island_ids": [
+                    island.island_id for island in self._policy.island_policies
+                ],
             },
         )
         self._active_run_id = manifest.run_id
@@ -2348,6 +2418,10 @@ class SearchRuntime:
             "frontier_count": len(session.frontier_ids),
             "pruned_count": len(session.pruned_ids),
             "island_count": len(session.island_ids),
+            "search_profile": _search_profile_name_for_island_policies(
+                self._policy.island_policies
+            ),
+            "island_ids": list(session.island_ids),
         }
         if frame_summary is not None:
             metadata_patch["frame_summary"] = list(frame_summary)

@@ -49,6 +49,24 @@
       finalRecommendation()?.summary_markdown ??
       null;
 
+  const searchProfile = () => {
+      const value = uiState.searchState?.manifest?.metadata?.search_profile;
+      return typeof value === 'string' && value.trim() ? value : null;
+  };
+
+  const islandCount = () => {
+      const value = uiState.searchState?.manifest?.metadata?.island_count;
+      return typeof value === 'number' ? value : null;
+  };
+
+  const searchProfileLabel = () => {
+      const profile = searchProfile();
+      if (profile === 'portfolio') return 'Portfolio';
+      if (profile === 'balanced') return 'Balanced';
+      if (!profile) return null;
+      return profile.charAt(0).toUpperCase() + profile.slice(1);
+  };
+
   const summaryHtml = () => {
       const summary = recommendationSummary();
       return summary ? renderRichMarkdown(summary) : null;
@@ -96,6 +114,16 @@
               Run: <span class="run-id">{currentRunId}</span>
               <span class="status-badge {statusClass()}" style="margin-left: 12px;">{statusLabel()}</span>
           </p>
+          {#if searchProfileLabel() || islandCount() !== null}
+              <div class="run-meta-row">
+                  {#if searchProfileLabel()}
+                      <span class="meta-pill">Search Profile: {searchProfileLabel()}</span>
+                  {/if}
+                  {#if islandCount() !== null}
+                      <span class="meta-pill">Islands: {islandCount()}</span>
+                  {/if}
+              </div>
+          {/if}
       </header>
 
       {#if isLoading}
@@ -284,6 +312,31 @@
       font-size: 16px;
       display: flex;
       align-items: center;
+  }
+
+  .run-meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+  }
+
+  .meta-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--ink-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+  }
+
+  :global(.light-mode) .meta-pill {
+      background: rgba(0, 0, 0, 0.03);
   }
 
   .run-id {

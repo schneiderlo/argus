@@ -93,12 +93,13 @@ uv run argus run --provider codex,gemini,opencode \
   "Find the best retention strategy for a workflow-heavy product."
 ```
 
-Run through a TOML run-config that defines the provider pool plus common execution defaults such as budget, cost profile, and observer behavior:
+Run through a TOML run-config that defines the provider pool plus common execution defaults such as budget, cost profile, search profile, and observer behavior:
 
 ```toml
 # run-config.toml
 budget = 12
 cost_profile = "standard"
+search_profile = "portfolio"
 progress = "quiet"
 observe = true
 observe_port = 8080
@@ -124,7 +125,7 @@ uv run argus run --run-config run-config.toml \
 uv run argus benchmark --run-config run-config.toml
 ```
 
-`--provider`, `--budget`, `--cost-profile`, `--progress`, `--observe`, `--no-observe`, and `--observe-port` still work and override the corresponding run-config values for that command.
+`--provider`, `--budget`, `--cost-profile`, `--search-profile`, `--progress`, `--observe`, `--no-observe`, and `--observe-port` still work and override the corresponding run-config values for that command.
 
 You can also let the run-config carry the request input:
 
@@ -192,6 +193,9 @@ Run-config rules:
 - Set only one of `request` or `prompt_file` in a run-config.
 - `prompt_file` is resolved relative to the run-config file when it is not absolute.
 - `cost_profile` is optional and applies to `argus run`, `argus dry-run`, and `argus benchmark`.
+- `search_profile` is optional and applies to `argus run`, `argus dry-run`, and `argus benchmark`.
+- When `search_profile` is omitted, Argus chooses adaptively from the cost profile: `lean` defaults to `balanced`, while `standard` and `max` default to `portfolio`.
+- `balanced` uses one general-purpose island; `portfolio` enables balanced, conservative, and high-upside islands.
 - `progress` is optional and applies to `argus run`.
 - `verbose` is optional and applies to `argus run`.
 - `observe` and `observe_port` are optional and apply to `argus run`.
@@ -274,6 +278,7 @@ Current implementation status:
 - `argus run` and `argus benchmark` now also accept a comma-separated provider pool such as `--provider codex,gemini,opencode`. When a pool is present, Argus consults persisted provider-routing stats to choose which configured provider should handle each routed action, including `generate_seed`, `assess_novelty`, `evaluate_candidate`, and pairwise `rank`, using a deterministic UCB-style score over average historical reward plus an exploration bonus while still falling back to the first provider when the action has no prior signal yet.
 - If a routed provider fails or times out during a multi-provider run, Argus retries the same action against the remaining configured providers in deterministic fallback order and still records the failed attempt in routing telemetry.
 - `argus run`, `argus dry-run`, and `argus benchmark` now also accept `--cost-profile lean|standard|max`, which maps to concrete `SearchPolicy` presets so operators can trade search breadth against provider spend without manually editing runtime knobs.
+- `argus run`, `argus dry-run`, and `argus benchmark` now also accept `--search-profile balanced|portfolio`. When omitted, Argus picks an adaptive default from the cost profile so lean runs stay single-island while standard and max runs explore a three-island portfolio.
 - A provider-backed evaluator and semantic novelty layer now exist in `src/argus/eval/`; they use the audited provider interface to return structured score vectors, semantic novelty judgments, and pairwise `rank` decisions instead of relying on hand-written lexical heuristics.
 - `argus run` now executes the first working Argus runtime: it frames the problem, seeds and de-duplicates candidates, then runs an adaptive frontier loop that can widen search again, stress-test promising branches early, deepen or mutate survivors, combine complementary nodes, migrate strong ideas into plateaued islands through provider-mediated rewrites, revisit archived stepping stones when stage capacity exceeds the current frontier, compress learnings, and write a compiled recommendation package to `artifacts/runs/<run_id>/`.
 - Final answer compilation now uses a bounded pairwise tournament over the strongest archived finalists for `best_bet`, `conservative_option`, and `high_upside_option`, so a slightly lower pre-ranked candidate can still win by direct provider-judged head-to-head comparisons.

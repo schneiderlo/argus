@@ -500,6 +500,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr, "")
         self.assertEqual(payload["cost_profile"], "lean")
+        self.assertEqual(payload["search_profile"], "balanced")
         self.assertEqual(payload["search_policy"]["seed_target"], 4)
 
     def test_dry_run_command_reports_selected_cost_profile(self) -> None:
@@ -521,8 +522,63 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr, "")
         self.assertEqual(payload["cost_profile"], "lean")
+        self.assertEqual(payload["search_profile"], "balanced")
         self.assertEqual(payload["search_policy"]["seed_target"], 4)
         self.assertEqual(payload["search_policy"]["provider_max_concurrency"], 2)
+
+    def test_dry_run_command_defaults_standard_profile_to_portfolio_search(self) -> None:
+        with TemporaryRepoRoot() as root:
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(payload["cost_profile"], "standard")
+        self.assertEqual(payload["search_profile"], "portfolio")
+        self.assertEqual(
+            [island["island_id"] for island in payload["search_policy"]["islands"]],
+            ["balanced", "conservative", "upside"],
+        )
+
+    def test_dry_run_command_uses_search_profile_from_run_config_when_flag_missing(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5-codex"},
+                search_profile="balanced",
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(payload["search_profile"], "balanced")
+        self.assertEqual(
+            [island["island_id"] for island in payload["search_policy"]["islands"]],
+            ["balanced"],
+        )
 
     def test_dry_run_command_rejects_when_both_request_and_prompt_file_are_provided(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -781,6 +837,26 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("Cost profile: lean", stderr)
+        self.assertIn("Search profile: balanced", stderr)
+
+    def test_run_command_defaults_standard_profile_to_portfolio_search(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, _, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Cost profile: standard", stderr)
+        self.assertIn("Search profile: portfolio", stderr)
 
     def test_wait_for_observer_thread_reports_persistent_monitor_mode(self) -> None:
         class FakeThread:
@@ -916,7 +992,64 @@ class CliTests(unittest.TestCase):
         self.assertIsInstance(policy, SearchPolicy)
         self.assertEqual(policy.seed_target, 4)
         self.assertEqual(policy.provider_max_concurrency, 2)
+        self.assertEqual([island.island_id for island in policy.island_policies], ["balanced"])
         self.assertIn("Argus Recommendation", stdout)
+
+    def test_run_command_search_profile_flag_overrides_adaptive_default(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            captured: dict[str, object] = {}
+
+            class StubRuntime:
+                def __init__(self, **kwargs):
+                    captured["policy"] = kwargs.get("policy")
+
+                def run(self, *, request: str, budget: int, run_id: str):
+                    del request, budget, run_id
+                    return SimpleNamespace(
+                        manifest=SimpleNamespace(
+                            created_at=datetime(2026, 3, 7, tzinfo=timezone.utc),
+                            updated_at=datetime(2026, 3, 7, 0, 0, 5, tzinfo=timezone.utc),
+                        ),
+                        final_recommendation=SimpleNamespace(
+                            best_bet_node_id="node-0001",
+                            conservative_node_id=None,
+                            high_upside_node_id=None,
+                        ),
+                        state=SimpleNamespace(
+                            nodes={
+                                "node-0001": SimpleNamespace(
+                                    candidate=SimpleNamespace(
+                                        thesis="Explicit balanced candidate."
+                                    )
+                                )
+                            }
+                        ),
+                        summary_markdown="Argus Recommendation",
+                    )
+
+            with patch("argus.cli._build_provider", return_value=provider), patch(
+                "argus.cli.SearchRuntime",
+                StubRuntime,
+            ):
+                exit_code, _, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Find the best retention strategy.",
+                        "--search-profile",
+                        "balanced",
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Search profile: balanced", stderr)
+        policy = captured["policy"]
+        self.assertIsInstance(policy, SearchPolicy)
+        self.assertEqual([island.island_id for island in policy.island_policies], ["balanced"])
 
     def test_run_command_jsonl_mode_emits_progress_events(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -952,6 +1085,7 @@ class CliTests(unittest.TestCase):
             provider_pool=["codex"],
             budget=12,
             cost_profile="standard",
+            search_profile="portfolio",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
@@ -991,6 +1125,7 @@ class CliTests(unittest.TestCase):
             provider_pool=["codex"],
             budget=12,
             cost_profile="standard",
+            search_profile="portfolio",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
@@ -1056,6 +1191,7 @@ class CliTests(unittest.TestCase):
             provider_pool=["codex"],
             budget=12,
             cost_profile="standard",
+            search_profile="portfolio",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata)
@@ -1642,6 +1778,7 @@ def _write_run_config_fixture(
     request: str | None = None,
     prompt_file: str | None = None,
     cost_profile: str | None = None,
+    search_profile: str | None = None,
     progress: str | None = None,
     verbose: bool | None = None,
     observe: bool | None = None,
@@ -1657,6 +1794,8 @@ def _write_run_config_fixture(
         lines.extend([f'prompt_file = "{prompt_file}"', ""])
     if cost_profile is not None:
         lines.extend([f'cost_profile = "{cost_profile}"', ""])
+    if search_profile is not None:
+        lines.extend([f'search_profile = "{search_profile}"', ""])
     if progress is not None:
         lines.extend([f'progress = "{progress}"', ""])
     if verbose is not None:

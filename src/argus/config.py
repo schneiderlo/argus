@@ -36,6 +36,7 @@ class RunConfig:
     request: str | None = None
     prompt_file: Path | None = None
     cost_profile: str | None = None
+    search_profile: str | None = None
     progress: str | None = None
     verbose: bool | None = None
     observe: bool | None = None
@@ -82,6 +83,12 @@ class RunConfig:
                 self,
                 "cost_profile",
                 _normalize_non_empty_string(self.cost_profile, "cost_profile"),
+            )
+        if self.search_profile is not None:
+            object.__setattr__(
+                self,
+                "search_profile",
+                _normalize_non_empty_string(self.search_profile, "search_profile"),
             )
         if self.progress is not None:
             object.__setattr__(
@@ -151,6 +158,7 @@ class RunConfig:
             "request",
             "prompt_file",
             "cost_profile",
+            "search_profile",
             "progress",
             "verbose",
             "observe",
@@ -214,6 +222,9 @@ class RunConfig:
             request=request,
             prompt_file=prompt_file,
             cost_profile=None if "cost_profile" not in payload else payload["cost_profile"],
+            search_profile=None
+            if "search_profile" not in payload
+            else payload["search_profile"],
             progress=None if "progress" not in payload else payload["progress"],
             verbose=None if "verbose" not in payload else payload["verbose"],
             observe=None if "observe" not in payload else payload["observe"],

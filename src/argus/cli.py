@@ -26,7 +26,14 @@ from argus.inspection import (
 )
 from argus.models import LearningNote, LearningNoteType, OutcomeFeedback, OutcomeFeedbackStatus
 from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider, Provider
-from argus.search import SearchRuntime, cost_profile_names, search_policy_for_cost_profile
+from argus.search import (
+    SearchRuntime,
+    cost_profile_names,
+    default_search_profile_for_cost_profile,
+    normalize_search_profile_name,
+    search_policy_for_cost_profile,
+    search_profile_names,
+)
 from argus.storage import FileSystemStateStore
 from argus.progress import FileProgressSink, ProgressEvent, ProgressSink
 
@@ -38,6 +45,7 @@ _PROVIDER_TYPES = {
 
 _PROGRESS_MODES = ("auto", "plain", "jsonl", "quiet")
 _COST_PROFILE_CHOICES = cost_profile_names()
+_SEARCH_PROFILE_CHOICES = search_profile_names()
 
 
 _ACTION_LABELS: dict[str, str] = {
@@ -60,6 +68,7 @@ class _RunProgressMetadata:
     provider_pool: list[str]
     budget: int
     cost_profile: str
+    search_profile: str
     artifact_path: Path
 
 
@@ -337,6 +346,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
+        "--search-profile",
+        choices=_SEARCH_PROFILE_CHOICES,
+        default=None,
+        help=(
+            "Search-shape preset. `balanced` uses one general-purpose island, while "
+            "`portfolio` explores balanced, conservative, and high-upside islands. "
+            "Overrides `search_profile` from --run-config when both are provided."
+        ),
+    )
+    run_parser.add_argument(
         "--provider",
         default=None,
         help=(
@@ -444,6 +463,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     dry_run_parser.add_argument(
+        "--search-profile",
+        choices=_SEARCH_PROFILE_CHOICES,
+        default=None,
+        help=(
+            "Search-shape preset to validate. `balanced` uses one island, while "
+            "`portfolio` enables balanced, conservative, and high-upside islands."
+        ),
+    )
+    dry_run_parser.add_argument(
         "--provider",
         default=None,
         help=(
@@ -485,6 +513,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Search-cost preset to apply to each benchmark case. Overrides "
             "`cost_profile` from --run-config when both are provided."
+        ),
+    )
+    benchmark_parser.add_argument(
+        "--search-profile",
+        choices=_SEARCH_PROFILE_CHOICES,
+        default=None,
+        help=(
+            "Search-shape preset for benchmark runs. `balanced` uses one island, "
+            "while `portfolio` enables balanced, conservative, and high-upside islands."
         ),
     )
     benchmark_parser.add_argument(
@@ -663,11 +700,16 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     resolved_request = _resolve_run_request(args, run_config=run_config)
     request = resolved_request.text
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
+    search_profile = _resolve_search_profile(
+        args=args,
+        run_config=run_config,
+        cost_profile=cost_profile,
+    )
     progress_mode = _resolve_progress_mode(args=args, run_config=run_config)
     verbose = _resolve_verbose(args=args, run_config=run_config)
     observe = _resolve_observe(args=args, run_config=run_config)
     observe_port = _resolve_observe_port(args=args, run_config=run_config)
-    policy = search_policy_for_cost_profile(cost_profile)
+    policy = search_policy_for_cost_profile(cost_profile, search_profile=search_profile)
     budget = _resolve_budget(args=args, run_config=run_config)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
@@ -690,6 +732,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         provider_pool=provider_names,
         budget=budget,
         cost_profile=cost_profile,
+        search_profile=search_profile,
         artifact_path=state_store.root_dir / run_id,
     )
     sink = _build_progress_sink(
@@ -740,7 +783,12 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     resolved_request = _resolve_run_request(args, run_config=run_config)
     request = resolved_request.text
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
-    policy = search_policy_for_cost_profile(cost_profile)
+    search_profile = _resolve_search_profile(
+        args=args,
+        run_config=run_config,
+        cost_profile=cost_profile,
+    )
+    policy = search_policy_for_cost_profile(cost_profile, search_profile=search_profile)
     budget = _resolve_budget(args=args, run_config=run_config)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
@@ -763,6 +811,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         "request_chars": len(request),
         "budget": budget,
         "cost_profile": cost_profile,
+        "search_profile": search_profile,
         "search_policy": policy.to_dict(),
         "provider_pool": provider_names,
         "provider_models": {
@@ -784,6 +833,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     print(f"request_chars={payload['request_chars']}")
     print(f"budget={payload['budget']}")
     print(f"cost_profile={payload['cost_profile']}")
+    print(f"search_profile={payload['search_profile']}")
     print("provider_pool=" + ",".join(provider_names))
     for provider in providers:
         print(f"provider_model[{provider.name}]={getattr(provider, 'model', None)}")
@@ -797,7 +847,12 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
 def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
     run_config = _load_run_config(args.run_config_path)
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
-    policy = search_policy_for_cost_profile(cost_profile)
+    search_profile = _resolve_search_profile(
+        args=args,
+        run_config=run_config,
+        cost_profile=cost_profile,
+    )
+    policy = search_policy_for_cost_profile(cost_profile, search_profile=search_profile)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
         run_config=run_config,
@@ -962,6 +1017,7 @@ def _print_run_header(metadata: _RunProgressMetadata) -> None:
     print(f"Providers: {', '.join(metadata.provider_pool)}", file=sys.stderr)
     print(f"Search budget: {metadata.budget} steps", file=sys.stderr)
     print(f"Cost profile: {metadata.cost_profile}", file=sys.stderr)
+    print(f"Search profile: {metadata.search_profile}", file=sys.stderr)
     print(f"Artifacts: {metadata.artifact_path}", file=sys.stderr)
     print(
         f"Tip: watch with `uv run argus status {metadata.run_id}`",
@@ -1110,6 +1166,23 @@ def _resolve_cost_profile(
         supported = ", ".join(_COST_PROFILE_CHOICES)
         raise ArgusUserError(f"cost_profile must be one of: {supported}.")
     return normalized
+
+
+def _resolve_search_profile(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None,
+    cost_profile: str,
+) -> str:
+    search_profile = args.search_profile
+    if search_profile is None and run_config is not None:
+        search_profile = run_config.search_profile
+    if search_profile is None:
+        return default_search_profile_for_cost_profile(cost_profile)
+    try:
+        return normalize_search_profile_name(search_profile)
+    except ArgusValidationError as exc:
+        raise ArgusUserError(str(exc)) from exc
 
 
 def _resolve_progress_mode(
