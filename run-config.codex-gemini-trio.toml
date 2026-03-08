@@ -1,22 +1,22 @@
-budget = 12
-cost_profile = "standard"
+budget = 24
+cost_profile = "max"
 progress = "auto"
 verbose = false
-observe = false
+observe = true
 observe_port = 8080
 # Optional request input. Set either `request` or `prompt_file`, not both.
 # request = """Find the best retention strategy for a workflow-heavy product."""
-prompt_file = "workspace.md"
-provider_pool = ["codex_spark", "gemini_flash", "gemini_flash_lite"]
+prompt_file = "new_paradigm.md"
+provider_pool = ["gemini_flash"]
 
-[providers.codex_spark]
-type = "codex"
-model = "gpt-5.3-codex-spark"
+# [providers.codex_spark]
+# type = "codex"
+# model = "gpt-5.3-codex-spark"
 
 [providers.gemini_flash]
 type = "gemini"
 model = "gemini-3-flash-preview"
 
-[providers.gemini_flash_lite]
-type = "gemini"
-model = "gemini-3.1-flash-lite-preview"
+# [providers.gemini_flash_lite]
+# type = "gemini"
+# model = "gemini-3.1-flash-lite-preview"

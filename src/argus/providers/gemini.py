@@ -35,8 +35,6 @@ class GeminiProvider(CliProviderBase):
             prompt_text,
             "--output-format",
             "json",
-            "--approval-mode",
-            "plan",
         ]
         if self.model is not None:
             command.extend(["--model", self.model])
