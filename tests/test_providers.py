@@ -10,6 +10,7 @@ from threading import Lock
 import unittest
 from unittest.mock import patch
 
+from argus.benchmarks import benchmark_comparison_assessment_schema
 from argus.eval.evaluator import evaluation_assessment_schema, pairwise_ranking_assessment_schema
 from argus.eval.novelty import novelty_assessment_schema
 from argus.models import ActionType, Candidate, ProblemSpec
@@ -406,6 +407,70 @@ class CodexProviderTests(unittest.TestCase):
             "Prefer operational clarity, tractability, plausibility, robustness, and confidence over raw upside.",
             prompt_text,
         )
+
+    def test_run_action_materializes_action_specific_benchmark_comparison_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_benchmark_comparison_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name="judge_benchmark_modes",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "benchmark_case": {
+                        "case_id": "product-strategy-retention",
+                        "title": "Fixture benchmark case",
+                        "family": "product_strategy",
+                        "budget": 9,
+                        "evaluation_notes": ["Prefer durable workflow habits over decorative engagement loops."],
+                        "expected_qualities": ["Produce differentiated bets with explicit tradeoffs."],
+                        "tags": ["fixture"],
+                    },
+                    "mode_outputs": [
+                        {
+                            "runtime_mode": "adaptive",
+                            "summary_markdown": "Adaptive summary",
+                            "final_recommendation": _final_recommendation_payload(),
+                            "selected_theses": {
+                                "best_bet": "Adaptive best bet",
+                                "conservative": "Adaptive conservative",
+                                "high_upside": "Adaptive upside",
+                            },
+                        },
+                        {
+                            "runtime_mode": "research",
+                            "summary_markdown": "Research summary",
+                            "final_recommendation": _final_recommendation_payload(),
+                            "selected_theses": {
+                                "best_bet": "Research best bet",
+                                "conservative": "Research conservative",
+                                "high_upside": "Research upside",
+                            },
+                            "research_final_decision": {
+                                "summary": "Typed final decision doc.",
+                            },
+                        },
+                    ],
+                },
+                output_schema=benchmark_comparison_assessment_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+        self.assertIn("Role: benchmark comparison judge for Argus runtime modes.", prompt_text)
+        self.assertIn("Primary question: which runtime output would a serious team act on next", prompt_text)
+        self.assertIn("Anti-style rule: do not reward longer prose", prompt_text)
+        self.assertIn("Comparison scope: evaluate all 2 runtime modes", prompt_text)
+        self.assertEqual(response.payload.winner_runtime_mode.value, "research")
 
     def test_run_action_materializes_action_specific_migration_prompt(self) -> None:
         with TemporaryDirectory() as directory:
@@ -1256,6 +1321,60 @@ def _pairwise_ranking_payload() -> dict[str, object]:
         "decisive_advantages": ["Cleaner implementation path."],
         "decisive_risks": ["May leave some upside on the table."],
         "confidence": 0.81,
+    }
+
+
+def _benchmark_comparison_payload() -> dict[str, object]:
+    return {
+        "winner_runtime_mode": "research",
+        "runner_up_runtime_mode": "adaptive",
+        "summary": "The research runtime produces the most decision-grade benchmark artifact bundle.",
+        "confidence": 0.84,
+        "decisive_reasons": [
+            "It preserves clearer runner-up logic and explicit reversal conditions.",
+            "Its next experiment is more discriminating and actionable.",
+        ],
+        "watchouts": ["The richer artifact set still has a latency cost."],
+        "mode_judgments": [
+            {
+                "runtime_mode": "adaptive",
+                "decision_quality": 0.74,
+                "actionability": 0.8,
+                "tradeoff_clarity": 0.7,
+                "risk_quality": 0.72,
+                "experiment_quality": 0.78,
+                "overall_score": 0.76,
+                "strengths": ["Good rollout clarity."],
+                "weaknesses": ["Less explicit runner-up logic."],
+                "evidence": ["Summary markdown includes a viable first experiment."],
+            },
+            {
+                "runtime_mode": "research",
+                "decision_quality": 0.92,
+                "actionability": 0.89,
+                "tradeoff_clarity": 0.94,
+                "risk_quality": 0.9,
+                "experiment_quality": 0.91,
+                "overall_score": 0.92,
+                "strengths": ["Best decision package."],
+                "weaknesses": ["Costs more authoring time."],
+                "evidence": ["Final decision doc names the runner-up and reversal conditions."],
+            },
+        ],
+    }
+
+
+def _final_recommendation_payload() -> dict[str, object]:
+    return {
+        "best_bet_node_id": "node-001",
+        "conservative_node_id": "node-002",
+        "high_upside_node_id": "node-003",
+        "rejected_but_insightful_ids": ["node-004"],
+        "summary_markdown": "Benchmark-ready summary.",
+        "next_experiments": ["Run the first discriminating spike."],
+        "assumptions": ["Operators value auditable outputs."],
+        "failure_modes": ["The artifact package may still be too heavy."],
+        "reversal_conditions": ["If the decision package is not materially more actionable."],
     }
 
 

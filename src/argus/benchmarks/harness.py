@@ -8,9 +8,12 @@ import json
 from pathlib import Path
 
 from argus.benchmarks.dataset import load_benchmark_cases, select_benchmark_cases
+from argus.benchmarks.judging import BenchmarkComparisonJudge, BenchmarkModeSubmission
 from argus.benchmarks.models import (
     BenchmarkCase,
+    BenchmarkCaseComparison,
     BenchmarkCaseResult,
+    BenchmarkComparisonStatus,
     BenchmarkRuntimeMode,
     BenchmarkRunManifest,
     BenchmarkStatus,
@@ -26,6 +29,21 @@ from argus.storage import FileSystemStateStore
 class BenchmarkRunResult:
     session_dir: Path
     manifest: BenchmarkRunManifest
+
+
+@dataclass(frozen=True, slots=True)
+class _CompletedBenchmarkModeOutput:
+    runtime_mode: BenchmarkRuntimeMode
+    summary_markdown: str
+    final_recommendation: FinalRecommendation
+    state: SearchState
+    research_final_decision: dict[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CaseExecutionResult:
+    result: BenchmarkCaseResult
+    completed_output: _CompletedBenchmarkModeOutput | None = None
 
 
 class BenchmarkHarness:
@@ -60,6 +78,7 @@ class BenchmarkHarness:
         )
         self._policy = policy
         self._runtime_modes = self._normalize_runtime_modes(runtime_modes)
+        self._comparison_judge = BenchmarkComparisonJudge(provider=self._provider)
 
     def _normalize_provider_pool(
         self,
@@ -152,27 +171,37 @@ class BenchmarkHarness:
             for runtime_mode in self._runtime_modes
         }
         case_results: list[BenchmarkCaseResult] = []
+        case_comparisons: list[BenchmarkCaseComparison] = []
         overall_status = BenchmarkStatus.COMPLETED
         for case in selected_cases:
             case_dir = session_dir / "cases" / case.case_id
             case_dir.mkdir(parents=True, exist_ok=False)
             _write_json(case_dir / "case.json", case.to_dict())
+            case_mode_outputs: list[_CompletedBenchmarkModeOutput] = []
             for runtime_mode in self._runtime_modes:
-                case_results.append(
-                    self._run_case(
-                        runtime=runtimes[runtime_mode],
-                        runtime_mode=runtime_mode,
-                        session_id=session_id,
-                        session_dir=session_dir,
-                        case=case,
-                        case_dir=case_dir,
-                        previous_output_digest=previous_digests.get(
-                            (case.case_id, runtime_mode)
-                        ),
-                    )
+                execution = self._run_case(
+                    runtime=runtimes[runtime_mode],
+                    runtime_mode=runtime_mode,
+                    session_id=session_id,
+                    session_dir=session_dir,
+                    case=case,
+                    case_dir=case_dir,
+                    previous_output_digest=previous_digests.get((case.case_id, runtime_mode)),
                 )
-                if case_results[-1].status is BenchmarkStatus.FAILED:
+                case_results.append(execution.result)
+                if execution.completed_output is not None:
+                    case_mode_outputs.append(execution.completed_output)
+                if execution.result.status is BenchmarkStatus.FAILED:
                     overall_status = BenchmarkStatus.FAILED
+            comparison = self._compare_case(
+                case=case,
+                case_dir=case_dir,
+                mode_outputs=case_mode_outputs,
+                all_modes_completed=len(case_mode_outputs) == len(self._runtime_modes),
+            )
+            case_comparisons.append(comparison)
+            if comparison.status is BenchmarkComparisonStatus.FAILED:
+                overall_status = BenchmarkStatus.FAILED
 
         manifest = BenchmarkRunManifest(
             session_id=session_id,
@@ -183,6 +212,7 @@ class BenchmarkHarness:
             cases_dir=str(self._cases_dir),
             previous_session_id=None if previous_manifest is None else previous_manifest.session_id,
             case_results=case_results,
+            case_comparisons=case_comparisons,
         )
         _write_json(session_dir / "manifest.json", manifest.to_dict())
         self._latest_pointer.parent.mkdir(parents=True, exist_ok=True)
@@ -217,7 +247,7 @@ class BenchmarkHarness:
         case: BenchmarkCase,
         case_dir: Path,
         previous_output_digest: str | None,
-    ) -> BenchmarkCaseResult:
+    ) -> _CaseExecutionResult:
         mode_dir = case_dir / runtime_mode.value
         mode_dir.mkdir(parents=True, exist_ok=False)
 
@@ -262,7 +292,7 @@ class BenchmarkHarness:
                 failure_type=type(exc).__name__,
             )
             _write_json(mode_dir / "result.json", result.to_dict())
-            return result
+            return _CaseExecutionResult(result=result)
 
         summary_relative_path = Path("cases") / case.case_id / runtime_mode.value / "summary.md"
         final_relative_path = (
@@ -308,7 +338,113 @@ class BenchmarkHarness:
             final_recommendation_path=str(final_relative_path),
         )
         _write_json(mode_dir / "result.json", result.to_dict())
-        return result
+        research_final_decision = None
+        research_bundle = getattr(search_result, "research_bundle", None)
+        if research_bundle is not None and research_bundle.final_decision_doc is not None:
+            research_final_decision = research_bundle.final_decision_doc.to_dict()
+        return _CaseExecutionResult(
+            result=result,
+            completed_output=_CompletedBenchmarkModeOutput(
+                runtime_mode=runtime_mode,
+                summary_markdown=search_result.summary_markdown,
+                final_recommendation=search_result.final_recommendation,
+                state=search_result.state,
+                research_final_decision=research_final_decision,
+            ),
+        )
+
+    def _compare_case(
+        self,
+        *,
+        case: BenchmarkCase,
+        case_dir: Path,
+        mode_outputs: Sequence[_CompletedBenchmarkModeOutput],
+        all_modes_completed: bool,
+    ) -> BenchmarkCaseComparison:
+        comparison_relative_path = Path("cases") / case.case_id / "comparison.json"
+        comparison_path = case_dir / "comparison.json"
+        markdown_relative_path = Path("cases") / case.case_id / "comparison.md"
+        markdown_path = case_dir / "comparison.md"
+        runtime_modes = (
+            list(self._runtime_modes)
+            if not all_modes_completed or len(mode_outputs) < 2
+            else [output.runtime_mode for output in mode_outputs]
+        )
+
+        if len(mode_outputs) < 2:
+            comparison = BenchmarkCaseComparison(
+                case_id=case.case_id,
+                family=case.family,
+                runtime_modes=runtime_modes,
+                status=BenchmarkComparisonStatus.SKIPPED,
+                comparison_path=str(comparison_relative_path),
+                skipped_reason="Need at least two completed runtime modes to compare benchmark outputs.",
+            )
+            _write_json(comparison_path, comparison.to_dict())
+            return comparison
+
+        if not all_modes_completed:
+            comparison = BenchmarkCaseComparison(
+                case_id=case.case_id,
+                family=case.family,
+                runtime_modes=runtime_modes,
+                status=BenchmarkComparisonStatus.SKIPPED,
+                comparison_path=str(comparison_relative_path),
+                skipped_reason="Skipped because not all configured runtime modes completed successfully.",
+            )
+            _write_json(comparison_path, comparison.to_dict())
+            return comparison
+
+        try:
+            assessment = self._comparison_judge.compare(
+                case=case,
+                submissions=[
+                    BenchmarkModeSubmission(
+                        runtime_mode=output.runtime_mode,
+                        summary_markdown=output.summary_markdown,
+                        final_recommendation=output.final_recommendation,
+                        best_bet_thesis=_node_thesis(
+                            output.state,
+                            output.final_recommendation.best_bet_node_id,
+                        ),
+                        conservative_thesis=_optional_node_thesis(
+                            output.state,
+                            output.final_recommendation.conservative_node_id,
+                        ),
+                        high_upside_thesis=_optional_node_thesis(
+                            output.state,
+                            output.final_recommendation.high_upside_node_id,
+                        ),
+                        research_final_decision=output.research_final_decision,
+                    )
+                    for output in mode_outputs
+                ],
+            )
+        except Exception as exc:
+            comparison = BenchmarkCaseComparison(
+                case_id=case.case_id,
+                family=case.family,
+                runtime_modes=runtime_modes,
+                status=BenchmarkComparisonStatus.FAILED,
+                comparison_path=str(comparison_relative_path),
+                error=str(exc),
+                failure_type=type(exc).__name__,
+            )
+            _write_json(comparison_path, comparison.to_dict())
+            return comparison
+
+        comparison = BenchmarkCaseComparison(
+            case_id=case.case_id,
+            family=case.family,
+            runtime_modes=runtime_modes,
+            status=BenchmarkComparisonStatus.COMPLETED,
+            assessment=assessment,
+            comparison_path=str(comparison_relative_path),
+            markdown_path=str(markdown_relative_path),
+        )
+        markdown_path.write_text(_render_case_comparison_markdown(case, comparison), encoding="utf-8")
+        _write_json(comparison_path, comparison.to_dict())
+        return comparison
 
     def _allocate_session_id(self, created_at: datetime) -> str:
         self._output_root.mkdir(parents=True, exist_ok=True)
@@ -364,6 +500,28 @@ def render_benchmark_report(result: BenchmarkRunResult) -> str:
             f"failure_type={case_result.failure_type} "
             f"error={case_result.error}"
         )
+    for comparison in sorted(
+        result.manifest.case_comparisons,
+        key=lambda item: item.case_id,
+    ):
+        if comparison.status is BenchmarkComparisonStatus.COMPLETED and comparison.assessment is not None:
+            lines.append(
+                f"{comparison.case_id}[comparison]: completed "
+                f"winner={comparison.assessment.winner_runtime_mode.value} "
+                f"runner_up={comparison.assessment.runner_up_runtime_mode.value} "
+                f"confidence={comparison.assessment.confidence:.2f}"
+            )
+            continue
+        if comparison.status is BenchmarkComparisonStatus.SKIPPED:
+            lines.append(
+                f"{comparison.case_id}[comparison]: skipped reason={comparison.skipped_reason}"
+            )
+            continue
+        lines.append(
+            f"{comparison.case_id}[comparison]: failed "
+            f"failure_type={comparison.failure_type} "
+            f"error={comparison.error}"
+        )
     return "\n".join(lines)
 
 
@@ -385,3 +543,51 @@ def _optional_node_thesis(state: SearchState, node_id: str | None) -> str | None
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _render_case_comparison_markdown(
+    case: BenchmarkCase,
+    comparison: BenchmarkCaseComparison,
+) -> str:
+    if comparison.assessment is None:
+        raise ArgusValidationError(
+            "comparison.assessment must be present to render comparison markdown."
+        )
+    assessment = comparison.assessment
+    lines = [
+        f"# Benchmark Comparison: {case.title}",
+        "",
+        f"Case ID: `{case.case_id}`",
+        f"Winner: `{assessment.winner_runtime_mode.value}`",
+        f"Runner-up: `{assessment.runner_up_runtime_mode.value}`",
+        f"Confidence: {assessment.confidence:.2f}",
+        "",
+        "## Verdict",
+        assessment.summary,
+        "",
+        "## Decisive Reasons",
+    ]
+    lines.extend(f"- {reason}" for reason in assessment.decisive_reasons)
+    if assessment.watchouts:
+        lines.extend(["", "## Watchouts"])
+        lines.extend(f"- {watchout}" for watchout in assessment.watchouts)
+    lines.extend(["", "## Mode Scores"])
+    for judgment in assessment.mode_judgments:
+        lines.extend(
+            [
+                f"### {judgment.runtime_mode.value}",
+                f"- overall_score: {judgment.overall_score:.2f}",
+                f"- decision_quality: {judgment.decision_quality:.2f}",
+                f"- actionability: {judgment.actionability:.2f}",
+                f"- tradeoff_clarity: {judgment.tradeoff_clarity:.2f}",
+                f"- risk_quality: {judgment.risk_quality:.2f}",
+                f"- experiment_quality: {judgment.experiment_quality:.2f}",
+            ]
+        )
+        if judgment.strengths:
+            lines.append("- strengths: " + "; ".join(judgment.strengths))
+        if judgment.weaknesses:
+            lines.append("- weaknesses: " + "; ".join(judgment.weaknesses))
+        if judgment.evidence:
+            lines.append("- evidence: " + "; ".join(judgment.evidence))
+    return "\n".join(lines).strip() + "\n"

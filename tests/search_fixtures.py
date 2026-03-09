@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Lock
 import time
 
+from argus.benchmarks import BenchmarkRuntimeMode
 from argus.errors import ArgusValidationError
 from argus.models import (
     ActionType,
@@ -526,6 +527,88 @@ class SearchFixtureProvider:
             rejected_proposal_ids=[proposal_id for proposal_id in proposal_ids if proposal_id != "proposal-ledger"],
         )
         return FinalDecisionPackage(comparison_matrix=matrix, final_decision_doc=decision)
+
+    def _handle_judge_benchmark_modes(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        mode_outputs = list(input_payload["mode_outputs"])
+        runtime_modes = [
+            BenchmarkRuntimeMode(str(mode_output["runtime_mode"]))
+            for mode_output in mode_outputs
+        ]
+        preferred_order = [
+            BenchmarkRuntimeMode.RESEARCH,
+            BenchmarkRuntimeMode.ADAPTIVE,
+            BenchmarkRuntimeMode.STAGED,
+        ]
+        sorted_modes = [
+            mode
+            for mode in preferred_order
+            if mode in runtime_modes
+        ]
+        if len(sorted_modes) < 2:
+            raise ArgusValidationError(
+                "fixture benchmark comparison requires at least two runtime modes."
+            )
+        winner = sorted_modes[0]
+        runner_up = sorted_modes[1]
+        score_map = {
+            BenchmarkRuntimeMode.RESEARCH: (0.93, 0.9, 0.94, 0.91, 0.89, 0.93),
+            BenchmarkRuntimeMode.ADAPTIVE: (0.76, 0.82, 0.71, 0.72, 0.79, 0.77),
+            BenchmarkRuntimeMode.STAGED: (0.68, 0.7, 0.67, 0.63, 0.66, 0.67),
+        }
+        mode_judgments = []
+        for mode_output in mode_outputs:
+            runtime_mode = BenchmarkRuntimeMode(str(mode_output["runtime_mode"]))
+            (
+                decision_quality,
+                actionability,
+                tradeoff_clarity,
+                risk_quality,
+                experiment_quality,
+                overall_score,
+            ) = score_map[runtime_mode]
+            mode_judgments.append(
+                {
+                    "runtime_mode": runtime_mode.value,
+                    "decision_quality": decision_quality,
+                    "actionability": actionability,
+                    "tradeoff_clarity": tradeoff_clarity,
+                    "risk_quality": risk_quality,
+                    "experiment_quality": experiment_quality,
+                    "overall_score": overall_score,
+                    "strengths": [
+                        f"{runtime_mode.value} exposes a clear best-bet thesis.",
+                    ],
+                    "weaknesses": [
+                        "The artifact package still leaves some execution ambiguity."
+                        if runtime_mode is not BenchmarkRuntimeMode.RESEARCH
+                        else "The richer artifact set costs more authoring time."
+                    ],
+                    "evidence": [
+                        "Used the persisted summary markdown and final recommendation package."
+                    ],
+                }
+            )
+        return {
+            "winner_runtime_mode": winner.value,
+            "runner_up_runtime_mode": runner_up.value,
+            "summary": (
+                "The research runtime wins because its artifact package makes the decision, "
+                "runner-up logic, risks, and next experiment materially easier to act on."
+            ),
+            "confidence": 0.83,
+            "decisive_reasons": [
+                "The winning mode preserved clearer winner-versus-runner-up logic.",
+                "Its next experiment and risk framing were more decision-grade.",
+            ],
+            "watchouts": [
+                "The richer authoring path still needs latency discipline.",
+            ],
+            "mode_judgments": mode_judgments,
+        }
 
     def _handle_assess_novelty(
         self,

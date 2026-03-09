@@ -8,6 +8,7 @@ import unittest
 from argus.benchmarks import (
     BenchmarkFamily,
     BenchmarkHarness,
+    BenchmarkComparisonStatus,
     BenchmarkRuntimeMode,
     BenchmarkStatus,
     load_benchmark_cases,
@@ -77,11 +78,20 @@ class BenchmarkHarnessTests(unittest.TestCase):
             self.assertEqual(first.manifest.case_count, 1)
             self.assertEqual(first.manifest.mode_result_count, 3)
             self.assertEqual(first.manifest.completed_mode_count, 3)
+            self.assertEqual(len(first.manifest.case_comparisons), 1)
             self.assertEqual(first_case.runtime_mode, BenchmarkRuntimeMode.ADAPTIVE)
             self.assertIsNone(first_case.previous_output_digest)
             self.assertEqual(second_case.previous_output_digest, first_case.output_digest)
             self.assertFalse(second_case.changed_from_previous)
             self.assertEqual(second.manifest.previous_session_id, first.manifest.session_id)
+            self.assertEqual(
+                first.manifest.case_comparisons[0].status,
+                BenchmarkComparisonStatus.COMPLETED,
+            )
+            self.assertEqual(
+                first.manifest.case_comparisons[0].assessment.winner_runtime_mode,
+                BenchmarkRuntimeMode.RESEARCH,
+            )
             self.assertTrue((first.session_dir / "manifest.json").is_file())
             self.assertTrue(
                 (
@@ -99,6 +109,22 @@ class BenchmarkHarnessTests(unittest.TestCase):
                     / "product-strategy-retention"
                     / "research"
                     / "summary.md"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    first.session_dir
+                    / "cases"
+                    / "product-strategy-retention"
+                    / "comparison.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    first.session_dir
+                    / "cases"
+                    / "product-strategy-retention"
+                    / "comparison.md"
                 ).is_file()
             )
             self.assertTrue((root / "artifacts" / "runs" / first_case.run_id).is_dir())
@@ -133,6 +159,62 @@ class BenchmarkHarnessTests(unittest.TestCase):
                 [case_result.runtime_mode.value for case_result in result.manifest.case_results],
                 ["staged", "research"],
             )
+            self.assertEqual(result.manifest.case_comparisons[0].status, BenchmarkComparisonStatus.COMPLETED)
+            self.assertEqual(
+                result.manifest.case_comparisons[0].assessment.runner_up_runtime_mode,
+                BenchmarkRuntimeMode.STAGED,
+            )
+
+    def test_harness_skips_comparison_when_not_all_modes_complete(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_benchmark_case_fixture(
+                root / "benchmarks" / "cases" / "product-strategy-retention.json"
+            )
+            provider = SearchFixtureProvider(
+                root / "artifacts" / "provider_invocations",
+                fail_actions={"redteam_family"},
+            )
+            harness = BenchmarkHarness(
+                provider=provider,
+                state_store=FileSystemStateStore(root / "artifacts" / "runs"),
+                cases_dir=root / "benchmarks" / "cases",
+                output_root=root / "artifacts" / "benchmarks",
+            )
+
+            result = harness.run(case_name="product-strategy-retention")
+
+            self.assertEqual(result.manifest.status, BenchmarkStatus.FAILED)
+            self.assertEqual(
+                result.manifest.case_comparisons[0].status,
+                BenchmarkComparisonStatus.SKIPPED,
+            )
+            self.assertIn(
+                "not all configured runtime modes completed successfully",
+                result.manifest.case_comparisons[0].skipped_reason,
+            )
+
+    def test_harness_marks_session_failed_when_comparison_judge_output_is_invalid(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_benchmark_case_fixture(
+                root / "benchmarks" / "cases" / "product-strategy-retention.json"
+            )
+            provider = InvalidBenchmarkJudgeProvider(root / "artifacts" / "provider_invocations")
+            harness = BenchmarkHarness(
+                provider=provider,
+                state_store=FileSystemStateStore(root / "artifacts" / "runs"),
+                cases_dir=root / "benchmarks" / "cases",
+                output_root=root / "artifacts" / "benchmarks",
+            )
+
+            result = harness.run(case_name="product-strategy-retention")
+
+            self.assertEqual(result.manifest.status, BenchmarkStatus.FAILED)
+            comparison = result.manifest.case_comparisons[0]
+            self.assertEqual(comparison.status, BenchmarkComparisonStatus.FAILED)
+            self.assertEqual(comparison.failure_type, "ArgusValidationError")
+            self.assertIn("winner_runtime_mode", comparison.error)
 
     def test_harness_rejects_duplicate_provider_names_in_sequence(self) -> None:
         with TemporaryDirectory() as directory:
@@ -213,3 +295,21 @@ def _write_benchmark_case_fixture(path: Path) -> None:
         "tags": ["fixture", "retention"],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+class InvalidBenchmarkJudgeProvider(SearchFixtureProvider):
+    def _handle_judge_benchmark_modes(
+        self,
+        problem_spec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        del problem_spec, input_payload
+        return {
+            "winner_runtime_mode": "unknown",
+            "runner_up_runtime_mode": "adaptive",
+            "summary": "Invalid fixture payload.",
+            "confidence": 0.5,
+            "decisive_reasons": ["Broken on purpose."],
+            "watchouts": [],
+            "mode_judgments": [],
+        }

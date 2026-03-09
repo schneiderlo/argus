@@ -111,6 +111,8 @@ def _action_specific_instructions(
         return _assess_novelty_batch_instructions()
     if normalized_action == "rank":
         return _pairwise_rank_instructions(input_payload)
+    if normalized_action == "judge_benchmark_modes":
+        return _judge_benchmark_modes_instructions(input_payload)
     if normalized_action == "migrate":
         return _migrate_candidate_instructions()
     if normalized_action == "write_final_decision":
@@ -509,6 +511,36 @@ def _write_final_decision_instructions(
         instructions.append(
             "Reusable priors: use reusable_learning_notes, especially outcome-backed notes, to sharpen the decision rule and risk framing, but never let them override the current artifact evidence."
         )
+    return instructions
+
+
+def _judge_benchmark_modes_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: benchmark comparison judge for Argus runtime modes.",
+        "Authoritative evidence, in order: the benchmark problem spec; benchmark_case evaluation_notes and expected_qualities; each mode output's final_recommendation, selected_theses, summary_markdown, and optional research_final_decision artifact.",
+        "Primary question: which runtime output would a serious team act on next if they had to pick one artifact package from this benchmark case?",
+        "Judge decision_quality based on whether the output sharpens the real decision, preserves meaningful alternatives, and explains why the winner beats the runner-up.",
+        "Judge actionability based on whether the first spike or next experiments are concrete, discriminating, and immediately useful to the operator.",
+        "Judge tradeoff_clarity based on whether assumptions, explicit tradeoffs, reversal conditions, and reasons-to-be-wrong are visible rather than implied.",
+        "Judge risk_quality based on whether the output names real failure modes and mitigations rather than generic caution language.",
+        "Judge experiment_quality based on whether the proposed next move can actually falsify or advance the decision.",
+        "Anti-style rule: do not reward longer prose, nicer formatting, or generic confidence by itself. Reward decision-grade substance.",
+        "Adversarial rule: penalize polished but vague summaries, weak runner-up logic, and non-specific experiments.",
+        "Output contract: return one BenchmarkModeJudgment per mode in the exact input order, pick exactly one winner and one runner-up, and use decisive_reasons plus per-mode evidence to cite the concrete artifacts that drove the choice.",
+    ]
+    mode_outputs = input_payload.get("mode_outputs")
+    if isinstance(mode_outputs, list):
+        instructions.append(
+            f"Comparison scope: evaluate all {len(mode_outputs)} runtime modes in mode_outputs."
+        )
+    benchmark_case = input_payload.get("benchmark_case")
+    if isinstance(benchmark_case, Mapping):
+        case_id = benchmark_case.get("case_id")
+        family = benchmark_case.get("family")
+        if isinstance(case_id, str) and isinstance(family, str):
+            instructions.append(f"Benchmark target: case_id={case_id}, family={family}.")
     return instructions
 
 
