@@ -19,7 +19,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Highest Priority
 
-- [ ] Add first-class typed research-artifact models for `SearchSpaceFrame`, `SearchAxis`, `SearchCell`, `CoverageLedger`, `ProposalBrief`, `TriageReport`, `DeepDiveDoc`, `AdversarialReview`, `ComparisonMatrix`, `HybridAssessment`, and `FinalDecisionDoc` so Argus can persist decision-grade work instead of compressing everything back into `Candidate`.
+- [x] Add first-class typed research-artifact models for `SearchSpaceFrame`, `SearchAxis`, `SearchCell`, `CoverageLedger`, `ProposalBrief`, `TriageReport`, `DeepDiveDoc`, `AdversarialReview`, `ComparisonMatrix`, `HybridAssessment`, and `FinalDecisionDoc` so Argus can persist decision-grade work instead of compressing everything back into `Candidate`.
 - [ ] Add a coverage-led research runtime alongside the current adaptive node runtime. The new runtime should explicitly frame the search space, maintain a coverage ledger of important cells or candidate families, seed representatives for uncovered cells, triage at the family level, deepen incumbents, red-team fragile survivors, gate hybrids with seam hypotheses, and write a final decision package from the full artifact set.
 - [ ] Add structured schemas and provider actions for the research pipeline stages: `frame_search_space`, `seed_cell_proposals`, `triage_proposals`, `deepen_family`, `redteam_family`, `assess_hybrid`, and `write_final_decision`.
 - [ ] Extend the filesystem state store so each run can persist a structured research-artifact bundle plus rendered markdown artifacts under the run directory, instead of relying on `_render_summary_markdown` as the main user-facing output path.
