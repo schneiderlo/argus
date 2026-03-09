@@ -91,8 +91,12 @@ def _action_specific_instructions(
         return _compress_learning_instructions(input_payload)
     if normalized_action == "evaluate_candidate":
         return _evaluate_candidate_instructions(input_payload)
+    if normalized_action == "evaluate_candidate_batch":
+        return _evaluate_candidate_batch_instructions(input_payload)
     if normalized_action == "assess_novelty":
         return _assess_novelty_instructions()
+    if normalized_action == "assess_novelty_batch":
+        return _assess_novelty_batch_instructions()
     if normalized_action == "rank":
         return _pairwise_rank_instructions(input_payload)
     if normalized_action == "migrate":
@@ -122,6 +126,20 @@ def _evaluate_candidate_instructions(
         instructions.append(
             "Reusable priors: when reusable_learning_notes are present, treat them as archived observations about past winning patterns, failure modes, and constraints. Notes tagged with evidence_sources containing outcome_feedback are stronger real-world evidence from shipped experiments and should weigh more heavily than search-only priors, but never override the current problem spec."
         )
+    return instructions
+
+
+def _evaluate_candidate_batch_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = _evaluate_candidate_instructions(input_payload)
+    instructions.extend(
+        [
+            "Batch mode: evaluate every candidate in candidates independently against the same rubric and problem spec.",
+            "Order rule: return one assessment per input candidate in the exact same order as the candidates array.",
+            "Consistency rule: keep the bar consistent across the whole batch so one candidate is not implicitly graded on a different rubric from another.",
+        ]
+    )
     return instructions
 
 
@@ -192,6 +210,18 @@ def _assess_novelty_instructions() -> list[str]:
         "Duplicate signals must be concrete. Name the overlapping mechanism, rollout, dependency, or tradeoff rather than saying the ideas feel similar.",
         "Output contract: novelty_score should rise with meaningful distinctness, max_similarity should reflect the strongest competing overlap in the archive, and summary should clearly say whether this is a near-duplicate, a shared tactic with a different strategic frame, or a genuinely distinct direction.",
     ]
+
+
+def _assess_novelty_batch_instructions() -> list[str]:
+    instructions = _assess_novelty_instructions()
+    instructions.extend(
+        [
+            "Batch mode: assess every candidate in candidates against the same archive snapshot.",
+            "Order rule: return one novelty assessment per input candidate in the exact same order as the candidates array.",
+            "Do not use other batch candidates as novelty evidence unless they already exist in archive_candidates. Same-batch final dedupe is handled separately by the orchestrator.",
+        ]
+    )
+    return instructions
 
 
 def _stress_test_instructions(

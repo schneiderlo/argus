@@ -1783,6 +1783,24 @@ class SearchRuntime:
             ),
         )
 
+    def _assess_novelty_batch(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidates: Sequence[Candidate],
+        archive_nodes: Sequence[Node],
+        routing_tracker: "_RoutingTracker",
+    ) -> tuple[list[NoveltyAssessment], str]:
+        return self._run_with_provider_fallback(
+            routing_tracker,
+            action_name=_ASSESS_NOVELTY_ACTION,
+            attempt=lambda provider: self._novelty_filter_for_provider(provider.name).assess_batch(
+                problem_spec=problem_spec,
+                candidates=candidates,
+                archive_nodes=archive_nodes,
+            ),
+        )
+
     def _evaluate_candidate(
         self,
         *,
@@ -1799,6 +1817,26 @@ class SearchRuntime:
                 problem_spec,
                 candidate,
                 novelty_score=novelty_score,
+                reusable_learning_notes=reusable_learning_notes,
+            ),
+        )
+
+    def _evaluate_candidate_batch(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidates: Sequence[Candidate],
+        novelty_scores: Sequence[float | None],
+        reusable_learning_notes: Sequence[ReusableLearningNote],
+        routing_tracker: "_RoutingTracker",
+    ) -> tuple[list[EvaluationAssessment], str]:
+        return self._run_with_provider_fallback(
+            routing_tracker,
+            action_name=_EVALUATE_CANDIDATE_ACTION,
+            attempt=lambda provider: self._evaluator_for_provider(provider.name).evaluate_batch(
+                problem_spec,
+                candidates,
+                novelty_scores=novelty_scores,
                 reusable_learning_notes=reusable_learning_notes,
             ),
         )
@@ -1881,15 +1919,12 @@ class SearchRuntime:
             return []
 
         archive_snapshot = [session.nodes[node_id] for node_id in session.archive_ids]
-        prepared = self._run_bounded_tasks(
-            requests,
-            lambda request: self._prepare_candidate_admission(
-                problem_spec=session.problem_spec,
-                candidate=request.candidate,
-                archive_nodes=archive_snapshot,
-                reusable_learning_notes=session.reusable_learning_notes,
-                routing_tracker=routing_tracker,
-            ),
+        prepared = self._prepare_candidate_admissions_batch(
+            problem_spec=session.problem_spec,
+            candidates=[request.candidate for request in requests],
+            archive_nodes=archive_snapshot,
+            reusable_learning_notes=session.reusable_learning_notes,
+            routing_tracker=routing_tracker,
         )
         admitted_batch_nodes: list[Node] = []
         committed: list[Node] = []
@@ -1935,6 +1970,52 @@ class SearchRuntime:
                 admitted_batch_nodes.append(node)
         return committed
 
+    def _prepare_candidate_admissions_batch(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidates: Sequence[Candidate],
+        archive_nodes: Sequence[Node],
+        reusable_learning_notes: Sequence[ReusableLearningNote],
+        routing_tracker: "_RoutingTracker",
+    ) -> list[_PreparedCandidateAdmission]:
+        if not candidates:
+            return []
+
+        novelty_assessments, novelty_provider_name = self._assess_novelty_batch(
+            problem_spec=problem_spec,
+            candidates=candidates,
+            archive_nodes=archive_nodes,
+            routing_tracker=routing_tracker,
+        )
+        evaluation_assessments, evaluation_provider_name = self._evaluate_candidate_batch(
+            problem_spec=problem_spec,
+            candidates=candidates,
+            novelty_scores=[assessment.novelty_score for assessment in novelty_assessments],
+            reusable_learning_notes=reusable_learning_notes,
+            routing_tracker=routing_tracker,
+        )
+        if len(novelty_assessments) != len(candidates):
+            raise ArgusValidationError(
+                "assess_novelty_batch returned the wrong number of assessments."
+            )
+        if len(evaluation_assessments) != len(candidates):
+            raise ArgusValidationError(
+                "evaluate_candidate_batch returned the wrong number of assessments."
+            )
+        return [
+            _PreparedCandidateAdmission(
+                novelty=novelty_assessment,
+                assessment=evaluation_assessment,
+                novelty_provider_names=(novelty_provider_name,),
+                evaluation_provider_names=(evaluation_provider_name,),
+            )
+            for novelty_assessment, evaluation_assessment in zip(
+                novelty_assessments,
+                evaluation_assessments,
+            )
+        ]
+
     def _prepare_candidate_admission(
         self,
         *,
@@ -1944,25 +2025,13 @@ class SearchRuntime:
         reusable_learning_notes: Sequence[ReusableLearningNote],
         routing_tracker: "_RoutingTracker",
     ) -> _PreparedCandidateAdmission:
-        novelty, novelty_provider_name = self._assess_novelty(
+        return self._prepare_candidate_admissions_batch(
             problem_spec=problem_spec,
-            candidate=candidate,
+            candidates=[candidate],
             archive_nodes=archive_nodes,
-            routing_tracker=routing_tracker,
-        )
-        assessment, evaluation_provider_name = self._evaluate_candidate(
-            problem_spec=problem_spec,
-            candidate=candidate,
-            novelty_score=novelty.novelty_score,
             reusable_learning_notes=reusable_learning_notes,
             routing_tracker=routing_tracker,
-        )
-        return _PreparedCandidateAdmission(
-            novelty=novelty,
-            assessment=assessment,
-            novelty_provider_names=(novelty_provider_name,),
-            evaluation_provider_names=(evaluation_provider_name,),
-        )
+        )[0]
 
     def _commit_candidate_admission(
         self,

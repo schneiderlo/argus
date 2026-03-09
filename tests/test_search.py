@@ -195,8 +195,8 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertIn("combine", action_names)
         self.assertIn("compress_learning", action_names)
         self.assertGreaterEqual(action_names.count("rank"), 6)
-        self.assertGreaterEqual(action_names.count("evaluate_candidate"), 6)
-        self.assertGreaterEqual(action_names.count("assess_novelty"), 3)
+        self.assertGreaterEqual(action_names.count("evaluate_candidate_batch"), 3)
+        self.assertGreaterEqual(action_names.count("assess_novelty_batch"), 3)
         self.assertIsNotNone(loaded.routing_summary)
         self.assertEqual(loaded.routing_summary, aggregate_routing)
         self.assertIn("Pairwise Selection Checks", result.summary_markdown)
@@ -217,9 +217,12 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(entries["stress_test"].useful_critique_count, 2)
         self.assertEqual(entries["deepen"].winner_count, 1)
         self.assertEqual(entries["evaluate_candidate"].candidate_count, len(result.state.nodes))
-        self.assertEqual(entries["evaluate_candidate"].invocation_count, len(result.state.nodes))
+        self.assertLessEqual(
+            entries["evaluate_candidate"].invocation_count,
+            entries["evaluate_candidate"].candidate_count,
+        )
         self.assertEqual(entries["assess_novelty"].candidate_count, len(result.state.nodes) - 1)
-        self.assertGreaterEqual(
+        self.assertLessEqual(
             entries["assess_novelty"].invocation_count,
             entries["assess_novelty"].candidate_count,
         )
@@ -306,7 +309,9 @@ class SearchRuntimeTests(unittest.TestCase):
 
         frame_call = next(call for call in provider.calls if call["action_name"] == "frame_problem")
         evaluation_call = next(
-            call for call in provider.calls if call["action_name"] == "evaluate_candidate"
+            call
+            for call in provider.calls
+            if call["action_name"] in {"evaluate_candidate", "evaluate_candidate_batch"}
         )
         self.assertIn("reusable_learning_notes", frame_call["input_payload"])
         self.assertEqual(
@@ -340,7 +345,9 @@ class SearchRuntimeTests(unittest.TestCase):
                 root / "artifacts" / "provider_invocations",
                 sleep_by_action={
                     "assess_novelty": 0.03,
+                    "assess_novelty_batch": 0.03,
                     "evaluate_candidate": 0.03,
+                    "evaluate_candidate_batch": 0.03,
                     "stress_test": 0.03,
                     "deepen": 0.03,
                 },
@@ -369,7 +376,11 @@ class SearchRuntimeTests(unittest.TestCase):
 
         self.assertLessEqual(_max_overlap(provider.calls), 2)
         self.assertGreaterEqual(
-            _max_overlap(provider.calls, actions={"assess_novelty", "evaluate_candidate"}),
+            sum(
+                1
+                for call in provider.calls
+                if call["action_name"] in {"assess_novelty_batch", "evaluate_candidate_batch"}
+            ),
             2,
         )
         self.assertEqual(_max_overlap(provider.calls, actions={"stress_test"}), 2)
@@ -458,7 +469,9 @@ class SearchRuntimeTests(unittest.TestCase):
                 root / "artifacts" / "provider_invocations",
                 sleep_by_action={
                     "assess_novelty": 0.02,
+                    "assess_novelty_batch": 0.02,
                     "evaluate_candidate": 0.02,
+                    "evaluate_candidate_batch": 0.02,
                 },
                 seed_candidates=[
                     duplicate_candidate,
@@ -800,13 +813,25 @@ class SearchRuntimeTests(unittest.TestCase):
                 any(call["action_name"] == "generate_seed" for call in codex_provider.calls)
             )
             self.assertTrue(
-                any(call["action_name"] == "assess_novelty" for call in gemini_provider.calls)
+                any(
+                    call["action_name"] in {"assess_novelty", "assess_novelty_batch"}
+                    for call in gemini_provider.calls
+                )
             )
             self.assertFalse(
-                any(call["action_name"] == "assess_novelty" for call in codex_provider.calls)
+                any(
+                    call["action_name"] in {"assess_novelty", "assess_novelty_batch"}
+                    for call in codex_provider.calls
+                )
             )
             self.assertTrue(
-                any(call["action_name"] == "evaluate_candidate" for call in opencode_provider.calls)
+                any(
+                    call["action_name"] in {
+                        "evaluate_candidate",
+                        "evaluate_candidate_batch",
+                    }
+                    for call in opencode_provider.calls
+                )
             )
             self.assertTrue(
                 any(call["action_name"] == "rank" for call in opencode_provider.calls)
@@ -960,12 +985,12 @@ class SearchRuntimeTests(unittest.TestCase):
             gemini_provider = SearchFixtureProvider(
                 root / "artifacts" / "provider_invocations" / "gemini",
                 name="gemini",
-                fail_actions={"generate_seed", "assess_novelty"},
+                fail_actions={"generate_seed", "assess_novelty", "assess_novelty_batch"},
             )
             opencode_provider = SearchFixtureProvider(
                 root / "artifacts" / "provider_invocations" / "opencode",
                 name="opencode",
-                fail_actions={"evaluate_candidate", "rank"},
+                fail_actions={"evaluate_candidate", "evaluate_candidate_batch", "rank"},
             )
             runtime = SearchRuntime(
                 provider=codex_provider,
@@ -993,12 +1018,38 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
         self.assertEqual(loaded.manifest.status, RunStatus.COMPLETED)
         self.assertTrue(any(call["action_name"] == "generate_seed" for call in gemini_provider.calls))
-        self.assertTrue(any(call["action_name"] == "assess_novelty" for call in gemini_provider.calls))
-        self.assertTrue(any(call["action_name"] == "evaluate_candidate" for call in opencode_provider.calls))
+        self.assertTrue(
+            any(
+                call["action_name"] in {"assess_novelty", "assess_novelty_batch"}
+                for call in gemini_provider.calls
+            )
+        )
+        self.assertTrue(
+            any(
+                call["action_name"] in {
+                    "evaluate_candidate",
+                    "evaluate_candidate_batch",
+                }
+                for call in opencode_provider.calls
+            )
+        )
         self.assertTrue(any(call["action_name"] == "rank" for call in opencode_provider.calls))
         self.assertTrue(any(call["action_name"] == "generate_seed" for call in codex_provider.calls))
-        self.assertTrue(any(call["action_name"] == "assess_novelty" for call in codex_provider.calls))
-        self.assertTrue(any(call["action_name"] == "evaluate_candidate" for call in codex_provider.calls))
+        self.assertTrue(
+            any(
+                call["action_name"] in {"assess_novelty", "assess_novelty_batch"}
+                for call in codex_provider.calls
+            )
+        )
+        self.assertTrue(
+            any(
+                call["action_name"] in {
+                    "evaluate_candidate",
+                    "evaluate_candidate_batch",
+                }
+                for call in codex_provider.calls
+            )
+        )
         self.assertTrue(any(call["action_name"] == "rank" for call in codex_provider.calls))
         self.assertTrue(
             all(

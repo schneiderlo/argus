@@ -88,6 +88,37 @@ class NoveltyAssessment:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class NoveltyAssessmentBatch:
+    assessments: list[NoveltyAssessment]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "assessments",
+            _normalize_novelty_assessments(self.assessments, "assessments"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "assessments": [assessment.to_dict() for assessment in self.assessments],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "NoveltyAssessmentBatch":
+        data = _validate_payload_keys(
+            payload,
+            field_name="NoveltyAssessmentBatch",
+            required={"assessments"},
+        )
+        return cls(
+            assessments=[
+                NoveltyAssessment.from_dict(item)
+                for item in _normalize_sequence(data["assessments"], "assessments")
+            ]
+        )
+
+
 class AgenticNoveltyFilter:
     """Judge novelty semantically through the provider layer."""
 
@@ -164,6 +195,60 @@ class AgenticNoveltyFilter:
         )
         return response.payload
 
+    def assess_batch(
+        self,
+        *,
+        problem_spec: ProblemSpec,
+        candidates: Iterable[Candidate],
+        archive_nodes: Iterable[Node],
+    ) -> list[NoveltyAssessment]:
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
+        normalized_candidates = _normalize_candidate_sequence(candidates, "candidates")
+        if not normalized_candidates:
+            return []
+
+        archive_candidates = [
+            {
+                "node_id": node.node_id,
+                "candidate": node.candidate.to_dict(),
+            }
+            for node in sorted(archive_nodes, key=lambda item: item.node_id)[: self._max_archive_candidates]
+        ]
+        if not archive_candidates:
+            return [
+                NoveltyAssessment(
+                    novelty_score=1.0,
+                    max_similarity=0.0,
+                    nearest_neighbor_id=None,
+                    similarity_threshold=self._similarity_threshold,
+                    is_novel=True,
+                    summary="Archive is empty, so the candidate is novel by default.",
+                    duplicate_signals=[],
+                )
+                for _ in normalized_candidates
+            ]
+
+        response = self._provider.run_action(
+            action_name="assess_novelty_batch",
+            problem_spec=problem_spec,
+            input_payload={
+                "candidates": [candidate.to_dict() for candidate in normalized_candidates],
+                "archive_candidates": archive_candidates,
+                "similarity_threshold": self._similarity_threshold,
+                "novelty_policy": {
+                    "decision_rule": (
+                        "Reject only near-duplicates or trivial rephrasings. Preserve genuinely distinct strategic directions even when they share domain vocabulary."
+                    ),
+                },
+            },
+            output_schema=novelty_assessment_batch_schema(),
+        )
+        return response.payload.assessments
+
 
 def novelty_assessment_schema() -> StructuredOutputSchema[NoveltyAssessment]:
     probability_field = {"type": "number", "minimum": 0.0, "maximum": 1.0}
@@ -192,6 +277,47 @@ def novelty_assessment_schema() -> StructuredOutputSchema[NoveltyAssessment]:
             },
         },
         validator=NoveltyAssessment.from_dict,
+    )
+
+
+def novelty_assessment_batch_schema() -> StructuredOutputSchema[NoveltyAssessmentBatch]:
+    probability_field = {"type": "number", "minimum": 0.0, "maximum": 1.0}
+    return StructuredOutputSchema(
+        name="novelty_assessment_batch",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["assessments"],
+            "properties": {
+                "assessments": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "novelty_score",
+                            "max_similarity",
+                            "nearest_neighbor_id",
+                            "similarity_threshold",
+                            "is_novel",
+                            "summary",
+                            "duplicate_signals",
+                        ],
+                        "properties": {
+                            "novelty_score": probability_field,
+                            "max_similarity": probability_field,
+                            "nearest_neighbor_id": {"type": ["string", "null"]},
+                            "similarity_threshold": probability_field,
+                            "is_novel": {"type": "boolean"},
+                            "summary": {"type": "string", "minLength": 1},
+                            "duplicate_signals": _string_array_schema(),
+                        },
+                    },
+                },
+            },
+        },
+        validator=NoveltyAssessmentBatch.from_dict,
     )
 
 
@@ -258,3 +384,45 @@ def _validate_payload_keys(
         joined = ", ".join(sorted(str(key) for key in unexpected))
         raise ArgusValidationError(f"{field_name} payload contains unexpected keys: {joined}.")
     return dict(payload)
+
+
+def _normalize_sequence(value: object, field_name: str) -> list[object]:
+    if not isinstance(value, list):
+        raise ArgusValidationError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    return list(value)
+
+
+def _normalize_candidate_sequence(
+    value: Iterable[Candidate],
+    field_name: str,
+) -> list[Candidate]:
+    normalized: list[Candidate] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Candidate):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a Candidate instance, got {type(item).__name__}."
+            )
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_novelty_assessments(
+    value: object,
+    field_name: str,
+) -> list[NoveltyAssessment]:
+    if not isinstance(value, list):
+        raise ArgusValidationError(
+            f"{field_name} must be a list of novelty assessments, got {type(value).__name__}."
+        )
+    normalized: list[NoveltyAssessment] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, NoveltyAssessment):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a NoveltyAssessment instance, got {type(item).__name__}."
+            )
+        normalized.append(item)
+    if not normalized:
+        raise ArgusValidationError(f"{field_name} must not be empty.")
+    return normalized

@@ -64,6 +64,37 @@ class EvaluationAssessment:
 
 
 @dataclass(frozen=True, slots=True)
+class EvaluationAssessmentBatch:
+    assessments: list[EvaluationAssessment]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "assessments",
+            _normalize_evaluation_assessments(self.assessments, "assessments"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "assessments": [assessment.to_dict() for assessment in self.assessments],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "EvaluationAssessmentBatch":
+        data = _validate_payload_keys(
+            payload,
+            field_name="EvaluationAssessmentBatch",
+            required={"assessments"},
+        )
+        return cls(
+            assessments=[
+                EvaluationAssessment.from_dict(item)
+                for item in _normalize_sequence(data["assessments"], "assessments")
+            ]
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PairwiseRankingAssessment:
     winner: str
     summary: str
@@ -195,6 +226,65 @@ class AgenticEvaluator:
         )
         return response.payload
 
+    def evaluate_batch(
+        self,
+        problem_spec: ProblemSpec,
+        candidates: Iterable[Candidate],
+        *,
+        novelty_scores: Iterable[float | None] | None = None,
+        reusable_learning_notes: Iterable[ReusableLearningNote] | None = None,
+    ) -> list[EvaluationAssessment]:
+        if not isinstance(problem_spec, ProblemSpec):
+            raise ArgusValidationError(
+                "problem_spec must be a ProblemSpec instance, "
+                f"got {type(problem_spec).__name__}."
+            )
+        normalized_candidates = _normalize_candidate_sequence(candidates, "candidates")
+        if not normalized_candidates:
+            return []
+
+        normalized_novelty_scores = _normalize_optional_novelty_scores(
+            novelty_scores,
+            expected_count=len(normalized_candidates),
+        )
+        prompt_learning_notes = _prompt_reusable_learning_notes(reusable_learning_notes)
+        input_payload: dict[str, JSONValue] = {
+            "candidates": [candidate.to_dict() for candidate in normalized_candidates],
+            "rubric": {
+                "dimensions": [
+                    "distinctiveness",
+                    "usefulness",
+                    "specificity",
+                    "plausibility",
+                    "implementation_tractability",
+                    "upside",
+                    "adversarial_robustness",
+                    "evidence_quality",
+                ],
+                "hard_constraint_policy": (
+                    "Set hard_constraint_pass=false if the candidate violates explicit constraints, "
+                    "fails to address the stated problem, or ignores required tradeoffs."
+                ),
+                "scoring_scale": "Each score dimension except total_score and hard_constraint_reasons must be between 0 and 1 inclusive.",
+                "quality_bar": (
+                    "Judge substance over wording. Do not reward buzzwords, generic optimism, "
+                    "or format compliance by itself."
+                ),
+            },
+        }
+        if normalized_novelty_scores is not None:
+            input_payload["novelty_scores"] = normalized_novelty_scores
+        if prompt_learning_notes:
+            input_payload["reusable_learning_notes"] = prompt_learning_notes
+
+        response = self._provider.run_action(
+            action_name="evaluate_candidate_batch",
+            problem_spec=problem_spec,
+            input_payload=input_payload,
+            output_schema=evaluation_assessment_batch_schema(),
+        )
+        return response.payload.assessments
+
     def compare_nodes(
         self,
         problem_spec: ProblemSpec,
@@ -282,6 +372,25 @@ def evaluation_assessment_schema() -> StructuredOutputSchema[EvaluationAssessmen
             },
         },
         validator=EvaluationAssessment.from_dict,
+    )
+
+
+def evaluation_assessment_batch_schema() -> StructuredOutputSchema[EvaluationAssessmentBatch]:
+    return StructuredOutputSchema(
+        name="evaluation_assessment_batch",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["assessments"],
+            "properties": {
+                "assessments": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": evaluation_assessment_schema().json_schema,
+                },
+            },
+        },
+        validator=EvaluationAssessmentBatch.from_dict,
     )
 
 
@@ -458,3 +567,66 @@ def _validate_payload_keys(
         joined = ", ".join(sorted(str(key) for key in unexpected))
         raise ArgusValidationError(f"{field_name} payload contains unexpected keys: {joined}.")
     return dict(payload)
+
+
+def _normalize_sequence(value: object, field_name: str) -> list[object]:
+    if not isinstance(value, list):
+        raise ArgusValidationError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    return list(value)
+
+
+def _normalize_candidate_sequence(
+    value: Iterable[Candidate],
+    field_name: str,
+) -> list[Candidate]:
+    normalized: list[Candidate] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Candidate):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a Candidate instance, got {type(item).__name__}."
+            )
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_evaluation_assessments(
+    value: object,
+    field_name: str,
+) -> list[EvaluationAssessment]:
+    if not isinstance(value, list):
+        raise ArgusValidationError(
+            f"{field_name} must be a list of evaluation assessments, got {type(value).__name__}."
+        )
+    normalized: list[EvaluationAssessment] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, EvaluationAssessment):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be an EvaluationAssessment instance, got {type(item).__name__}."
+            )
+        normalized.append(item)
+    if not normalized:
+        raise ArgusValidationError(f"{field_name} must not be empty.")
+    return normalized
+
+
+def _normalize_optional_novelty_scores(
+    value: Iterable[float | None] | None,
+    *,
+    expected_count: int,
+) -> list[JSONValue] | None:
+    if value is None:
+        return None
+    normalized = list(value)
+    if len(normalized) != expected_count:
+        raise ArgusValidationError(
+            "novelty_scores must align one-to-one with candidates."
+        )
+    output: list[JSONValue] = []
+    for index, score in enumerate(normalized):
+        if score is None:
+            output.append(None)
+            continue
+        output.append(_normalize_probability(score, f"novelty_scores[{index}]"))
+    return output

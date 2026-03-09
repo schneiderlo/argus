@@ -27,6 +27,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [ ] Add benchmark support to compare three modes directly: the current adaptive runtime, the simple staged 5-step pipeline, and the new coverage-led research runtime. Use those results to decide when the richer path should become the default.
 
 - [x] Implement bounded concurrent provider dispatch for independent search phases so `argus run` latency does not scale linearly with every evaluation, novelty, stress-test, and deepen call. Keep state commits deterministic, cap concurrency per provider, and prevent intra-batch novelty races.
+- [x] Batch provider-backed novelty and evaluation for candidate-admission batches so multi-candidate generate/mutate/combine stages do not pay one semantic judge call per candidate while preserving structured judgments and serial same-batch dedupe.
 - [x] Replace the thin generic evaluator and novelty prompts with action-specific judge prompts that encode the real rubric, hard-constraint handling, adversarial checks, duplicate criteria, and output expectations directly in the provider prompt materialized for Codex.
 - [x] Add evaluator-quality benchmark fixtures and tests that catch obvious ranking, hard-constraint, pairwise-comparison, and novelty failures instead of only checking schema/plumbing behavior.
 - [x] Bootstrap the Python project with `uv`: create `pyproject.toml`, `src/`, `tests/`, and an installable `argus` CLI entrypoint.

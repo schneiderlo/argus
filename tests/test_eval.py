@@ -10,10 +10,14 @@ from argus.eval import (
     AgenticEvaluator,
     AgenticNoveltyFilter,
     EvaluationAssessment,
+    EvaluationAssessmentBatch,
     NoveltyAssessment,
+    NoveltyAssessmentBatch,
     PairwiseRankingAssessment,
     rank_nodes,
 )
+from dataclasses import replace
+
 from argus.models import (
     ActionType,
     Candidate,
@@ -92,6 +96,45 @@ class AgenticEvaluatorTests(unittest.TestCase):
         self.assertEqual(provider.calls[0]["input_payload"]["left"]["node_id"], "node-001")
         self.assertEqual(provider.calls[0]["input_payload"]["right"]["node_id"], "node-002")
 
+    def test_agentic_evaluator_can_batch_candidate_evaluations(self) -> None:
+        assessments = [
+            EvaluationAssessment(
+                score=_strong_score(),
+                summary="Strong overall fit.",
+                strengths=["Good retention mechanism."],
+                weaknesses=["Needs rollout detail."],
+                open_questions=["What is the fastest proving experiment?"],
+            ),
+            EvaluationAssessment(
+                score=replace(_strong_score(), total_score=5.8, confidence_estimate=0.71),
+                summary="Viable but weaker than the first option.",
+                strengths=["Still tractable."],
+                weaknesses=["Less differentiated."],
+                open_questions=["Will users notice the difference?"],
+            ),
+        ]
+        with TemporaryDirectory() as directory:
+            provider = FakeProvider(
+                Path(directory),
+                {
+                    "evaluate_candidate_batch": EvaluationAssessmentBatch(
+                        assessments=assessments
+                    )
+                },
+            )
+            evaluator = AgenticEvaluator(provider=provider)
+
+            result = evaluator.evaluate_batch(
+                _problem_spec(),
+                [_strong_candidate(), _near_duplicate_candidate()],
+                novelty_scores=[0.72, 0.41],
+            )
+
+        self.assertEqual(result, assessments)
+        self.assertEqual(provider.calls[0]["action_name"], "evaluate_candidate_batch")
+        self.assertEqual(provider.calls[0]["input_payload"]["novelty_scores"], [0.72, 0.41])
+        self.assertEqual(len(provider.calls[0]["input_payload"]["candidates"]), 2)
+
 
 class AgenticNoveltyFilterTests(unittest.TestCase):
     def test_agentic_novelty_filter_short_circuits_for_empty_archive(self) -> None:
@@ -131,6 +174,52 @@ class AgenticNoveltyFilterTests(unittest.TestCase):
 
         self.assertEqual(result, assessment)
         self.assertEqual(provider.calls[0]["action_name"], "assess_novelty")
+        self.assertEqual(
+            provider.calls[0]["input_payload"]["archive_candidates"][0]["node_id"],
+            "node-0001",
+        )
+
+    def test_agentic_novelty_filter_can_batch_semantic_judgment(self) -> None:
+        assessments = [
+            NoveltyAssessment(
+                novelty_score=0.18,
+                max_similarity=0.82,
+                nearest_neighbor_id="node-0001",
+                similarity_threshold=0.8,
+                is_novel=False,
+                summary="This is mostly a rephrasing of the archived workflow-native idea.",
+                duplicate_signals=["Same underlying mechanism.", "Similar rollout plan."],
+            ),
+            NoveltyAssessment(
+                novelty_score=0.84,
+                max_similarity=0.27,
+                nearest_neighbor_id=None,
+                similarity_threshold=0.8,
+                is_novel=True,
+                summary="This is materially distinct from the archived idea.",
+                duplicate_signals=[],
+            ),
+        ]
+        with TemporaryDirectory() as directory:
+            provider = FakeProvider(
+                Path(directory),
+                {
+                    "assess_novelty_batch": NoveltyAssessmentBatch(
+                        assessments=assessments
+                    )
+                },
+            )
+            novelty_filter = AgenticNoveltyFilter(provider=provider)
+
+            result = novelty_filter.assess_batch(
+                problem_spec=_problem_spec(),
+                candidates=[_near_duplicate_candidate(), _strong_candidate()],
+                archive_nodes=[_node("node-0001", novelty_score=0.55)],
+            )
+
+        self.assertEqual(result, assessments)
+        self.assertEqual(provider.calls[0]["action_name"], "assess_novelty_batch")
+        self.assertEqual(len(provider.calls[0]["input_payload"]["candidates"]), 2)
         self.assertEqual(
             provider.calls[0]["input_payload"]["archive_candidates"][0]["node_id"],
             "node-0001",

@@ -188,8 +188,39 @@ class SearchFixtureProvider:
         _: ProblemSpec,
         input_payload: dict[str, object],
     ) -> dict[str, object]:
-        candidate_thesis = str(input_payload["candidate"]["thesis"])
-        archive_candidates = list(input_payload["archive_candidates"])
+        return self._novelty_payload(
+            candidate_payload=dict(input_payload["candidate"]),
+            archive_candidates=list(input_payload["archive_candidates"]),
+            similarity_threshold=input_payload["similarity_threshold"],
+        )
+
+    def _handle_assess_novelty_batch(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "assessments": [
+                self._handle_assess_novelty(
+                    _,
+                    {
+                        "candidate": dict(candidate_payload),
+                        "archive_candidates": list(input_payload["archive_candidates"]),
+                        "similarity_threshold": input_payload["similarity_threshold"],
+                    },
+                )
+                for candidate_payload in list(input_payload["candidates"])
+            ]
+        }
+
+    def _novelty_payload(
+        self,
+        *,
+        candidate_payload: dict[str, object],
+        archive_candidates: list[object],
+        similarity_threshold: object,
+    ) -> dict[str, object]:
+        candidate_thesis = str(candidate_payload["thesis"])
         for archived in archive_candidates:
             archived_thesis = str(archived["candidate"]["thesis"])
             if archived_thesis == candidate_thesis:
@@ -197,7 +228,7 @@ class SearchFixtureProvider:
                     "novelty_score": 0.12,
                     "max_similarity": 0.91,
                     "nearest_neighbor_id": archived["node_id"],
-                    "similarity_threshold": input_payload["similarity_threshold"],
+                    "similarity_threshold": similarity_threshold,
                     "is_novel": False,
                     "summary": "This is a near-duplicate of an archived candidate.",
                     "duplicate_signals": ["Same thesis.", "Same mechanism family."],
@@ -208,7 +239,7 @@ class SearchFixtureProvider:
                 "novelty_score": 0.68,
                 "max_similarity": 0.31,
                 "nearest_neighbor_id": None,
-                "similarity_threshold": input_payload["similarity_threshold"],
+                "similarity_threshold": similarity_threshold,
                 "is_novel": True,
                 "summary": "The idea is distinct, but it may still fail on quality.",
                 "duplicate_signals": [],
@@ -218,7 +249,7 @@ class SearchFixtureProvider:
             "novelty_score": 0.86,
             "max_similarity": 0.22,
             "nearest_neighbor_id": None,
-            "similarity_threshold": input_payload["similarity_threshold"],
+            "similarity_threshold": similarity_threshold,
             "is_novel": True,
             "summary": "The candidate is meaningfully distinct from the archive.",
             "duplicate_signals": [],
@@ -229,7 +260,29 @@ class SearchFixtureProvider:
         _: ProblemSpec,
         input_payload: dict[str, object],
     ) -> dict[str, object]:
-        candidate = Candidate.from_dict(input_payload["candidate"])
+        return self._evaluation_payload(Candidate.from_dict(input_payload["candidate"]))
+
+    def _handle_evaluate_candidate_batch(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "assessments": [
+                self._handle_evaluate_candidate(
+                    _,
+                    {
+                        "candidate": dict(candidate_payload),
+                    },
+                )
+                for candidate_payload in list(input_payload["candidates"])
+            ]
+        }
+
+    def _evaluation_payload(
+        self,
+        candidate: Candidate,
+    ) -> dict[str, object]:
         thesis = candidate.thesis.lower()
         if "chat wrapper" in thesis:
             score = _score_payload(
