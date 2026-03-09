@@ -1510,12 +1510,19 @@ class SearchRuntimeTests(unittest.TestCase):
                 budget=2,
                 run_id="run-search-pairwise-tournament",
             )
+            loaded = store.load_run("run-search-pairwise-tournament")
 
         rank_calls = [call for call in provider.calls if call["action_name"] == "rank"]
 
         self.assertEqual(result.final_recommendation.best_bet_node_id, "node-0004")
         self.assertEqual(result.final_recommendation.conservative_node_id, "node-0003")
         self.assertEqual(result.final_recommendation.high_upside_node_id, "node-0002")
+        self.assertEqual(len(result.final_recommendation.pairwise_decisions), 4)
+        self.assertEqual(
+            result.final_recommendation.pairwise_decisions[0].objective_name,
+            "best_overall",
+        )
+        self.assertEqual(loaded.final_recommendation, result.final_recommendation)
         self.assertEqual(len(rank_calls), 4)
         self.assertIn("Best bet: `node-0004` beat `node-0002`.", result.summary_markdown)
 

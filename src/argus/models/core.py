@@ -1359,6 +1359,130 @@ class SearchState:
 
 
 @dataclass(frozen=True, slots=True)
+class PairwiseDecisionArtifact:
+    selection_label: str
+    objective_name: str
+    objective_description: str
+    left_node_id: str
+    right_node_id: str
+    winner_node_id: str
+    summary: str
+    decisive_advantages: list[str] = field(default_factory=list)
+    decisive_risks: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "selection_label",
+            _normalize_non_empty_string(self.selection_label, "selection_label"),
+        )
+        object.__setattr__(
+            self,
+            "objective_name",
+            _normalize_non_empty_string(self.objective_name, "objective_name"),
+        )
+        object.__setattr__(
+            self,
+            "objective_description",
+            _normalize_non_empty_string(
+                self.objective_description,
+                "objective_description",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "left_node_id",
+            _normalize_non_empty_string(self.left_node_id, "left_node_id"),
+        )
+        object.__setattr__(
+            self,
+            "right_node_id",
+            _normalize_non_empty_string(self.right_node_id, "right_node_id"),
+        )
+        object.__setattr__(
+            self,
+            "winner_node_id",
+            _normalize_non_empty_string(self.winner_node_id, "winner_node_id"),
+        )
+        object.__setattr__(self, "summary", _normalize_non_empty_string(self.summary, "summary"))
+        object.__setattr__(
+            self,
+            "decisive_advantages",
+            _normalize_string_list(self.decisive_advantages, "decisive_advantages"),
+        )
+        object.__setattr__(
+            self,
+            "decisive_risks",
+            _normalize_string_list(self.decisive_risks, "decisive_risks"),
+        )
+        object.__setattr__(
+            self,
+            "confidence",
+            _normalize_probability(self.confidence, "confidence"),
+        )
+        if self.left_node_id == self.right_node_id:
+            raise ArgusValidationError("left_node_id and right_node_id must be distinct.")
+        if self.winner_node_id not in {self.left_node_id, self.right_node_id}:
+            raise ArgusValidationError(
+                "winner_node_id must match either left_node_id or right_node_id."
+            )
+
+    @property
+    def loser_node_id(self) -> str:
+        return (
+            self.right_node_id
+            if self.winner_node_id == self.left_node_id
+            else self.left_node_id
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "selection_label": self.selection_label,
+            "objective_name": self.objective_name,
+            "objective_description": self.objective_description,
+            "left_node_id": self.left_node_id,
+            "right_node_id": self.right_node_id,
+            "winner_node_id": self.winner_node_id,
+            "summary": self.summary,
+            "decisive_advantages": list(self.decisive_advantages),
+            "decisive_risks": list(self.decisive_risks),
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "PairwiseDecisionArtifact":
+        data = _validate_payload_keys(
+            payload,
+            field_name="PairwiseDecisionArtifact",
+            required={
+                "selection_label",
+                "objective_name",
+                "objective_description",
+                "left_node_id",
+                "right_node_id",
+                "winner_node_id",
+                "summary",
+                "decisive_advantages",
+                "decisive_risks",
+                "confidence",
+            },
+        )
+        return cls(
+            selection_label=data["selection_label"],
+            objective_name=data["objective_name"],
+            objective_description=data["objective_description"],
+            left_node_id=data["left_node_id"],
+            right_node_id=data["right_node_id"],
+            winner_node_id=data["winner_node_id"],
+            summary=data["summary"],
+            decisive_advantages=data["decisive_advantages"],
+            decisive_risks=data["decisive_risks"],
+            confidence=data["confidence"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FinalRecommendation:
     best_bet_node_id: str
     conservative_node_id: str | None
@@ -1369,6 +1493,7 @@ class FinalRecommendation:
     assumptions: list[str] = field(default_factory=list)
     failure_modes: list[str] = field(default_factory=list)
     reversal_conditions: list[str] = field(default_factory=list)
+    pairwise_decisions: list[PairwiseDecisionArtifact] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1415,6 +1540,11 @@ class FinalRecommendation:
             "reversal_conditions",
             _normalize_string_list(self.reversal_conditions, "reversal_conditions"),
         )
+        object.__setattr__(
+            self,
+            "pairwise_decisions",
+            _normalize_pairwise_decisions(self.pairwise_decisions, "pairwise_decisions"),
+        )
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -1427,6 +1557,7 @@ class FinalRecommendation:
             "assumptions": list(self.assumptions),
             "failure_modes": list(self.failure_modes),
             "reversal_conditions": list(self.reversal_conditions),
+            "pairwise_decisions": [decision.to_dict() for decision in self.pairwise_decisions],
         }
         return payload
 
@@ -1446,6 +1577,7 @@ class FinalRecommendation:
                 "failure_modes",
                 "reversal_conditions",
             },
+            optional={"pairwise_decisions"},
         )
         return cls(
             best_bet_node_id=data["best_bet_node_id"],
@@ -1457,6 +1589,13 @@ class FinalRecommendation:
             assumptions=data["assumptions"],
             failure_modes=data["failure_modes"],
             reversal_conditions=data["reversal_conditions"],
+            pairwise_decisions=[
+                PairwiseDecisionArtifact.from_dict(item)
+                for item in _normalize_sequence(
+                    data.get("pairwise_decisions", []),
+                    "pairwise_decisions",
+                )
+            ],
         )
 
 
@@ -1491,6 +1630,26 @@ def _normalize_unique_string_list(values: object, field_name: str) -> list[str]:
     if duplicates:
         joined = ", ".join(duplicates)
         raise ArgusValidationError(f"{field_name} contains duplicate values: {joined}.")
+    return normalized
+
+
+def _normalize_pairwise_decisions(
+    values: object,
+    field_name: str,
+) -> list[PairwiseDecisionArtifact]:
+    if not _is_sequence(values):
+        raise ArgusValidationError(
+            f"{field_name} must be a list of PairwiseDecisionArtifact instances, "
+            f"got {type(values).__name__}."
+        )
+    normalized: list[PairwiseDecisionArtifact] = []
+    for index, value in enumerate(values):
+        if not isinstance(value, PairwiseDecisionArtifact):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a PairwiseDecisionArtifact instance, "
+                f"got {type(value).__name__}."
+            )
+        normalized.append(value)
     return normalized
 
 

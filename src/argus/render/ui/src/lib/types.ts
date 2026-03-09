@@ -94,6 +94,20 @@ export interface FinalRecommendation {
     assumptions: string[];
     failure_modes: string[];
     reversal_conditions: string[];
+    pairwise_decisions: PairwiseDecisionArtifact[];
+}
+
+export interface PairwiseDecisionArtifact {
+    selection_label: string;
+    objective_name: string;
+    objective_description: string;
+    left_node_id: string;
+    right_node_id: string;
+    winner_node_id: string;
+    summary: string;
+    decisive_advantages: string[];
+    decisive_risks: string[];
+    confidence: number;
 }
 
 export interface SearchAxis {

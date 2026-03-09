@@ -58,7 +58,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 ## Later
 
 - [x] Move the observer UI off full-state polling onto typed status/event updates with periodic snapshot reconciliation, and expose a lightweight run-status API so the graph/report views can show current action, active invocations, and live event history without reloading the full search state every second.
-- [ ] Persist structured pairwise decision artifacts and surface them directly in the report view instead of relying on summary markdown alone.
+- [x] Persist structured pairwise decision artifacts and surface them directly in the report view instead of relying on summary markdown alone.
 - [ ] Upgrade the observer graph from action/id labels to idea-first labels plus island, migration, novelty, and winner-lineage overlays.
 - [ ] Replace the memory ledger's provider-only aggregation with a provider x action matrix and reusable-learning filters that distinguish outcome-backed priors from search-only priors.
 
@@ -111,6 +111,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - The adaptive frontier loop now includes explicit archive parent sampling, provider-mediated island migration, revisit beyond the live frontier, outcome-backed provider-routing updates, and a bounded finalist tournament instead of a top-two shortcut.
 - `argus status` now reports the latest or selected run's persisted progress plus recent and active provider invocations, so the operator can see what stage is running without manually spelunking artifact directories.
 - Final answer compilation now runs a bounded provider-backed pairwise tournament over a small finalist pool for `best_bet`, `conservative_option`, and `high_upside_option`, so a third- or fourth-ranked archived node can still win on direct head-to-head merit instead of being eliminated by a top-two pre-rank shortcut.
+- Adaptive runs now persist structured `pairwise_decisions` inside `final-recommendation.json`, validate those node references during snapshot load/save, and the observer report renders the grouped head-to-head tournament evidence directly instead of relying on summary markdown alone.
 - `argus run` and `argus benchmark` now load optional TOML run-config files via `--run-config`, applying `provider_pool` and per-provider model overrides from `RunConfig` while still letting explicit `--provider` override the configured pool for that invocation.
 - Run-config files now also support optional `budget` plus logical provider aliases via `[providers.<alias>] type = "codex|gemini|opencode"`, so the same backend can be routed as multiple distinct model-backed workers with separate routing attribution.
 - Run-config files now also support common execution defaults such as `cost_profile`, `progress`, `verbose`, `observe`, and `observe_port`, with explicit CLI flags taking precedence for one-off overrides.

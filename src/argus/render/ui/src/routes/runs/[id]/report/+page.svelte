@@ -7,6 +7,7 @@
   import type {
       FinalDecisionDoc,
       FinalRecommendation,
+      PairwiseDecisionArtifact,
       ProposalBrief,
       ResearchArtifactBundle,
       SearchNode,
@@ -80,6 +81,46 @@
       null;
 
   const researchDecisionMemo = () => researchBundle()?.decision_report_markdown ?? null;
+  const pairwiseDecisions = (): PairwiseDecisionArtifact[] => finalRecommendation()?.pairwise_decisions ?? [];
+
+  const objectiveWinnerId = (objectiveName: string, recommendation: FinalRecommendation | null): string | null => {
+      if (!recommendation) return null;
+      if (objectiveName === 'best_overall') return recommendation.best_bet_node_id;
+      if (objectiveName === 'conservative_option') return recommendation.conservative_node_id;
+      if (objectiveName === 'high_upside_option') return recommendation.high_upside_node_id;
+      return null;
+  };
+
+  const pairwiseDecisionGroups = () => {
+      const recommendation = finalRecommendation();
+      const groups = new Map<
+          string,
+          {
+              selectionLabel: string;
+              objectiveName: string;
+              objectiveDescription: string;
+              winnerNode: SearchNode | null;
+              decisions: PairwiseDecisionArtifact[];
+          }
+      >();
+
+      for (const decision of pairwiseDecisions()) {
+          const existing = groups.get(decision.objective_name);
+          if (existing) {
+              existing.decisions.push(decision);
+              continue;
+          }
+          groups.set(decision.objective_name, {
+              selectionLabel: decision.selection_label,
+              objectiveName: decision.objective_name,
+              objectiveDescription: decision.objective_description,
+              winnerNode: getNode(objectiveWinnerId(decision.objective_name, recommendation)),
+              decisions: [decision],
+          });
+      }
+
+      return Array.from(groups.values());
+  };
 
   const searchProfile = () => {
       const value = uiState.searchState?.manifest?.metadata?.search_profile;
@@ -225,6 +266,7 @@
           {@const rejectedNodes = rejectedButInsightful()}
           {@const bundle = researchBundle()}
           {@const researchDecision = finalDecision()}
+          {@const pairwiseGroups = pairwiseDecisionGroups()}
           {#if winnerNode}
               <div class="report-card winner-card">
                   <div class="card-header">
@@ -279,6 +321,74 @@
                           <div class="summary-kicker">Structured markdown rendered from persisted artifacts</div>
                       </div>
                       <div class="summary-markdown">{@html summaryHtml()}</div>
+                  </div>
+              {/if}
+
+              {#if pairwiseGroups.length > 0}
+                  <div class="report-card research-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Pairwise Tournament</div>
+                              <h2>Finalist Head-To-Head Decisions</h2>
+                          </div>
+                          <div class="summary-kicker">Structured adaptive-runtime ranking artifacts</div>
+                      </div>
+                      <div class="artifact-stack">
+                          {#each pairwiseGroups as group}
+                              <div class="artifact-card">
+                                  <div class="artifact-title-row">
+                                      <h3>{group.selectionLabel}</h3>
+                                      <span class="artifact-tag">{humanize(group.objectiveName)}</span>
+                                  </div>
+                                  <p class="detail-paragraph">{group.objectiveDescription}</p>
+                                  {#if group.winnerNode}
+                                      <p class="detail-paragraph">
+                                          <strong>Winner:</strong> {group.winnerNode.candidate.thesis} ({group.winnerNode.node_id})
+                                      </p>
+                                  {/if}
+                                  <div class="artifact-grid compact-grid" style="margin-top: 18px;">
+                                      {#each group.decisions as decision}
+                                          {@const leftNode = getNode(decision.left_node_id)}
+                                          {@const rightNode = getNode(decision.right_node_id)}
+                                          {@const winnerSideNode = getNode(decision.winner_node_id)}
+                                          <div class="artifact-card nested-card">
+                                              <div class="artifact-title-row">
+                                                  <h3>{leftNode?.candidate.thesis ?? decision.left_node_id}</h3>
+                                                  <span class="artifact-tag">vs {rightNode?.node_id ?? decision.right_node_id}</span>
+                                              </div>
+                                              <p class="detail-paragraph">
+                                                  <strong>Matchup:</strong>
+                                                  {leftNode?.node_id ?? decision.left_node_id} vs {rightNode?.node_id ?? decision.right_node_id}
+                                              </p>
+                                              <p class="detail-paragraph">
+                                                  <strong>Winner:</strong> {winnerSideNode?.candidate.thesis ?? decision.winner_node_id}
+                                              </p>
+                                              <p class="detail-paragraph">{decision.summary}</p>
+                                              <div class="metric-row">
+                                                  <span>Confidence {percent(decision.confidence)}</span>
+                                              </div>
+                                              {#if decision.decisive_advantages.length > 0}
+                                                  <div class="section-label" style="margin-top: 18px;">Decisive Advantages</div>
+                                                  <ul class="detail-list">
+                                                      {#each decision.decisive_advantages as item}
+                                                          <li>{item}</li>
+                                                      {/each}
+                                                  </ul>
+                                              {/if}
+                                              {#if decision.decisive_risks.length > 0}
+                                                  <div class="section-label" style="margin-top: 18px;">Decisive Risks</div>
+                                                  <ul class="detail-list">
+                                                      {#each decision.decisive_risks as item}
+                                                          <li>{item}</li>
+                                                      {/each}
+                                                  </ul>
+                                              {/if}
+                                          </div>
+                                      {/each}
+                                  </div>
+                              </div>
+                          {/each}
+                      </div>
                   </div>
               {/if}
 

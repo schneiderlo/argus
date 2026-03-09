@@ -28,6 +28,7 @@ from argus.models import (
     LearningNote,
     Node,
     NodeLifecycleStatus,
+    PairwiseDecisionArtifact,
     ProblemSpec,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
@@ -355,15 +356,6 @@ class SearchRunResult:
     state: SearchState
     final_recommendation: FinalRecommendation
     summary_markdown: str
-
-
-@dataclass(frozen=True, slots=True)
-class _PairwiseDecisionRecord:
-    selection_label: str
-    left_node_id: str
-    right_node_id: str
-    winner_node_id: str
-    assessment: PairwiseRankingAssessment
 
 
 @dataclass(frozen=True, slots=True)
@@ -2706,6 +2698,11 @@ class SearchRuntime:
             assumptions=assumptions,
             failure_modes=failure_modes,
             reversal_conditions=reversal_conditions,
+            pairwise_decisions=[
+                *best_decisions,
+                *conservative_decisions,
+                *high_upside_decisions,
+            ],
         )
 
     def _select_pairwise_candidate(
@@ -2720,7 +2717,7 @@ class SearchRuntime:
         routing_tracker: "_RoutingTracker",
         reusable_learning_notes: Sequence[ReusableLearningNote],
         pre_rank_key=None,
-    ) -> tuple[Node | None, list[_PairwiseDecisionRecord]]:
+    ) -> tuple[Node | None, list[PairwiseDecisionArtifact]]:
         candidates = list(nodes)
         if not candidates:
             return None, []
@@ -2764,7 +2761,7 @@ class SearchRuntime:
         )
         win_counts: dict[str, int] = {node.node_id: 0 for node in pool}
         head_to_head: dict[tuple[str, str], int] = {}
-        decisions: list[_PairwiseDecisionRecord] = []
+        decisions: list[PairwiseDecisionArtifact] = []
         for (left, right), assessment in zip(matchups, assessments):
             winner = left if assessment.winner == "left" else right
             loser = right if winner.node_id == left.node_id else left
@@ -2787,12 +2784,17 @@ class SearchRuntime:
                     },
                 )
             decisions.append(
-                _PairwiseDecisionRecord(
+                PairwiseDecisionArtifact(
                     selection_label=selection_label,
+                    objective_name=objective_name,
+                    objective_description=objective_description,
                     left_node_id=left.node_id,
                     right_node_id=right.node_id,
                     winner_node_id=winner.node_id,
-                    assessment=assessment,
+                    summary=assessment.summary,
+                    decisive_advantages=assessment.decisive_advantages,
+                    decisive_risks=assessment.decisive_risks,
+                    confidence=assessment.confidence,
                 )
             )
         ordered_positions = {
@@ -3827,22 +3829,17 @@ def _render_summary_markdown(
     return "\n".join(lines).strip() + "\n"
 
 
-def _pairwise_selection_notes(records: Sequence[_PairwiseDecisionRecord]) -> list[str]:
+def _pairwise_selection_notes(records: Sequence[PairwiseDecisionArtifact]) -> list[str]:
     notes: list[str] = []
     for record in records:
-        loser_node_id = (
-            record.right_node_id
-            if record.winner_node_id == record.left_node_id
-            else record.left_node_id
-        )
         fragments = [
-            f"{record.selection_label}: `{record.winner_node_id}` beat `{loser_node_id}`.",
-            record.assessment.summary,
+            f"{record.selection_label}: `{record.winner_node_id}` beat `{record.loser_node_id}`.",
+            record.summary,
         ]
-        if record.assessment.decisive_advantages:
-            fragments.append(f"Key edge: {record.assessment.decisive_advantages[0]}")
-        if record.assessment.decisive_risks:
-            fragments.append(f"Main risk: {record.assessment.decisive_risks[0]}")
+        if record.decisive_advantages:
+            fragments.append(f"Key edge: {record.decisive_advantages[0]}")
+        if record.decisive_risks:
+            fragments.append(f"Main risk: {record.decisive_risks[0]}")
         notes.append(" ".join(fragments))
     return notes
 

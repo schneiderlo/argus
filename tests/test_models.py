@@ -18,6 +18,7 @@ from argus.models import (
     OutcomeFeedback,
     OutcomeFeedbackLedger,
     OutcomeFeedbackStatus,
+    PairwiseDecisionArtifact,
     ProblemSpec,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
@@ -218,6 +219,20 @@ class ModelTests(unittest.TestCase):
             assumptions=["Users will trade setup time for better outputs."],
             failure_modes=["Onboarding friction may outweigh output quality gains."],
             reversal_conditions=["If interviews show low willingness to configure workflows."],
+            pairwise_decisions=[
+                PairwiseDecisionArtifact(
+                    selection_label="Best bet",
+                    objective_name="best_overall",
+                    objective_description="Choose the strongest overall recommendation.",
+                    left_node_id="node-0007",
+                    right_node_id="node-0003",
+                    winner_node_id="node-0007",
+                    summary="The workflow-native bet has stronger compounding value.",
+                    decisive_advantages=["Builds a durable recurring ritual."],
+                    decisive_risks=["Needs careful onboarding."],
+                    confidence=0.82,
+                )
+            ],
         )
 
         payload = recommendation.to_dict()
@@ -226,6 +241,22 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(recommendation, restored)
         self.assertIn("assumptions", payload)
         self.assertIn("reversal_conditions", payload)
+        self.assertEqual(payload["pairwise_decisions"][0]["winner_node_id"], "node-0007")
+
+    def test_pairwise_decision_artifact_rejects_unknown_winner_side(self) -> None:
+        with self.assertRaises(ArgusValidationError):
+            PairwiseDecisionArtifact(
+                selection_label="Best bet",
+                objective_name="best_overall",
+                objective_description="Choose the strongest overall recommendation.",
+                left_node_id="node-0001",
+                right_node_id="node-0002",
+                winner_node_id="node-9999",
+                summary="Invalid winner reference.",
+                decisive_advantages=[],
+                decisive_risks=[],
+                confidence=0.5,
+            )
 
     def test_learning_memory_round_trips_and_selects_relevant_entries(self) -> None:
         product_problem = ProblemSpec(

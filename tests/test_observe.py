@@ -22,6 +22,7 @@ from argus.models import (
     LearningNoteType,
     Node,
     NodeLifecycleStatus,
+    PairwiseDecisionArtifact,
     ProblemSpec,
     ProposalBrief,
     ProposalDisposition,
@@ -158,6 +159,10 @@ class ObserverPayloadTests(unittest.TestCase):
             payload["final_recommendation"]["best_bet_node_id"],
             "node-0001",
         )
+        self.assertEqual(
+            payload["final_recommendation"]["pairwise_decisions"][0]["objective_name"],
+            "best_overall",
+        )
         self.assertEqual(payload["summary_markdown"], "## Recommendation\nPrefer node-0001.")
         self.assertEqual(payload["routing_summary"]["entries"][0]["provider_name"], "codex")
         self.assertEqual(
@@ -282,6 +287,18 @@ class ObserverReportSourceTests(unittest.TestCase):
         self.assertIn("Coverage Ledger", source)
         self.assertIn("Decision Artifacts", source)
         self.assertIn("Final Decision Report", source)
+
+    def test_report_route_surfaces_pairwise_tournament_artifacts(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/runs/[id]/report/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("pairwise_decisions", source)
+        self.assertIn("Pairwise Tournament", source)
+        self.assertIn("objective_description", source)
 
     def test_top_bar_uses_search_budget_label(self) -> None:
         component_path = (
@@ -408,6 +425,20 @@ def _sample_persisted_run() -> PersistedRun:
             assumptions=["The observer report should reflect persisted artifacts."],
             failure_modes=["The frontend may still expect the legacy shape."],
             reversal_conditions=["A future API version deliberately changes the observer contract."],
+            pairwise_decisions=[
+                PairwiseDecisionArtifact(
+                    selection_label="Best bet",
+                    objective_name="best_overall",
+                    objective_description="Choose the strongest overall recommendation.",
+                    left_node_id="node-0001",
+                    right_node_id="node-0002",
+                    winner_node_id="node-0001",
+                    summary="The direct persisted-artifact path is more auditable.",
+                    decisive_advantages=["Keeps the report grounded in stored state."],
+                    decisive_risks=["Could still miss some richer research context."],
+                    confidence=0.79,
+                )
+            ],
         ),
         summary_markdown="## Recommendation\nPrefer node-0001.",
         routing_summary=ProviderRoutingStats(

@@ -1141,6 +1141,10 @@ class FileSystemStateStore:
         if recommendation.high_upside_node_id is not None:
             referenced_ids.add(recommendation.high_upside_node_id)
         referenced_ids.update(recommendation.rejected_but_insightful_ids)
+        for decision in recommendation.pairwise_decisions:
+            referenced_ids.add(decision.left_node_id)
+            referenced_ids.add(decision.right_node_id)
+            referenced_ids.add(decision.winner_node_id)
 
         unknown_ids = sorted(referenced_ids - node_ids)
         if unknown_ids:

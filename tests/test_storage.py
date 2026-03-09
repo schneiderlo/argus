@@ -27,6 +27,7 @@ from argus.models import (
     NodeLifecycleStatus,
     OutcomeFeedback,
     OutcomeFeedbackStatus,
+    PairwiseDecisionArtifact,
     ProblemSpec,
     ProposalBrief,
     ProposalDisposition,
@@ -97,6 +98,10 @@ class FileSystemStateStoreTests(unittest.TestCase):
         self.assertEqual(loaded.problem_spec, problem_spec)
         self.assertEqual(loaded.state, state)
         self.assertEqual(loaded.final_recommendation, recommendation)
+        self.assertEqual(
+            loaded.final_recommendation.pairwise_decisions[0].objective_name,
+            "best_overall",
+        )
         self.assertEqual(loaded.summary_markdown, "Prefer the workflow-native bet.")
         self.assertEqual(loaded.manifest.metadata["winner_count"], 1)
 
@@ -603,6 +608,20 @@ def _sample_final_recommendation() -> FinalRecommendation:
         assumptions=["Teams prefer lower coordination cost over feature breadth."],
         failure_modes=["Setup friction could limit adoption."],
         reversal_conditions=["If interviews show low willingness to change habits."],
+        pairwise_decisions=[
+            PairwiseDecisionArtifact(
+                selection_label="Best bet",
+                objective_name="best_overall",
+                objective_description="Choose the strongest overall recommendation.",
+                left_node_id="node-0002",
+                right_node_id="node-0001",
+                winner_node_id="node-0002",
+                summary="The workflow-native bet compounds value over time.",
+                decisive_advantages=["Creates a stronger durable habit loop."],
+                decisive_risks=["Onboarding may be heavier."],
+                confidence=0.84,
+            )
+        ],
     )
 
 
