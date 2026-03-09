@@ -342,6 +342,12 @@ def search_policy_for_cost_profile(
     )
 
 
+def default_runtime_search_policy() -> SearchPolicy:
+    """Return the adaptive runtime default used when callers do not pass a policy."""
+
+    return search_policy_for_cost_profile("standard")
+
+
 @dataclass(frozen=True, slots=True)
 class SearchRunResult:
     run_path: Path
@@ -496,7 +502,7 @@ class SearchRuntime:
         self._provider = default_provider
         self._providers = provider_pool
         self._state_store = state_store
-        self._policy = policy or SearchPolicy()
+        self._policy = policy or default_runtime_search_policy()
         self._progress_sink = progress_sink or NullProgressSink()
         self._progress_verbose = bool(progress_verbose)
         if not isinstance(reuse_learning_memory, bool):

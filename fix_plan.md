@@ -46,7 +46,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Replace generic node combination with a gated hybrid action that must name the repaired failure mode, complementary strengths, seam hypothesis, and complexity tax before a hybrid can survive.
 - [x] Replace the current summary-template finish with a dedicated decision-authoring stage that reads the full artifact set and emits a typed final decision document plus richer markdown outputs.
 - [x] Extend the observer/report views to surface research artifacts directly instead of only the node graph and summary markdown.
-- [ ] Unify the default runtime behavior so raw `SearchRuntime(policy=None)` and CLI defaults do not disagree about single-island versus portfolio search.
+- [x] Unify the default runtime behavior so raw `SearchRuntime(policy=None)` and CLI defaults do not disagree about single-island versus portfolio search.
 
 - [x] Replace the fixed mid-run phase chain with an adaptive frontier loop that decides whether to widen, stress-test, deepen, mutate, combine, or compress learning based on frontier width, critique coverage, and remaining budget.
 - [x] Turn provider-routing statistics into a real action router so multi-provider runs can choose among a configured provider pool instead of collecting routing telemetry only.
@@ -115,6 +115,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Run-config files now also support optional `budget` plus logical provider aliases via `[providers.<alias>] type = "codex|gemini|opencode"`, so the same backend can be routed as multiple distinct model-backed workers with separate routing attribution.
 - Run-config files now also support common execution defaults such as `cost_profile`, `progress`, `verbose`, `observe`, and `observe_port`, with explicit CLI flags taking precedence for one-off overrides.
 - Run-config files and CLI commands now also support a user-facing `search_profile` (`balanced` or `portfolio`) instead of making operators think in terms of raw `island_policies`. When omitted, `lean` defaults to `balanced`, while `standard` and `max` default to `portfolio`.
+- Raw `SearchRuntime(policy=None)` now uses the same default adaptive policy as the CLI (`standard` cost profile, `portfolio` search profile) so programmatic runs and operator-facing runs agree on island shape unless the caller passes an explicit policy.
 - Run-config files now also support request input via `request` or `prompt_file`, so `argus run` and `argus dry-run` can operate without a positional request when the TOML already defines one. `prompt_file` is resolved relative to the run-config file, and CLI request inputs still take precedence.
 - `argus run` now also supports `--prompt-file <path>` so multi-line requests can be supplied from disk instead of a single quoted positional argument, with explicit validation for missing/empty/conflicting request inputs.
 - `argus dry-run` now validates request inputs (`--prompt-file` or inline), run-config/provider resolution, and local provider binary availability without executing provider actions, so operators can catch setup errors before spending provider calls.

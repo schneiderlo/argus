@@ -563,6 +563,19 @@ class SearchRuntimeTests(unittest.TestCase):
             self.assertEqual(loaded.manifest.metadata["runtime_mode"], "staged")
             self.assertIn("Research Decision", result.summary_markdown)
 
+    def test_runtime_default_policy_matches_cli_portfolio_default(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+
+            runtime = SearchRuntime(provider=provider, state_store=store)
+
+        self.assertEqual(
+            [island.island_id for island in runtime.policy.island_policies],
+            ["balanced", "conservative", "upside"],
+        )
+
     def test_runtime_marks_manifest_failed_when_frame_problem_raises(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -586,6 +599,11 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(loaded.manifest.status, RunStatus.FAILED)
         self.assertIsNone(loaded.state)
         self.assertEqual(loaded.manifest.metadata["failed_action"], "frame_problem")
+        self.assertEqual(loaded.manifest.metadata["search_profile"], "portfolio")
+        self.assertEqual(
+            loaded.manifest.metadata["island_ids"],
+            ["balanced", "conservative", "upside"],
+        )
         self.assertIn("frame_problem", loaded.manifest.error)
         self.assertIsNotNone(loaded.routing_summary)
         self.assertEqual(loaded.routing_summary, aggregate_routing)
