@@ -45,7 +45,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Add a provider-backed benchmark comparison judge so multi-mode benchmark sessions can score decision quality and actionability directly instead of relying only on side-by-side artifact review.
 - [x] Replace generic node combination with a gated hybrid action that must name the repaired failure mode, complementary strengths, seam hypothesis, and complexity tax before a hybrid can survive.
 - [x] Replace the current summary-template finish with a dedicated decision-authoring stage that reads the full artifact set and emits a typed final decision document plus richer markdown outputs.
-- [ ] Extend the observer/report views to surface research artifacts directly instead of only the node graph and summary markdown.
+- [x] Extend the observer/report views to surface research artifacts directly instead of only the node graph and summary markdown.
 - [ ] Unify the default runtime behavior so raw `SearchRuntime(policy=None)` and CLI defaults do not disagree about single-island versus portfolio search.
 
 - [x] Replace the fixed mid-run phase chain with an adaptive frontier loop that decides whether to widen, stress-test, deepen, mutate, combine, or compress learning based on frontier width, critique coverage, and remaining budget.
@@ -130,3 +130,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Research-mode runs now persist `research/bundle.json` plus rendered markdown artifacts under `research/markdown/` inside each run directory, and `load_run()` exposes the typed `research_bundle` alongside the existing search-state and final-recommendation payloads.
 - `argus benchmark` now compares `adaptive`, `staged`, and `research` per case by default, persisting mode-specific outputs under `artifacts/benchmarks/<session_id>/cases/<case_id>/<runtime_mode>/` and tracking digest drift separately for each mode across sessions.
 - Benchmark sessions now also persist a provider-backed per-case comparison artifact (`comparison.json` plus `comparison.md`) that scores decision quality, actionability, tradeoff clarity, risk quality, and experiment quality across runtime modes, marks a winner and runner-up, and records skipped/failed comparison states in the session manifest.
+- The observer state payload now includes the persisted `research_bundle`, and the final report renders typed research artifacts directly: search-space framing, coverage ledger cells, proposal briefs, triage and scheduler traces, deep dives, adversarial reviews, comparison matrices, hybrid assessments, and the final decision document/memo.

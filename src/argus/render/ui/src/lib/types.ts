@@ -96,6 +96,179 @@ export interface FinalRecommendation {
     reversal_conditions: string[];
 }
 
+export interface SearchAxis {
+    axis_id: string;
+    label: string;
+    description: string;
+    options: string[];
+    rationale?: string;
+}
+
+export interface SearchCell {
+    cell_id: string;
+    label: string;
+    axis_assignments: Record<string, string>;
+    hypothesis: string;
+    coverage_status: string;
+    uncertainty: number;
+    hard_gate_risk: number;
+    evidence_strength: number;
+    incumbent_proposal_ids: string[];
+    notes: string[];
+}
+
+export interface SearchSpaceFrame {
+    frame_id: string;
+    problem_statement: string;
+    target_decision: string;
+    hard_gates: string[];
+    soft_criteria: string[];
+    baseline_options: string[];
+    axes: SearchAxis[];
+    coverage_plan: string[];
+    notes: string[];
+}
+
+export interface CoverageLedger {
+    ledger_id: string;
+    frame_id: string;
+    cells: SearchCell[];
+    coverage_summary: string;
+    next_questions: string[];
+    updated_at: string;
+}
+
+export interface ProposalBrief {
+    proposal_id: string;
+    cell_id: string;
+    title: string;
+    summary: string;
+    candidate: Candidate;
+    seed_rationale: string;
+    open_questions: string[];
+    evidence: string[];
+    parent_node_ids: string[];
+}
+
+export interface ProposalTriageDecision {
+    proposal_id: string;
+    disposition: string;
+    rationale: string;
+    merged_into_proposal_id?: string;
+    follow_up?: string;
+}
+
+export interface TriageReport {
+    report_id: string;
+    frame_id: string;
+    decisions: ProposalTriageDecision[];
+    survivor_ids: string[];
+    unexplored_cell_ids: string[];
+    summary: string;
+    next_actions: string[];
+}
+
+export interface DeepDiveDoc {
+    doc_id: string;
+    proposal_id: string;
+    title: string;
+    executive_summary: string;
+    detailed_mechanism: string;
+    implementation_plan: string[];
+    key_unknowns: string[];
+    supporting_evidence: string[];
+    assumptions: string[];
+}
+
+export interface AdversarialReview {
+    review_id: string;
+    proposal_id: string;
+    thesis_under_test: string;
+    hidden_dependencies: string[];
+    failure_modes: string[];
+    mitigations: string[];
+    summary: string;
+    verdict: string;
+    confidence: number;
+    evidence: string[];
+}
+
+export interface ComparisonMatrixRow {
+    proposal_id: string;
+    criterion_scores: Record<string, number>;
+    advantages: string[];
+    liabilities: string[];
+    takeaway: string;
+}
+
+export interface ComparisonMatrix {
+    matrix_id: string;
+    frame_id: string;
+    criteria: string[];
+    rows: ComparisonMatrixRow[];
+    summary: string;
+}
+
+export interface HybridAssessment {
+    assessment_id: string;
+    source_proposal_ids: string[];
+    hybrid_name: string;
+    seam_hypothesis: string;
+    repaired_failure_mode: string;
+    complementary_strengths: string[];
+    complexity_tax: string;
+    expected_upside: string;
+    open_questions: string[];
+    verdict: string;
+    summary: string;
+}
+
+export interface FinalDecisionDoc {
+    decision_id: string;
+    frame_id: string;
+    selected_proposal_id: string;
+    runner_up_proposal_id?: string;
+    conservative_proposal_id?: string;
+    high_upside_proposal_id?: string;
+    summary: string;
+    decision_rule: string;
+    assumptions: string[];
+    top_risks: string[];
+    mitigations: string[];
+    first_spike: string[];
+    kill_criteria: string[];
+    next_experiments: string[];
+    reversal_conditions: string[];
+    rejected_proposal_ids: string[];
+}
+
+export interface SchedulerDecision {
+    decision_id: string;
+    action: string;
+    rationale: string;
+    remaining_budget: number;
+    priority_score: number;
+    target_cell_ids: string[];
+    target_proposal_ids: string[];
+    signals: string[];
+    selected_at: string;
+}
+
+export interface ResearchArtifactBundle {
+    search_space_frame?: SearchSpaceFrame | null;
+    coverage_ledger?: CoverageLedger | null;
+    scheduler_decisions: SchedulerDecision[];
+    proposal_briefs: ProposalBrief[];
+    triage_reports: TriageReport[];
+    deep_dive_docs: DeepDiveDoc[];
+    adversarial_reviews: AdversarialReview[];
+    comparison_matrices: ComparisonMatrix[];
+    hybrid_assessments: HybridAssessment[];
+    final_decision_doc?: FinalDecisionDoc | null;
+    decision_summary_markdown?: string | null;
+    decision_report_markdown?: string | null;
+}
+
 export interface RoutingEntry {
     provider_name: string;
     action_name: string;
@@ -162,6 +335,7 @@ export interface SearchStatePayload {
     final_recommendation: FinalRecommendation | null;
     summary_markdown: string | null;
     routing_summary: RoutingStats | null;
+    research_bundle?: ResearchArtifactBundle | null;
 }
 
 export interface ProviderInvocationSummary {

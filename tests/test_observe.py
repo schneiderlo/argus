@@ -8,19 +8,36 @@ from unittest.mock import Mock, patch
 from argus.config import ArgusConfig
 from argus.models import (
     ActionType,
+    AdversarialReview,
     Candidate,
+    ComparisonMatrix,
+    ComparisonMatrixRow,
+    CoverageLedger,
+    CoverageStatus,
     Critique,
+    DeepDiveDoc,
     FinalRecommendation,
+    FinalDecisionDoc,
     LearningMemory,
     LearningNoteType,
     Node,
     NodeLifecycleStatus,
     ProblemSpec,
+    ProposalBrief,
+    ProposalDisposition,
+    ProposalTriageDecision,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    ResearchArtifactBundle,
+    ResearchSchedulerAction,
     ReusableLearningNote,
     ScoreVector,
+    SchedulerDecision,
+    SearchAxis,
+    SearchCell,
     SearchState,
+    SearchSpaceFrame,
+    TriageReport,
 )
 from argus.observe import (
     _annotate_nodes_with_termination_reason,
@@ -144,6 +161,14 @@ class ObserverPayloadTests(unittest.TestCase):
         self.assertEqual(payload["summary_markdown"], "## Recommendation\nPrefer node-0001.")
         self.assertEqual(payload["routing_summary"]["entries"][0]["provider_name"], "codex")
         self.assertEqual(
+            payload["research_bundle"]["final_decision_doc"]["selected_proposal_id"],
+            "proposal-observer",
+        )
+        self.assertEqual(
+            payload["research_bundle"]["search_space_frame"]["axes"][0]["axis_id"],
+            "coverage",
+        )
+        self.assertEqual(
             payload["nodes"]["node-0002"]["termination_reason"],
             "Rejected by novelty gate: Near-duplicate of node-0001.",
         )
@@ -202,6 +227,7 @@ class ObserverReportSourceTests(unittest.TestCase):
 
         self.assertIn("best_bet_node_id", source)
         self.assertIn("winner_ids?.[0]", source)
+        self.assertIn("researchBundle()", source)
         self.assertNotIn("manifest?.winner_id", source)
 
     def test_report_route_renders_summary_markdown_as_html(self) -> None:
@@ -243,6 +269,19 @@ class ObserverReportSourceTests(unittest.TestCase):
         self.assertIn("fetchRunStatus", source)
         self.assertIn("setInterval", source)
         self.assertIn("refreshes automatically", source)
+
+    def test_report_route_surfaces_typed_research_artifacts(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/runs/[id]/report/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("Search Space Frame", source)
+        self.assertIn("Coverage Ledger", source)
+        self.assertIn("Decision Artifacts", source)
+        self.assertIn("Final Decision Report", source)
 
     def test_top_bar_uses_search_budget_label(self) -> None:
         component_path = (
@@ -395,6 +434,155 @@ def _sample_persisted_run() -> PersistedRun:
             ],
             updated_at=timestamp,
         ),
+        research_bundle=_sample_research_bundle(),
+    )
+
+
+def _sample_research_bundle() -> ResearchArtifactBundle:
+    frame = SearchSpaceFrame(
+        frame_id="frame-observer",
+        problem_statement="Expose research-mode observer artifacts directly in the report.",
+        target_decision="Choose the best runtime presentation for research runs.",
+        hard_gates=["Must use persisted typed artifacts only."],
+        soft_criteria=["Operator clarity", "Replayability"],
+        baseline_options=["Keep the report node-only."],
+        axes=[
+            SearchAxis(
+                axis_id="coverage",
+                label="Coverage",
+                description="How explicitly the report surfaces family coverage.",
+                options=["summary only", "direct artifacts"],
+            )
+        ],
+        coverage_plan=["Render the frame.", "Render coverage cells and the final decision."],
+    )
+    proposal = ProposalBrief(
+        proposal_id="proposal-observer",
+        cell_id="cell-observer",
+        title="Typed research report",
+        summary="Show the research artifact bundle directly in the run report.",
+        candidate=Candidate(
+            thesis="Render research artifacts directly from persisted bundle payloads.",
+            mechanism="Send the bundle through the observer API and map it to dedicated report sections.",
+            strengths=["Matches the storage contract."],
+            evidence=["Research runs already persist typed artifacts."],
+        ),
+        seed_rationale="Closes the top unchecked fix-plan gap.",
+        open_questions=["How much detail should the report show inline?"],
+        evidence=["The fix plan explicitly calls out observer/report coverage."],
+        parent_node_ids=["node-0001"],
+    )
+    return ResearchArtifactBundle(
+        search_space_frame=frame,
+        coverage_ledger=CoverageLedger(
+            ledger_id="ledger-observer",
+            frame_id=frame.frame_id,
+            cells=[
+                SearchCell(
+                    cell_id="cell-observer",
+                    label="Direct report artifact rendering",
+                    axis_assignments={"coverage": "direct artifacts"},
+                    hypothesis="Direct artifact rendering improves run auditability.",
+                    coverage_status=CoverageStatus.REDTEAMED,
+                    uncertainty=0.18,
+                    hard_gate_risk=0.07,
+                    evidence_strength=0.86,
+                    incumbent_proposal_ids=["proposal-observer"],
+                    notes=["Current leading presentation."],
+                )
+            ],
+            coverage_summary="The report now exposes the typed artifact bundle directly.",
+        ),
+        scheduler_decisions=[
+            SchedulerDecision(
+                decision_id="schedule-observer",
+                action=ResearchSchedulerAction.REDTEAM,
+                rationale="Pressure-test whether direct artifact rendering is still readable.",
+                remaining_budget=1,
+                priority_score=0.52,
+                target_proposal_ids=["proposal-observer"],
+                signals=["direct report rendering still needs UI validation"],
+                selected_at=datetime(2026, 3, 8, 12, 4, tzinfo=timezone.utc),
+            )
+        ],
+        proposal_briefs=[proposal],
+        triage_reports=[
+            TriageReport(
+                report_id="triage-observer",
+                frame_id=frame.frame_id,
+                decisions=[
+                    ProposalTriageDecision(
+                        proposal_id="proposal-observer",
+                        disposition=ProposalDisposition.SURVIVE,
+                        rationale="Best match for typed observer output.",
+                    )
+                ],
+                survivor_ids=["proposal-observer"],
+                unexplored_cell_ids=[],
+                summary="The typed research-report family survives triage.",
+            )
+        ],
+        deep_dive_docs=[
+            DeepDiveDoc(
+                doc_id="deep-observer",
+                proposal_id="proposal-observer",
+                title="Observer research report",
+                executive_summary="Render research artifacts in dedicated sections.",
+                detailed_mechanism="Expose search-space framing, coverage cells, comparison output, and final decision details from the persisted bundle.",
+                implementation_plan=["Add backend payload field.", "Render typed Svelte sections."],
+                key_unknowns=["Whether the page stays readable on smaller screens."],
+            )
+        ],
+        adversarial_reviews=[
+            AdversarialReview(
+                review_id="review-observer",
+                proposal_id="proposal-observer",
+                thesis_under_test=proposal.candidate.thesis,
+                hidden_dependencies=["Frontend types must match the backend contract."],
+                failure_modes=["The report could collapse into a long undifferentiated dump."],
+                mitigations=["Group artifacts into clear sections."],
+                summary="Direct rendering is viable if the report groups artifacts by decision stage.",
+                verdict="Proceed",
+                confidence=0.72,
+            )
+        ],
+        comparison_matrices=[
+            ComparisonMatrix(
+                matrix_id="matrix-observer",
+                frame_id=frame.frame_id,
+                criteria=["auditability", "clarity"],
+                rows=[
+                    ComparisonMatrixRow(
+                        proposal_id="proposal-observer",
+                        criterion_scores={"auditability": 0.93, "clarity": 0.78},
+                        advantages=["Makes research-mode evidence visible."],
+                        liabilities=["Adds more report surface area."],
+                        takeaway="Worth shipping if the layout stays structured.",
+                    )
+                ],
+                summary="Direct artifact rendering wins on auditability.",
+            )
+        ],
+        final_decision_doc=FinalDecisionDoc(
+            decision_id="decision-observer",
+            frame_id=frame.frame_id,
+            selected_proposal_id="proposal-observer",
+            runner_up_proposal_id=None,
+            conservative_proposal_id="proposal-observer",
+            high_upside_proposal_id="proposal-observer",
+            summary="Ship the typed research report.",
+            decision_rule="Prefer the presentation that preserves the most decision evidence without hiding the main recommendation.",
+            assumptions=["The observer keeps reading typed payloads instead of prose-only summaries."],
+            top_risks=["The report could become visually dense."],
+            mitigations=["Group artifacts into dedicated cards."],
+            first_spike=["Wire `research_bundle` through the observer payload."],
+            kill_criteria=["If verification or the UI type check breaks."],
+            next_experiments=["Validate readability with a larger research run fixture."],
+            reversal_conditions=["If the page becomes less actionable than the simpler summary report."],
+            rejected_proposal_ids=[],
+        ),
+        decision_summary_markdown="# Research Decision\n\nRender the typed bundle directly in the report.\n",
+        decision_report_markdown="# Final Decision Memo\n\nThe observer should show research artifacts directly.\n",
     )
 
 

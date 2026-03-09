@@ -4,7 +4,13 @@
   import { fetchRunStatus, fetchState } from '$lib/api';
   import { renderRichMarkdown } from '$lib/markdown';
   import { uiState } from '$lib/stores.svelte';
-  import type { FinalRecommendation, SearchNode } from '$lib/types';
+  import type {
+      FinalDecisionDoc,
+      FinalRecommendation,
+      ProposalBrief,
+      ResearchArtifactBundle,
+      SearchNode,
+  } from '$lib/types';
 
   let currentRunId = $derived($page.params.id);
   let isLoading = $state(true);
@@ -32,6 +38,27 @@
   };
 
   const finalRecommendation = (): FinalRecommendation | null => uiState.searchState?.final_recommendation ?? null;
+  const researchBundle = (): ResearchArtifactBundle | null => uiState.searchState?.research_bundle ?? null;
+  const finalDecision = (): FinalDecisionDoc | null => researchBundle()?.final_decision_doc ?? null;
+  const proposalBriefs = (): ProposalBrief[] => researchBundle()?.proposal_briefs ?? [];
+  const hasResearchArtifacts = () => {
+      const bundle = researchBundle();
+      return Boolean(
+          bundle &&
+              (
+                  bundle.search_space_frame ||
+                  bundle.coverage_ledger ||
+                  bundle.scheduler_decisions.length ||
+                  bundle.proposal_briefs.length ||
+                  bundle.triage_reports.length ||
+                  bundle.deep_dive_docs.length ||
+                  bundle.adversarial_reviews.length ||
+                  bundle.comparison_matrices.length ||
+                  bundle.hybrid_assessments.length ||
+                  bundle.final_decision_doc
+              )
+      );
+  };
 
   const winner = () => {
       const recommendation = finalRecommendation();
@@ -47,9 +74,12 @@
           .filter((node): node is SearchNode => node !== null);
 
   const recommendationSummary = () =>
+      researchBundle()?.decision_summary_markdown ??
       uiState.searchState?.summary_markdown ??
       finalRecommendation()?.summary_markdown ??
       null;
+
+  const researchDecisionMemo = () => researchBundle()?.decision_report_markdown ?? null;
 
   const searchProfile = () => {
       const value = uiState.searchState?.manifest?.metadata?.search_profile;
@@ -74,8 +104,33 @@
       return summary ? renderRichMarkdown(summary) : null;
   };
 
+  const decisionMemoHtml = () => {
+      const memo = researchDecisionMemo();
+      return memo ? renderRichMarkdown(memo) : null;
+  };
+
   const detailList = (values: string[] | undefined | null) =>
       Array.isArray(values) ? values.filter((value) => typeof value === 'string' && value.trim()) : [];
+
+  const proposalById = (proposalId: string | null | undefined): ProposalBrief | null => {
+      if (!proposalId) return null;
+      return proposalBriefs().find((proposal) => proposal.proposal_id === proposalId) ?? null;
+  };
+
+  const proposalLabel = (proposalId: string | null | undefined) => {
+      const proposal = proposalById(proposalId);
+      return proposal ? `${proposal.title} (${proposal.proposal_id})` : proposalId ?? '—';
+  };
+
+  const humanize = (value: string | null | undefined) => {
+      if (!value) return '—';
+      return value
+          .replaceAll('_', ' ')
+          .replace(/\b\w/g, (match) => match.toUpperCase());
+  };
+
+  const percent = (value: number | null | undefined) =>
+      typeof value === 'number' ? `${Math.round(value * 100)}%` : '—';
 
   $effect(() => {
       if (currentRunId && currentRunId !== uiState.activeRunId) {
@@ -156,7 +211,7 @@
               <p>The final recommendation will be available once the Argus search loop concludes.</p>
               <a href="/runs/{currentRunId}" class="action-button mt-4" style="text-decoration: none; display: inline-block;">Return to Observer Graph</a>
           </div>
-      {:else if !winner()}
+      {:else if !winner() && !hasResearchArtifacts()}
           <div class="empty-state">
               <div class="empty-icon">⚠️</div>
               <h2>No Winner Selected</h2>
@@ -168,6 +223,8 @@
           {@const conservativeNode = conservativeOption()}
           {@const highUpsideNode = highUpsideOption()}
           {@const rejectedNodes = rejectedButInsightful()}
+          {@const bundle = researchBundle()}
+          {@const researchDecision = finalDecision()}
           {#if winnerNode}
               <div class="report-card winner-card">
                   <div class="card-header">
@@ -222,6 +279,369 @@
                           <div class="summary-kicker">Structured markdown rendered from persisted artifacts</div>
                       </div>
                       <div class="summary-markdown">{@html summaryHtml()}</div>
+                  </div>
+              {/if}
+
+              {#if bundle?.search_space_frame}
+                  <div class="report-card research-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Research Artifact Bundle</div>
+                              <h2>Search Space Frame</h2>
+                          </div>
+                          <div class="summary-kicker">Typed framing persisted under the run directory</div>
+                      </div>
+                      <p class="research-lead">{bundle.search_space_frame.problem_statement}</p>
+                      <div class="option-grid details-grid">
+                          <div class="report-card detail-card nested-card">
+                              <div class="section-label">Target Decision</div>
+                              <p class="detail-paragraph">{bundle.search_space_frame.target_decision}</p>
+                          </div>
+                          <div class="report-card detail-card nested-card">
+                              <div class="section-label">Baseline Options</div>
+                              <ul class="detail-list">
+                                  {#each detailList(bundle.search_space_frame.baseline_options) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                          <div class="report-card detail-card nested-card">
+                              <div class="section-label">Hard Gates</div>
+                              <ul class="detail-list">
+                                  {#each detailList(bundle.search_space_frame.hard_gates) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                          <div class="report-card detail-card nested-card">
+                              <div class="section-label">Soft Criteria</div>
+                              <ul class="detail-list">
+                                  {#each detailList(bundle.search_space_frame.soft_criteria) as item}
+                                      <li>{item}</li>
+                                  {/each}
+                              </ul>
+                          </div>
+                      </div>
+                      <div class="artifact-grid">
+                          {#each bundle.search_space_frame.axes as axis}
+                              <div class="artifact-card">
+                                  <div class="artifact-title-row">
+                                      <h3>{axis.label}</h3>
+                                      <span class="artifact-tag">{axis.axis_id}</span>
+                                  </div>
+                                  <p class="detail-paragraph">{axis.description}</p>
+                                  <ul class="detail-list">
+                                      {#each axis.options as option}
+                                          <li>{option}</li>
+                                      {/each}
+                                  </ul>
+                              </div>
+                          {/each}
+                      </div>
+                      {#if detailList(bundle.search_space_frame.coverage_plan).length > 0}
+                          <div class="section-label" style="margin-top: 28px;">Coverage Plan</div>
+                          <ul class="detail-list">
+                              {#each detailList(bundle.search_space_frame.coverage_plan) as item}
+                                  <li>{item}</li>
+                              {/each}
+                          </ul>
+                      {/if}
+                  </div>
+              {/if}
+
+              {#if bundle?.coverage_ledger}
+                  <div class="report-card research-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Coverage Ledger</div>
+                              <h2>Cell Status</h2>
+                          </div>
+                          <div class="summary-kicker">{bundle.coverage_ledger.cells.length} cells tracked</div>
+                      </div>
+                      <p class="research-lead">{bundle.coverage_ledger.coverage_summary}</p>
+                      <div class="artifact-grid">
+                          {#each bundle.coverage_ledger.cells as cell}
+                              <div class="artifact-card">
+                                  <div class="artifact-title-row">
+                                      <h3>{cell.label}</h3>
+                                      <span class="artifact-tag">{humanize(cell.coverage_status)}</span>
+                                  </div>
+                                  <p class="detail-paragraph">{cell.hypothesis}</p>
+                                  <div class="metric-row">
+                                      <span>Uncertainty {percent(cell.uncertainty)}</span>
+                                      <span>Hard-Gate Risk {percent(cell.hard_gate_risk)}</span>
+                                      <span>Evidence {percent(cell.evidence_strength)}</span>
+                                  </div>
+                                  <div class="section-label" style="margin-top: 18px;">Axis Assignments</div>
+                                  <ul class="detail-list">
+                                      {#each Object.entries(cell.axis_assignments) as [axisId, choice]}
+                                          <li><strong>{humanize(axisId)}:</strong> {choice}</li>
+                                      {/each}
+                                  </ul>
+                                  {#if cell.incumbent_proposal_ids.length > 0}
+                                      <div class="section-label" style="margin-top: 18px;">Incumbents</div>
+                                      <ul class="detail-list">
+                                          {#each cell.incumbent_proposal_ids as proposalId}
+                                              <li>{proposalLabel(proposalId)}</li>
+                                          {/each}
+                                      </ul>
+                                  {/if}
+                              </div>
+                          {/each}
+                      </div>
+                      {#if detailList(bundle.coverage_ledger.next_questions).length > 0}
+                          <div class="section-label" style="margin-top: 28px;">Open Coverage Questions</div>
+                          <ul class="detail-list">
+                              {#each detailList(bundle.coverage_ledger.next_questions) as item}
+                                  <li>{item}</li>
+                              {/each}
+                          </ul>
+                      {/if}
+                  </div>
+              {/if}
+
+              {#if bundle && (bundle.proposal_briefs.length > 0 || bundle.triage_reports.length > 0 || bundle.scheduler_decisions.length > 0)}
+                  <div class="report-card research-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Research Trace</div>
+                              <h2>Families, Triage, And Scheduling</h2>
+                          </div>
+                          <div class="summary-kicker">Directly rendered from typed research artifacts</div>
+                      </div>
+                      {#if bundle.proposal_briefs.length > 0}
+                          <div class="artifact-grid">
+                              {#each bundle.proposal_briefs as proposal}
+                                  <div class="artifact-card">
+                                      <div class="artifact-title-row">
+                                          <h3>{proposal.title}</h3>
+                                          <span class="artifact-tag">{proposal.proposal_id}</span>
+                                      </div>
+                                      <p class="detail-paragraph">{proposal.summary}</p>
+                                      <p class="detail-paragraph"><strong>Thesis:</strong> {proposal.candidate.thesis}</p>
+                                      <p class="detail-paragraph"><strong>Seed rationale:</strong> {proposal.seed_rationale}</p>
+                                      {#if proposal.open_questions.length > 0}
+                                          <div class="section-label" style="margin-top: 18px;">Open Questions</div>
+                                          <ul class="detail-list">
+                                              {#each proposal.open_questions as item}
+                                                  <li>{item}</li>
+                                              {/each}
+                                          </ul>
+                                      {/if}
+                                  </div>
+                              {/each}
+                          </div>
+                      {/if}
+                      {#if bundle.triage_reports.length > 0}
+                          {@const latestTriage = bundle.triage_reports[bundle.triage_reports.length - 1]}
+                          <div class="section-label" style="margin-top: 28px;">Latest Triage</div>
+                          <p class="research-lead">{latestTriage.summary}</p>
+                          <div class="artifact-grid compact-grid">
+                              {#each latestTriage.decisions as decision}
+                                  <div class="artifact-card">
+                                      <div class="artifact-title-row">
+                                          <h3>{proposalLabel(decision.proposal_id)}</h3>
+                                          <span class="artifact-tag">{humanize(decision.disposition)}</span>
+                                      </div>
+                                      <p class="detail-paragraph">{decision.rationale}</p>
+                                      {#if decision.follow_up}
+                                          <p class="detail-paragraph"><strong>Follow-up:</strong> {decision.follow_up}</p>
+                                      {/if}
+                                  </div>
+                              {/each}
+                          </div>
+                      {/if}
+                      {#if bundle.scheduler_decisions.length > 0}
+                          <div class="section-label" style="margin-top: 28px;">Scheduler Decisions</div>
+                          <div class="artifact-grid compact-grid">
+                              {#each bundle.scheduler_decisions as decision}
+                                  <div class="artifact-card">
+                                      <div class="artifact-title-row">
+                                          <h3>{humanize(decision.action)}</h3>
+                                          <span class="artifact-tag">Priority {percent(decision.priority_score)}</span>
+                                      </div>
+                                      <p class="detail-paragraph">{decision.rationale}</p>
+                                  </div>
+                              {/each}
+                          </div>
+                      {/if}
+                  </div>
+              {/if}
+
+              {#if bundle && (bundle.deep_dive_docs.length > 0 || bundle.adversarial_reviews.length > 0)}
+                  <div class="option-grid details-grid">
+                      {#if bundle.deep_dive_docs.length > 0}
+                          <div class="report-card detail-card research-card">
+                              <div class="section-label">Deep Dives</div>
+                              <div class="artifact-stack">
+                                  {#each bundle.deep_dive_docs as doc}
+                                      <div class="artifact-card">
+                                          <div class="artifact-title-row">
+                                              <h3>{doc.title}</h3>
+                                              <span class="artifact-tag">{proposalLabel(doc.proposal_id)}</span>
+                                          </div>
+                                          <p class="detail-paragraph">{doc.executive_summary}</p>
+                                          <p class="detail-paragraph">{doc.detailed_mechanism}</p>
+                                          {#if doc.implementation_plan.length > 0}
+                                              <div class="section-label" style="margin-top: 18px;">Implementation Plan</div>
+                                              <ul class="detail-list">
+                                                  {#each doc.implementation_plan as item}
+                                                      <li>{item}</li>
+                                                  {/each}
+                                              </ul>
+                                          {/if}
+                                      </div>
+                                  {/each}
+                              </div>
+                          </div>
+                      {/if}
+                      {#if bundle.adversarial_reviews.length > 0}
+                          <div class="report-card detail-card research-card">
+                              <div class="section-label">Adversarial Reviews</div>
+                              <div class="artifact-stack">
+                                  {#each bundle.adversarial_reviews as review}
+                                      <div class="artifact-card">
+                                          <div class="artifact-title-row">
+                                              <h3>{proposalLabel(review.proposal_id)}</h3>
+                                              <span class="artifact-tag">{review.verdict}</span>
+                                          </div>
+                                          <p class="detail-paragraph">{review.summary}</p>
+                                          <div class="metric-row">
+                                              <span>Confidence {percent(review.confidence)}</span>
+                                          </div>
+                                          {#if review.failure_modes.length > 0}
+                                              <div class="section-label" style="margin-top: 18px;">Failure Modes</div>
+                                              <ul class="detail-list">
+                                                  {#each review.failure_modes as item}
+                                                      <li>{item}</li>
+                                                  {/each}
+                                              </ul>
+                                          {/if}
+                                          {#if review.mitigations.length > 0}
+                                              <div class="section-label" style="margin-top: 18px;">Mitigations</div>
+                                              <ul class="detail-list">
+                                                  {#each review.mitigations as item}
+                                                      <li>{item}</li>
+                                                  {/each}
+                                              </ul>
+                                          {/if}
+                                      </div>
+                                  {/each}
+                              </div>
+                          </div>
+                      {/if}
+                  </div>
+              {/if}
+
+              {#if bundle && (bundle.comparison_matrices.length > 0 || bundle.hybrid_assessments.length > 0 || researchDecision)}
+                  <div class="report-card research-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Decision Artifacts</div>
+                              <h2>Comparison And Final Decision</h2>
+                          </div>
+                          <div class="summary-kicker">Pairwise comparison and decision-grade output</div>
+                      </div>
+                      {#if bundle.comparison_matrices.length > 0}
+                          {@const latestMatrix = bundle.comparison_matrices[bundle.comparison_matrices.length - 1]}
+                          <p class="research-lead">{latestMatrix.summary}</p>
+                          <div class="comparison-table-wrap">
+                              <table class="comparison-table">
+                                  <thead>
+                                      <tr>
+                                          <th>Proposal</th>
+                                          {#each latestMatrix.criteria as criterion}
+                                              <th>{humanize(criterion)}</th>
+                                          {/each}
+                                          <th>Takeaway</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody>
+                                      {#each latestMatrix.rows as row}
+                                          <tr>
+                                              <td>{proposalLabel(row.proposal_id)}</td>
+                                              {#each latestMatrix.criteria as criterion}
+                                                  <td>{row.criterion_scores[criterion]?.toFixed(2) ?? '—'}</td>
+                                              {/each}
+                                              <td>{row.takeaway}</td>
+                                          </tr>
+                                      {/each}
+                                  </tbody>
+                              </table>
+                          </div>
+                      {/if}
+                      {#if bundle.hybrid_assessments.length > 0}
+                          <div class="section-label" style="margin-top: 28px;">Hybrid Assessments</div>
+                          <div class="artifact-grid compact-grid">
+                              {#each bundle.hybrid_assessments as hybrid}
+                                  <div class="artifact-card">
+                                      <div class="artifact-title-row">
+                                          <h3>{hybrid.hybrid_name}</h3>
+                                          <span class="artifact-tag">{humanize(hybrid.verdict)}</span>
+                                      </div>
+                                      <p class="detail-paragraph">{hybrid.summary}</p>
+                                      <p class="detail-paragraph"><strong>Seam:</strong> {hybrid.seam_hypothesis}</p>
+                                      <p class="detail-paragraph"><strong>Complexity tax:</strong> {hybrid.complexity_tax}</p>
+                                  </div>
+                              {/each}
+                          </div>
+                      {/if}
+                      {#if researchDecision}
+                          <div class="option-grid details-grid" style="margin-top: 24px;">
+                              <div class="report-card detail-card nested-card">
+                                  <div class="section-label">Selection</div>
+                                  <ul class="detail-list">
+                                      <li><strong>Selected:</strong> {proposalLabel(researchDecision.selected_proposal_id)}</li>
+                                      {#if researchDecision.runner_up_proposal_id}
+                                          <li><strong>Runner-up:</strong> {proposalLabel(researchDecision.runner_up_proposal_id)}</li>
+                                      {/if}
+                                      {#if researchDecision.conservative_proposal_id}
+                                          <li><strong>Conservative:</strong> {proposalLabel(researchDecision.conservative_proposal_id)}</li>
+                                      {/if}
+                                      {#if researchDecision.high_upside_proposal_id}
+                                          <li><strong>High-upside:</strong> {proposalLabel(researchDecision.high_upside_proposal_id)}</li>
+                                      {/if}
+                                  </ul>
+                              </div>
+                              <div class="report-card detail-card nested-card">
+                                  <div class="section-label">Decision Rule</div>
+                                  <p class="detail-paragraph">{researchDecision.decision_rule}</p>
+                              </div>
+                              {#if detailList(researchDecision.top_risks).length > 0}
+                                  <div class="report-card detail-card nested-card">
+                                      <div class="section-label">Top Risks</div>
+                                      <ul class="detail-list">
+                                          {#each detailList(researchDecision.top_risks) as item}
+                                              <li>{item}</li>
+                                          {/each}
+                                      </ul>
+                                  </div>
+                              {/if}
+                              {#if detailList(researchDecision.mitigations).length > 0}
+                                  <div class="report-card detail-card nested-card">
+                                      <div class="section-label">Mitigations</div>
+                                      <ul class="detail-list">
+                                          {#each detailList(researchDecision.mitigations) as item}
+                                              <li>{item}</li>
+                                          {/each}
+                                      </ul>
+                                  </div>
+                              {/if}
+                          </div>
+                      {/if}
+                  </div>
+              {/if}
+
+              {#if researchDecisionMemo() && researchDecisionMemo() !== recommendationSummary()}
+                  <div class="report-card summary-card">
+                      <div class="summary-header">
+                          <div>
+                              <div class="section-label">Research Memo</div>
+                              <h2>Final Decision Report</h2>
+                          </div>
+                          <div class="summary-kicker">Provider-authored memo from the full research bundle</div>
+                      </div>
+                      <div class="summary-markdown">{@html decisionMemoHtml()}</div>
                   </div>
               {/if}
 
@@ -429,6 +849,17 @@
   .detail-card {
       margin-top: 24px;
       padding: 28px;
+  }
+
+  .research-card {
+      margin-top: 24px;
+  }
+
+  .nested-card {
+      margin-top: 0;
+      padding: 24px;
+      background: rgba(255, 255, 255, 0.02);
+      box-shadow: none;
   }
 
   .summary-card {
@@ -725,6 +1156,13 @@
       line-height: 1.6;
   }
 
+  .research-lead {
+      margin: 0;
+      color: var(--ink-primary);
+      line-height: 1.7;
+      font-size: 16px;
+  }
+
   .rejected-list {
       display: flex;
       flex-direction: column;
@@ -741,6 +1179,124 @@
       padding-left: 20px;
       color: var(--ink-primary);
       line-height: 1.7;
+  }
+
+  .detail-paragraph {
+      margin: 0;
+      color: var(--ink-secondary);
+      line-height: 1.7;
+  }
+
+  .artifact-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 24px;
+  }
+
+  .compact-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .artifact-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+  }
+
+  @media (max-width: 960px) {
+      .artifact-grid,
+      .compact-grid {
+          grid-template-columns: 1fr;
+      }
+  }
+
+  .artifact-card {
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.03);
+  }
+
+  :global(.light-mode) .artifact-card,
+  :global(.light-mode) .nested-card {
+      background: rgba(0, 0, 0, 0.02);
+  }
+
+  .artifact-title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+  }
+
+  .artifact-title-row h3 {
+      margin: 0;
+      font-size: 17px;
+      color: var(--ink-primary);
+  }
+
+  .artifact-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--ink-tertiary);
+      white-space: nowrap;
+  }
+
+  .metric-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 14px;
+      color: var(--ink-tertiary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+  }
+
+  .comparison-table-wrap {
+      margin-top: 24px;
+      overflow-x: auto;
+      border: 1px solid var(--border-heavy);
+      border-radius: 12px;
+  }
+
+  .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      min-width: 720px;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: top;
+  }
+
+  .comparison-table th {
+      color: var(--ink-tertiary);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      background: rgba(255, 255, 255, 0.03);
+  }
+
+  :global(.light-mode) .comparison-table th {
+      background: rgba(0, 0, 0, 0.03);
+  }
+
+  .comparison-table tbody tr:last-child td {
+      border-bottom: none;
   }
 
   /* Matrix Layout */

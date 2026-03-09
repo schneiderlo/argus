@@ -97,6 +97,11 @@ def _state_payload(persisted_run) -> dict[str, object]:
         if persisted_run.routing_summary is None
         else persisted_run.routing_summary.to_dict()
     )
+    data["research_bundle"] = (
+        None
+        if persisted_run.research_bundle is None
+        else persisted_run.research_bundle.to_dict()
+    )
     return data
 
 
