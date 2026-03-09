@@ -14,6 +14,20 @@ A completed `argus run` must persist:
 - the final recommendation object
 - a readable markdown summary for humans
 
+When the research-oriented runtime is used, a completed run must also persist a
+decision-artifact bundle. At minimum this should include structured and
+human-readable forms of:
+
+- the search-space frame
+- the coverage ledger
+- proposal briefs
+- triage outcomes
+- deep-dive artifacts for surviving families
+- adversarial reviews
+- the comparison matrix
+- hybrid assessments
+- the final decision document
+
 The repository should also persist:
 
 - a root-level reusable learning-memory ledger so future non-benchmark runs can reuse compressed patterns with provenance
@@ -27,6 +41,15 @@ The final recommendation object must include:
 - a human-readable summary
 - explicit next experiments
 - explicit assumptions and reversal conditions
+
+The richer final decision artifact should additionally preserve:
+
+- the runner-up and the condition under which it would win
+- the conservative choice
+- the high-upside risky choice
+- the top risks with mitigation plans
+- the first implementation spike and kill criteria
+- the explicit decision rule used to act under uncertainty
 
 ## Benchmark Dataset
 
@@ -53,6 +76,23 @@ The benchmark harness must:
 - persist outputs
 - record run metadata
 - make regressions visible
+
+The benchmark harness should compare runtime modes directly when multiple search
+paths exist. In particular, the repository should support comparing:
+
+- the compact adaptive runtime
+- the simpler staged research pipeline
+- the coverage-led research runtime
+
+Benchmarks should not only detect output drift. They should also make it
+possible to compare decision quality and actionability across runtime modes.
+
+The benchmark evaluation regime should increasingly focus on questions such as:
+
+- would a serious team act on this output?
+- are the tradeoffs explicit and specific?
+- is the first spike concrete and discriminating?
+- are the risks and reversal conditions decision-grade rather than generic?
 
 To keep comparisons stable, the harness may isolate or disable shared cross-run learning memory while still persisting each case's own run artifacts.
 

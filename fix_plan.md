@@ -19,6 +19,13 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Highest Priority
 
+- [ ] Add first-class typed research-artifact models for `SearchSpaceFrame`, `SearchAxis`, `SearchCell`, `CoverageLedger`, `ProposalBrief`, `TriageReport`, `DeepDiveDoc`, `AdversarialReview`, `ComparisonMatrix`, `HybridAssessment`, and `FinalDecisionDoc` so Argus can persist decision-grade work instead of compressing everything back into `Candidate`.
+- [ ] Add a coverage-led research runtime alongside the current adaptive node runtime. The new runtime should explicitly frame the search space, maintain a coverage ledger of important cells or candidate families, seed representatives for uncovered cells, triage at the family level, deepen incumbents, red-team fragile survivors, gate hybrids with seam hypotheses, and write a final decision package from the full artifact set.
+- [ ] Add structured schemas and provider actions for the research pipeline stages: `frame_search_space`, `seed_cell_proposals`, `triage_proposals`, `deepen_family`, `redteam_family`, `assess_hybrid`, and `write_final_decision`.
+- [ ] Extend the filesystem state store so each run can persist a structured research-artifact bundle plus rendered markdown artifacts under the run directory, instead of relying on `_render_summary_markdown` as the main user-facing output path.
+- [ ] Add a new CLI/runtime mode for the research pipeline, keeping the current `argus run` path available as a control until the richer path wins on benchmarks.
+- [ ] Add benchmark support to compare three modes directly: the current adaptive runtime, the simple staged 5-step pipeline, and the new coverage-led research runtime. Use those results to decide when the richer path should become the default.
+
 - [x] Implement bounded concurrent provider dispatch for independent search phases so `argus run` latency does not scale linearly with every evaluation, novelty, stress-test, and deepen call. Keep state commits deterministic, cap concurrency per provider, and prevent intra-batch novelty races.
 - [x] Replace the thin generic evaluator and novelty prompts with action-specific judge prompts that encode the real rubric, hard-constraint handling, adversarial checks, duplicate criteria, and output expectations directly in the provider prompt materialized for Codex.
 - [x] Add evaluator-quality benchmark fixtures and tests that catch obvious ranking, hard-constraint, pairwise-comparison, and novelty failures instead of only checking schema/plumbing behavior.
@@ -32,6 +39,12 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Add tests covering the CLI, provider contract, state store, evaluator, novelty filter, and search control flow.
 
 ## Next Priority
+
+- [ ] Make the scheduler coverage-aware rather than quota-aware by introducing a coverage ledger with explicit cell/family status, uncertainty, hard-gate risk, evidence strength, and incumbent references. The scheduler should pick `expand`, `deepen`, `red-team`, `hybridize`, or `stop` from that ledger state.
+- [ ] Replace generic node combination with a gated hybrid action that must name the repaired failure mode, complementary strengths, seam hypothesis, and complexity tax before a hybrid can survive.
+- [ ] Replace the current summary-template finish with a dedicated decision-authoring stage that reads the full artifact set and emits a typed final decision document plus richer markdown outputs.
+- [ ] Extend the observer/report views to surface research artifacts directly instead of only the node graph and summary markdown.
+- [ ] Unify the default runtime behavior so raw `SearchRuntime(policy=None)` and CLI defaults do not disagree about single-island versus portfolio search.
 
 - [x] Replace the fixed mid-run phase chain with an adaptive frontier loop that decides whether to widen, stress-test, deepen, mutate, combine, or compress learning based on frontier width, critique coverage, and remaining budget.
 - [x] Turn provider-routing statistics into a real action router so multi-provider runs can choose among a configured provider pool instead of collecting routing telemetry only.
@@ -109,3 +122,5 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - `./scripts/verify.sh` now gates observer UI changes with both `npm --prefix src/argus/render/ui run check` and `npm --prefix src/argus/render/ui run build`, so the served `src/argus/render/dist` bundle cannot silently drift behind the Svelte source tree.
 - The observer now exposes `/api/runs/{id}/status` plus `/api/status`, the Svelte UI consumes typed API contracts instead of `any`, the run graph polls status/events with periodic snapshot reconciliation, the report auto-refreshes while a run is active, and the dashboard/top bar now show search-budget terminology plus live current-action context.
 - The main remaining paper-aligned gap is deeper future policy learning beyond provider routing, especially stronger outcome-backed search-control updates and benchmark regimes that measure decision quality rather than only replayable runtime behavior.
+- The current runtime is strongest at search control, judge quality, persistence, and audit. Its main product gap is that the authoring layer still compresses most depth back into `Candidate`, `Critique`, and summary markdown instead of persisting richer decision artifacts.
+- The repository should treat the simpler staged research workflow as a serious benchmarked baseline rather than as an external prompt hack. The likely long-term shape is a hybrid: coverage-aware scheduling from Argus, artifact-rich authoring from staged prompts, and the existing evaluator/routing/store infrastructure underneath.
