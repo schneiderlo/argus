@@ -41,7 +41,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 ## Next Priority
 
-- [ ] Make the scheduler coverage-aware rather than quota-aware by introducing a coverage ledger with explicit cell/family status, uncertainty, hard-gate risk, evidence strength, and incumbent references. The scheduler should pick `expand`, `deepen`, `red-team`, `hybridize`, or `stop` from that ledger state.
+- [x] Make the scheduler coverage-aware rather than quota-aware by introducing a coverage ledger with explicit cell/family status, uncertainty, hard-gate risk, evidence strength, and incumbent references. The scheduler now persists typed scheduler decisions and picks `expand`, `deepen`, `red-team`, `hybridize`, or `stop` from ledger state instead of fixed survivor quotas.
 - [ ] Add a provider-backed benchmark comparison judge so multi-mode benchmark sessions can score decision quality and actionability directly instead of relying only on side-by-side artifact review.
 - [ ] Replace generic node combination with a gated hybrid action that must name the repaired failure mode, complementary strengths, seam hypothesis, and complexity tax before a hybrid can survive.
 - [ ] Replace the current summary-template finish with a dedicated decision-authoring stage that reads the full artifact set and emits a typed final decision document plus richer markdown outputs.

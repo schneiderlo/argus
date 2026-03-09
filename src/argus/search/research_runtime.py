@@ -16,7 +16,9 @@ from argus.models import (
     NodeLifecycleStatus,
     ProblemSpec,
     ProposalBrief,
+    ResearchSchedulerAction,
     ResearchArtifactBundle,
+    SchedulerDecision,
     SearchState,
     TriageReport,
 )
@@ -231,302 +233,345 @@ class ResearchRuntime(SearchRuntime):
                 bundle=bundle,
             )
 
-            current_action = ActionType.SEED_CELL_PROPOSALS.value
-            self._emit_progress(
-                "stage_started",
-                run_id=manifest.run_id,
-                step_count=session.step_count,
-                budget_spent=session.budget_spent,
-                payload={
-                    "action": ActionType.SEED_CELL_PROPOSALS.value,
-                    "label": "Seeding research cells",
-                    "reason": "Seed representative proposals for the highest-value uncovered cells.",
-                },
-            )
-            seed_response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.SEED_CELL_PROPOSALS,
-                problem_spec=session.problem_spec,
-                input_payload=self._seed_cell_payload(
-                    frame=plan.search_space_frame,
-                    ledger=plan.coverage_ledger,
-                    root_node=root_node,
-                    reusable_learning_notes=session.reusable_learning_notes,
-                ),
-                output_schema=proposal_seed_batch_schema(),
-            )
-            session.consume_budget()
-            seeded_batch = _validate_seed_batch(seed_response.payload)
-            admitted_nodes = self._admit_candidate_batch(
-                session,
-                island_id="balanced",
-                action_type=ActionType.SEED_CELL_PROPOSALS,
-                routing_tracker=routing_tracker,
-                requests=[
-                    self._proposal_admission_request(
-                        brief=brief,
-                        root_id=session.root_id,
-                        provider_name=seed_response.provider_name,
+            while budget - session.budget_spent > 1:
+                scheduler_decision = self._select_scheduler_decision(
+                    bundle=bundle,
+                    proposal_records=proposal_records,
+                    remaining_budget=budget - session.budget_spent,
+                )
+                bundle = replace(
+                    bundle,
+                    scheduler_decisions=[*bundle.scheduler_decisions, scheduler_decision],
+                )
+                self._emit_progress(
+                    "research_scheduler_decision",
+                    run_id=manifest.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": scheduler_decision.action.value,
+                        "rationale": scheduler_decision.rationale,
+                        "priority_score": scheduler_decision.priority_score,
+                        "target_cell_ids": list(scheduler_decision.target_cell_ids),
+                        "target_proposal_ids": list(scheduler_decision.target_proposal_ids),
+                    },
+                )
+                self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
+
+                if scheduler_decision.action is ResearchSchedulerAction.STOP:
+                    break
+
+                if scheduler_decision.action is ResearchSchedulerAction.EXPAND:
+                    current_action = ActionType.SEED_CELL_PROPOSALS.value
+                    target_cells = self._cells_for_ids(
+                        bundle.coverage_ledger,
+                        scheduler_decision.target_cell_ids,
                     )
-                    for brief in seeded_batch.proposals
-                ],
-            )
-            proposal_records = {
-                brief.proposal_id: _ResearchProposalRecord(brief=brief, node_id=node.node_id)
-                for brief, node in zip(seeded_batch.proposals, admitted_nodes)
-            }
-            bundle = replace(
-                bundle,
-                proposal_briefs=list(seeded_batch.proposals),
-                coverage_ledger=self._update_seeded_ledger(
-                    ledger=bundle.coverage_ledger,
-                    proposal_records=proposal_records,
-                    state=session.snapshot(),
-                ),
-            )
-            session.refresh_frontier(limit=max(2, self.policy.frontier_limit))
-            self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
-            self._emit_progress(
-                "stage_completed",
-                run_id=manifest.run_id,
-                step_count=session.step_count,
-                budget_spent=session.budget_spent,
-                payload={
-                    "action": ActionType.SEED_CELL_PROPOSALS.value,
-                    "label": "Seeding research cells",
-                    "nodes": len(session.nodes),
-                    "archive": len(session.archive_ids),
-                    "frontier": len(session.frontier_ids),
-                },
-            )
-
-            current_action = ActionType.TRIAGE_PROPOSALS.value
-            self._emit_progress(
-                "stage_started",
-                run_id=manifest.run_id,
-                step_count=session.step_count,
-                budget_spent=session.budget_spent,
-                payload={
-                    "action": ActionType.TRIAGE_PROPOSALS.value,
-                    "label": "Triaging proposal families",
-                    "reason": "Cull dominated families before deepening.",
-                },
-            )
-            triage_response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.TRIAGE_PROPOSALS,
-                problem_spec=session.problem_spec,
-                input_payload=self._triage_payload(
-                    frame=plan.search_space_frame,
-                    ledger=bundle.coverage_ledger,
-                    proposal_records=proposal_records,
-                    state=session.snapshot(),
-                    reusable_learning_notes=session.reusable_learning_notes,
-                ),
-                output_schema=triage_report_schema(),
-            )
-            session.consume_budget()
-            triage_report = _validate_triage_report(triage_response.payload)
-            bundle = replace(
-                bundle,
-                triage_reports=[triage_report],
-                coverage_ledger=self._update_triaged_ledger(
-                    ledger=bundle.coverage_ledger,
-                    triage_report=triage_report,
-                    proposal_records=proposal_records,
-                    state=session.snapshot(),
-                ),
-            )
-            self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
-            self._emit_progress(
-                "stage_completed",
-                run_id=manifest.run_id,
-                step_count=session.step_count,
-                budget_spent=session.budget_spent,
-                payload={
-                    "action": ActionType.TRIAGE_PROPOSALS.value,
-                    "label": "Triaging proposal families",
-                    "nodes": len(session.nodes),
-                    "archive": len(session.archive_ids),
-                    "frontier": len(session.frontier_ids),
-                },
-            )
-
-            survivor_ids = list(triage_report.survivor_ids)
-            if not survivor_ids:
-                raise ArgusValidationError("Research triage eliminated every proposal; no survivor remained.")
-
-            deep_dive_ids = self._allocate_survivor_budget(
-                survivor_ids=survivor_ids,
-                remaining_budget=budget - session.budget_spent,
-                reserve_for_review=True,
-            )
-            if deep_dive_ids:
-                current_action = ActionType.DEEPEN_FAMILY.value
-                self._emit_progress(
-                    "stage_started",
-                    run_id=manifest.run_id,
-                    step_count=session.step_count,
-                    budget_spent=session.budget_spent,
-                    payload={
-                        "action": ActionType.DEEPEN_FAMILY.value,
-                        "label": "Deepening survivor families",
-                        "reason": "Upgrade surviving families into executable decision dossiers.",
-                    },
-                )
-                deep_dive_responses = self._dispatch_provider_requests(
-                    routing_tracker,
-                    [
-                        _ProviderActionRequest(
-                            action_name=ActionType.DEEPEN_FAMILY,
-                            problem_spec=session.problem_spec,
-                            input_payload=self._deepen_family_payload(
-                                proposal_records[proposal_id],
-                                state=session.snapshot(),
-                                reusable_learning_notes=session.reusable_learning_notes,
-                            ),
-                            output_schema=deep_dive_doc_schema(),
-                        )
-                        for proposal_id in deep_dive_ids
-                    ],
-                )
-                deep_dive_docs = []
-                for response in deep_dive_responses:
+                    self._emit_progress(
+                        "stage_started",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.SEED_CELL_PROPOSALS.value,
+                            "label": "Seeding research cells",
+                            "reason": scheduler_decision.rationale,
+                            "target_cell_ids": list(scheduler_decision.target_cell_ids),
+                        },
+                    )
+                    seed_response = self._run_provider_action(
+                        routing_tracker,
+                        action_name=ActionType.SEED_CELL_PROPOSALS,
+                        problem_spec=session.problem_spec,
+                        input_payload=self._seed_cell_payload(
+                            frame=plan.search_space_frame,
+                            ledger=bundle.coverage_ledger,
+                            root_node=root_node,
+                            reusable_learning_notes=session.reusable_learning_notes,
+                            target_cells=target_cells,
+                        ),
+                        output_schema=proposal_seed_batch_schema(),
+                    )
                     session.consume_budget()
-                    deep_dive_docs.append(response.payload)
-                bundle = replace(
-                    bundle,
-                    deep_dive_docs=deep_dive_docs,
-                    coverage_ledger=self._update_coverage_status(
-                        bundle.coverage_ledger,
-                        proposal_ids=[doc.proposal_id for doc in deep_dive_docs],
-                        status=CoverageStatus.DEEPENED,
-                        note="Deep dive completed.",
-                    ),
-                )
-                self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
-                self._emit_progress(
-                    "stage_completed",
-                    run_id=manifest.run_id,
-                    step_count=session.step_count,
-                    budget_spent=session.budget_spent,
-                    payload={
-                        "action": ActionType.DEEPEN_FAMILY.value,
-                        "label": "Deepening survivor families",
-                        "nodes": len(session.nodes),
-                        "archive": len(session.archive_ids),
-                        "frontier": len(session.frontier_ids),
-                    },
-                )
-
-            review_ids = self._allocate_review_budget(
-                survivor_ids=survivor_ids,
-                remaining_budget=budget - session.budget_spent,
-                reserve_for_hybrid=len(survivor_ids) >= 2,
-            )
-            if review_ids:
-                current_action = ActionType.REDTEAM_FAMILY.value
-                self._emit_progress(
-                    "stage_started",
-                    run_id=manifest.run_id,
-                    step_count=session.step_count,
-                    budget_spent=session.budget_spent,
-                    payload={
-                        "action": ActionType.REDTEAM_FAMILY.value,
-                        "label": "Red-teaming survivors",
-                        "reason": "Attack high-value survivors before the final decision stage.",
-                    },
-                )
-                deep_dive_by_proposal = {
-                    doc.proposal_id: doc for doc in bundle.deep_dive_docs
-                }
-                review_responses = self._dispatch_provider_requests(
-                    routing_tracker,
-                    [
-                        _ProviderActionRequest(
-                            action_name=ActionType.REDTEAM_FAMILY,
-                            problem_spec=session.problem_spec,
-                            input_payload=self._redteam_payload(
-                                proposal_records[proposal_id],
-                                deep_dive=deep_dive_by_proposal.get(proposal_id),
-                                state=session.snapshot(),
-                                reusable_learning_notes=session.reusable_learning_notes,
-                            ),
-                            output_schema=adversarial_review_schema(),
+                    seeded_batch = _validate_seed_batch(seed_response.payload)
+                    admitted_nodes = self._admit_candidate_batch(
+                        session,
+                        island_id="balanced",
+                        action_type=ActionType.SEED_CELL_PROPOSALS,
+                        routing_tracker=routing_tracker,
+                        requests=[
+                            self._proposal_admission_request(
+                                brief=brief,
+                                root_id=session.root_id,
+                                provider_name=seed_response.provider_name,
+                            )
+                            for brief in seeded_batch.proposals
+                        ],
+                    )
+                    for brief, node in zip(seeded_batch.proposals, admitted_nodes):
+                        proposal_records[brief.proposal_id] = _ResearchProposalRecord(
+                            brief=brief,
+                            node_id=node.node_id,
                         )
-                        for proposal_id in review_ids
-                    ],
-                )
-                reviews = []
-                for response in review_responses:
-                    session.consume_budget()
-                    reviews.append(response.payload)
-                bundle = replace(
-                    bundle,
-                    adversarial_reviews=reviews,
-                    coverage_ledger=self._update_coverage_status(
-                        bundle.coverage_ledger,
-                        proposal_ids=[review.proposal_id for review in reviews],
-                        status=CoverageStatus.REDTEAMED,
-                        note="Adversarial review completed.",
-                    ),
-                )
-                self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
-                self._emit_progress(
-                    "stage_completed",
-                    run_id=manifest.run_id,
-                    step_count=session.step_count,
-                    budget_spent=session.budget_spent,
-                    payload={
-                        "action": ActionType.REDTEAM_FAMILY.value,
-                        "label": "Red-teaming survivors",
-                        "nodes": len(session.nodes),
-                        "archive": len(session.archive_ids),
-                        "frontier": len(session.frontier_ids),
-                    },
-                )
+                    bundle = replace(
+                        bundle,
+                        proposal_briefs=[*bundle.proposal_briefs, *seeded_batch.proposals],
+                        coverage_ledger=self._update_seeded_ledger(
+                            ledger=bundle.coverage_ledger,
+                            proposal_records=proposal_records,
+                            state=session.snapshot(),
+                        ),
+                    )
+                    session.refresh_frontier(limit=max(2, self.policy.frontier_limit))
+                    self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
+                    self._emit_progress(
+                        "stage_completed",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.SEED_CELL_PROPOSALS.value,
+                            "label": "Seeding research cells",
+                            "nodes": len(session.nodes),
+                            "archive": len(session.archive_ids),
+                            "frontier": len(session.frontier_ids),
+                        },
+                    )
 
-            if len(survivor_ids) >= 2 and budget - session.budget_spent > 1:
-                current_action = ActionType.ASSESS_HYBRID.value
-                self._emit_progress(
-                    "stage_started",
-                    run_id=manifest.run_id,
-                    step_count=session.step_count,
-                    budget_spent=session.budget_spent,
-                    payload={
-                        "action": ActionType.ASSESS_HYBRID.value,
-                        "label": "Assessing hybrids",
-                        "reason": "Only pursue a hybrid when the seam is explicit and justified.",
-                    },
-                )
-                hybrid_response = self._run_provider_action(
-                    routing_tracker,
-                    action_name=ActionType.ASSESS_HYBRID,
-                    problem_spec=session.problem_spec,
-                    input_payload=self._hybrid_payload(
-                        survivor_ids=survivor_ids[:2],
-                        proposal_records=proposal_records,
-                        bundle=bundle,
-                        reusable_learning_notes=session.reusable_learning_notes,
-                    ),
-                    output_schema=hybrid_assessment_schema(),
-                )
-                session.consume_budget()
-                bundle = replace(bundle, hybrid_assessments=[hybrid_response.payload])
-                self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
-                self._emit_progress(
-                    "stage_completed",
-                    run_id=manifest.run_id,
-                    step_count=session.step_count,
-                    budget_spent=session.budget_spent,
-                    payload={
-                        "action": ActionType.ASSESS_HYBRID.value,
-                        "label": "Assessing hybrids",
-                        "nodes": len(session.nodes),
-                        "archive": len(session.archive_ids),
-                        "frontier": len(session.frontier_ids),
-                    },
-                )
+                    current_action = ActionType.TRIAGE_PROPOSALS.value
+                    self._emit_progress(
+                        "stage_started",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.TRIAGE_PROPOSALS.value,
+                            "label": "Triaging proposal families",
+                            "reason": "Cull dominated families and mark any cells that still need expansion.",
+                        },
+                    )
+                    triage_response = self._run_provider_action(
+                        routing_tracker,
+                        action_name=ActionType.TRIAGE_PROPOSALS,
+                        problem_spec=session.problem_spec,
+                        input_payload=self._triage_payload(
+                            frame=plan.search_space_frame,
+                            ledger=bundle.coverage_ledger,
+                            proposal_records=proposal_records,
+                            state=session.snapshot(),
+                            reusable_learning_notes=session.reusable_learning_notes,
+                        ),
+                        output_schema=triage_report_schema(),
+                    )
+                    session.consume_budget()
+                    triage_report = _validate_triage_report(triage_response.payload)
+                    bundle = replace(
+                        bundle,
+                        triage_reports=[*bundle.triage_reports, triage_report],
+                        coverage_ledger=self._update_triaged_ledger(
+                            ledger=bundle.coverage_ledger,
+                            triage_report=triage_report,
+                            proposal_records=proposal_records,
+                            state=session.snapshot(),
+                        ),
+                    )
+                    if (
+                        not triage_report.survivor_ids
+                        and not self._has_expandable_cells(
+                            bundle.coverage_ledger,
+                            latest_triage_report=triage_report,
+                            require_value_gate=False,
+                        )
+                    ):
+                        raise ArgusValidationError(
+                            "Research triage eliminated every proposal and left no uncovered cells worth expanding."
+                        )
+                    self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
+                    self._emit_progress(
+                        "stage_completed",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.TRIAGE_PROPOSALS.value,
+                            "label": "Triaging proposal families",
+                            "nodes": len(session.nodes),
+                            "archive": len(session.archive_ids),
+                            "frontier": len(session.frontier_ids),
+                        },
+                    )
+                    continue
+
+                if scheduler_decision.action is ResearchSchedulerAction.DEEPEN:
+                    current_action = ActionType.DEEPEN_FAMILY.value
+                    self._emit_progress(
+                        "stage_started",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.DEEPEN_FAMILY.value,
+                            "label": "Deepening survivor families",
+                            "reason": scheduler_decision.rationale,
+                            "target_proposal_ids": list(scheduler_decision.target_proposal_ids),
+                        },
+                    )
+                    deep_dive_responses = self._dispatch_provider_requests(
+                        routing_tracker,
+                        [
+                            _ProviderActionRequest(
+                                action_name=ActionType.DEEPEN_FAMILY,
+                                problem_spec=session.problem_spec,
+                                input_payload=self._deepen_family_payload(
+                                    proposal_records[proposal_id],
+                                    state=session.snapshot(),
+                                    reusable_learning_notes=session.reusable_learning_notes,
+                                ),
+                                output_schema=deep_dive_doc_schema(),
+                            )
+                            for proposal_id in scheduler_decision.target_proposal_ids
+                        ],
+                    )
+                    deep_dive_docs = []
+                    for response in deep_dive_responses:
+                        session.consume_budget()
+                        deep_dive_docs.append(response.payload)
+                    bundle = replace(
+                        bundle,
+                        deep_dive_docs=[*bundle.deep_dive_docs, *deep_dive_docs],
+                        coverage_ledger=self._update_coverage_status(
+                            bundle.coverage_ledger,
+                            proposal_ids=[doc.proposal_id for doc in deep_dive_docs],
+                            status=CoverageStatus.DEEPENED,
+                            note="Deep dive completed.",
+                        ),
+                    )
+                    self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
+                    self._emit_progress(
+                        "stage_completed",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.DEEPEN_FAMILY.value,
+                            "label": "Deepening survivor families",
+                            "nodes": len(session.nodes),
+                            "archive": len(session.archive_ids),
+                            "frontier": len(session.frontier_ids),
+                        },
+                    )
+                    continue
+
+                if scheduler_decision.action is ResearchSchedulerAction.REDTEAM:
+                    current_action = ActionType.REDTEAM_FAMILY.value
+                    self._emit_progress(
+                        "stage_started",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.REDTEAM_FAMILY.value,
+                            "label": "Red-teaming survivors",
+                            "reason": scheduler_decision.rationale,
+                            "target_proposal_ids": list(scheduler_decision.target_proposal_ids),
+                        },
+                    )
+                    deep_dive_by_proposal = {
+                        doc.proposal_id: doc for doc in bundle.deep_dive_docs
+                    }
+                    review_responses = self._dispatch_provider_requests(
+                        routing_tracker,
+                        [
+                            _ProviderActionRequest(
+                                action_name=ActionType.REDTEAM_FAMILY,
+                                problem_spec=session.problem_spec,
+                                input_payload=self._redteam_payload(
+                                    proposal_records[proposal_id],
+                                    deep_dive=deep_dive_by_proposal.get(proposal_id),
+                                    state=session.snapshot(),
+                                    reusable_learning_notes=session.reusable_learning_notes,
+                                ),
+                                output_schema=adversarial_review_schema(),
+                            )
+                            for proposal_id in scheduler_decision.target_proposal_ids
+                        ],
+                    )
+                    reviews = []
+                    for response in review_responses:
+                        session.consume_budget()
+                        reviews.append(response.payload)
+                    bundle = replace(
+                        bundle,
+                        adversarial_reviews=[*bundle.adversarial_reviews, *reviews],
+                        coverage_ledger=self._update_coverage_status(
+                            bundle.coverage_ledger,
+                            proposal_ids=[review.proposal_id for review in reviews],
+                            status=CoverageStatus.REDTEAMED,
+                            note="Adversarial review completed.",
+                        ),
+                    )
+                    self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
+                    self._emit_progress(
+                        "stage_completed",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.REDTEAM_FAMILY.value,
+                            "label": "Red-teaming survivors",
+                            "nodes": len(session.nodes),
+                            "archive": len(session.archive_ids),
+                            "frontier": len(session.frontier_ids),
+                        },
+                    )
+                    continue
+
+                if scheduler_decision.action is ResearchSchedulerAction.HYBRIDIZE:
+                    current_action = ActionType.ASSESS_HYBRID.value
+                    self._emit_progress(
+                        "stage_started",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.ASSESS_HYBRID.value,
+                            "label": "Assessing hybrids",
+                            "reason": scheduler_decision.rationale,
+                            "target_proposal_ids": list(scheduler_decision.target_proposal_ids),
+                        },
+                    )
+                    hybrid_response = self._run_provider_action(
+                        routing_tracker,
+                        action_name=ActionType.ASSESS_HYBRID,
+                        problem_spec=session.problem_spec,
+                        input_payload=self._hybrid_payload(
+                            survivor_ids=scheduler_decision.target_proposal_ids,
+                            proposal_records=proposal_records,
+                            bundle=bundle,
+                            reusable_learning_notes=session.reusable_learning_notes,
+                        ),
+                        output_schema=hybrid_assessment_schema(),
+                    )
+                    session.consume_budget()
+                    bundle = replace(
+                        bundle,
+                        hybrid_assessments=[*bundle.hybrid_assessments, hybrid_response.payload],
+                    )
+                    self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
+                    self._emit_progress(
+                        "stage_completed",
+                        run_id=manifest.run_id,
+                        step_count=session.step_count,
+                        budget_spent=session.budget_spent,
+                        payload={
+                            "action": ActionType.ASSESS_HYBRID.value,
+                            "label": "Assessing hybrids",
+                            "nodes": len(session.nodes),
+                            "archive": len(session.archive_ids),
+                            "frontier": len(session.frontier_ids),
+                        },
+                    )
+                    continue
 
             current_action = ActionType.WRITE_FINAL_DECISION.value
             self._emit_progress(
@@ -717,12 +762,13 @@ class ResearchRuntime(SearchRuntime):
         ledger: CoverageLedger,
         root_node: Node,
         reusable_learning_notes: Sequence[object],
+        target_cells: Sequence[SearchCell] | None = None,
     ) -> dict[str, JSONValue]:
         payload: dict[str, JSONValue] = {
             "frame_id": frame.frame_id,
             "search_space_frame": frame.to_dict(),
             "coverage_ledger": ledger.to_dict(),
-            "target_cells": [cell.to_dict() for cell in ledger.cells],
+            "target_cells": [cell.to_dict() for cell in (ledger.cells if target_cells is None else target_cells)],
             "parent_node_ids": [root_node.node_id],
         }
         if reusable_learning_notes:
@@ -730,6 +776,375 @@ class ResearchRuntime(SearchRuntime):
                 note.to_prompt_dict() for note in reusable_learning_notes
             ]
         return payload
+
+    def _select_scheduler_decision(
+        self,
+        *,
+        bundle: ResearchArtifactBundle,
+        proposal_records: Mapping[str, _ResearchProposalRecord],
+        remaining_budget: int,
+    ) -> SchedulerDecision:
+        ledger = bundle.coverage_ledger
+        if ledger is None:
+            raise ArgusValidationError("coverage ledger must exist before scheduling research actions.")
+        latest_triage = None if not bundle.triage_reports else bundle.triage_reports[-1]
+        survivor_ids = [] if latest_triage is None else list(latest_triage.survivor_ids)
+
+        candidates: list[tuple[float, int, SchedulerDecision]] = []
+        decision_index = len(bundle.scheduler_decisions) + 1
+
+        if remaining_budget >= 3:
+            expandable_cells = self._expandable_cells(
+                ledger,
+                latest_triage_report=latest_triage,
+                require_value_gate=latest_triage is not None,
+            )
+            if expandable_cells:
+                target_cell_ids = [cell.cell_id for cell in expandable_cells]
+                score = min(
+                    1.0,
+                    max(self._expand_priority(cell) for cell in expandable_cells)
+                    + (0.12 if latest_triage is None else 0.0),
+                )
+                candidates.append(
+                    (
+                        score,
+                        0,
+                        SchedulerDecision(
+                            decision_id=f"schedule-{decision_index:03d}",
+                            action=ResearchSchedulerAction.EXPAND,
+                            rationale=(
+                                "Expand coverage because the ledger still has uncovered cells "
+                                "whose evidence or uncertainty makes them worth comparing."
+                            ),
+                            remaining_budget=remaining_budget,
+                            priority_score=round(score, 6),
+                            target_cell_ids=target_cell_ids,
+                            signals=[
+                                self._cell_signal(cell)
+                                for cell in expandable_cells[: min(3, len(expandable_cells))]
+                            ],
+                            selected_at=_utcnow(),
+                        ),
+                    )
+                )
+
+        if remaining_budget >= 2 and survivor_ids:
+            pending_deepen = self._pending_deepen_ids(
+                ledger=ledger,
+                survivor_ids=survivor_ids,
+                bundle=bundle,
+            )
+            if pending_deepen:
+                target_proposal_ids = pending_deepen[
+                    : min(len(pending_deepen), self._max_parallel_targets(remaining_budget))
+                ]
+                score = max(
+                    self._deepen_priority(ledger, proposal_id)
+                    for proposal_id in target_proposal_ids
+                )
+                candidates.append(
+                    (
+                        score,
+                        2,
+                        SchedulerDecision(
+                            decision_id=f"schedule-{decision_index:03d}",
+                            action=ResearchSchedulerAction.DEEPEN,
+                            rationale=(
+                                "Deepen survivor families whose evidence is promising but whose "
+                                "uncertainty is still too high for a final decision."
+                            ),
+                            remaining_budget=remaining_budget,
+                            priority_score=round(score, 6),
+                            target_proposal_ids=target_proposal_ids,
+                            signals=[
+                                self._proposal_signal(ledger, proposal_id)
+                                for proposal_id in target_proposal_ids
+                            ],
+                            selected_at=_utcnow(),
+                        ),
+                    )
+                )
+
+            pending_redteam = self._pending_redteam_ids(
+                ledger=ledger,
+                survivor_ids=survivor_ids,
+                bundle=bundle,
+            )
+            if pending_redteam:
+                target_proposal_ids = pending_redteam[
+                    : min(len(pending_redteam), self._max_parallel_targets(remaining_budget))
+                ]
+                score = max(
+                    self._redteam_priority(ledger, proposal_id)
+                    for proposal_id in target_proposal_ids
+                )
+                candidates.append(
+                    (
+                        score,
+                        1,
+                        SchedulerDecision(
+                            decision_id=f"schedule-{decision_index:03d}",
+                            action=ResearchSchedulerAction.REDTEAM,
+                            rationale=(
+                                "Red-team survivors whose ledger cells still carry material hard-gate "
+                                "risk or uncertainty after initial evidence gathering."
+                            ),
+                            remaining_budget=remaining_budget,
+                            priority_score=round(score, 6),
+                            target_proposal_ids=target_proposal_ids,
+                            signals=[
+                                self._proposal_signal(ledger, proposal_id)
+                                for proposal_id in target_proposal_ids
+                            ],
+                            selected_at=_utcnow(),
+                        ),
+                    )
+                )
+
+            hybrid_targets = self._hybrid_target_ids(
+                ledger=ledger,
+                survivor_ids=survivor_ids,
+                bundle=bundle,
+            )
+            if hybrid_targets:
+                score = self._hybrid_priority(ledger, hybrid_targets)
+                candidates.append(
+                    (
+                        score,
+                        3,
+                        SchedulerDecision(
+                            decision_id=f"schedule-{decision_index:03d}",
+                            action=ResearchSchedulerAction.HYBRIDIZE,
+                            rationale=(
+                                "Assess a hybrid only after multiple mature survivors remain and the "
+                                "ledger suggests the seam could repair a real failure mode."
+                            ),
+                            remaining_budget=remaining_budget,
+                            priority_score=round(score, 6),
+                            target_proposal_ids=hybrid_targets,
+                            signals=[
+                                self._proposal_signal(ledger, proposal_id)
+                                for proposal_id in hybrid_targets
+                            ],
+                            selected_at=_utcnow(),
+                        ),
+                    )
+                )
+
+        if not candidates:
+            return SchedulerDecision(
+                decision_id=f"schedule-{decision_index:03d}",
+                action=ResearchSchedulerAction.STOP,
+                rationale=(
+                    "Stop because the remaining budget is reserved for the final decision or the ledger "
+                    "no longer shows uncovered, fragile, or insufficiently developed families worth more work."
+                ),
+                remaining_budget=remaining_budget,
+                priority_score=0.0,
+                signals=[],
+                selected_at=_utcnow(),
+            )
+        _, _, decision = max(candidates, key=lambda item: (item[0], -item[1]))
+        return decision
+
+    def _expandable_cells(
+        self,
+        ledger: CoverageLedger,
+        *,
+        latest_triage_report: TriageReport | None,
+        require_value_gate: bool,
+    ) -> list[SearchCell]:
+        unexplored_ids = set() if latest_triage_report is None else set(latest_triage_report.unexplored_cell_ids)
+        prioritized = []
+        for cell in ledger.cells:
+            if cell.coverage_status is not CoverageStatus.UNEXPLORED and cell.cell_id not in unexplored_ids:
+                continue
+            priority = self._expand_priority(cell)
+            if require_value_gate and priority < 0.45:
+                continue
+            prioritized.append((priority, cell.cell_id, cell))
+        prioritized.sort(key=lambda item: (-item[0], item[1]))
+        return [cell for _, _, cell in prioritized]
+
+    def _has_expandable_cells(
+        self,
+        ledger: CoverageLedger | None,
+        *,
+        latest_triage_report: TriageReport | None,
+        require_value_gate: bool,
+    ) -> bool:
+        if ledger is None:
+            return False
+        return bool(
+            self._expandable_cells(
+                ledger,
+                latest_triage_report=latest_triage_report,
+                require_value_gate=require_value_gate,
+            )
+        )
+
+    def _cells_for_ids(
+        self,
+        ledger: CoverageLedger | None,
+        cell_ids: Sequence[str],
+    ) -> list[SearchCell]:
+        if ledger is None:
+            raise ArgusValidationError("coverage ledger must exist before selecting target cells.")
+        by_id = {cell.cell_id: cell for cell in ledger.cells}
+        missing = [cell_id for cell_id in cell_ids if cell_id not in by_id]
+        if missing:
+            raise ArgusValidationError(
+                f"target_cell_ids reference unknown coverage cells: {', '.join(sorted(missing))}."
+            )
+        return [by_id[cell_id] for cell_id in cell_ids]
+
+    def _proposal_cell(self, ledger: CoverageLedger, proposal_id: str) -> SearchCell:
+        for cell in ledger.cells:
+            if proposal_id in cell.incumbent_proposal_ids:
+                return cell
+        raise ArgusValidationError(
+            f"coverage ledger does not track an incumbent cell for proposal {proposal_id!r}."
+        )
+
+    def _pending_deepen_ids(
+        self,
+        *,
+        ledger: CoverageLedger,
+        survivor_ids: Sequence[str],
+        bundle: ResearchArtifactBundle,
+    ) -> list[str]:
+        deepened_ids = {doc.proposal_id for doc in bundle.deep_dive_docs}
+        prioritized = []
+        for proposal_id in survivor_ids:
+            if proposal_id in deepened_ids:
+                continue
+            priority = self._deepen_priority(ledger, proposal_id)
+            prioritized.append((priority, proposal_id))
+        prioritized.sort(key=lambda item: (-item[0], item[1]))
+        return [proposal_id for priority, proposal_id in prioritized if priority > 0.0]
+
+    def _pending_redteam_ids(
+        self,
+        *,
+        ledger: CoverageLedger,
+        survivor_ids: Sequence[str],
+        bundle: ResearchArtifactBundle,
+    ) -> list[str]:
+        deepened_ids = {doc.proposal_id for doc in bundle.deep_dive_docs}
+        reviewed_ids = {review.proposal_id for review in bundle.adversarial_reviews}
+        prioritized = []
+        for proposal_id in survivor_ids:
+            if proposal_id not in deepened_ids or proposal_id in reviewed_ids:
+                continue
+            priority = self._redteam_priority(ledger, proposal_id)
+            if priority < 0.2:
+                continue
+            prioritized.append((priority, proposal_id))
+        prioritized.sort(key=lambda item: (-item[0], item[1]))
+        return [proposal_id for _, proposal_id in prioritized]
+
+    def _hybrid_target_ids(
+        self,
+        *,
+        ledger: CoverageLedger,
+        survivor_ids: Sequence[str],
+        bundle: ResearchArtifactBundle,
+    ) -> list[str]:
+        if bundle.hybrid_assessments:
+            return []
+        deepened_ids = {doc.proposal_id for doc in bundle.deep_dive_docs}
+        reviewed_ids = {review.proposal_id for review in bundle.adversarial_reviews}
+        mature_ids = {
+            proposal_id
+            for proposal_id in survivor_ids
+            if proposal_id in deepened_ids and proposal_id in reviewed_ids
+        }
+        if len(mature_ids) < 2:
+            return []
+        prioritized = sorted(
+            mature_ids,
+            key=lambda proposal_id: (
+                -self._hybrid_member_priority(ledger, proposal_id),
+                proposal_id,
+            ),
+        )
+        return prioritized[:2]
+
+    def _max_parallel_targets(self, remaining_budget: int) -> int:
+        reserve_for_final = 1
+        return max(
+            1,
+            min(
+                self.policy.provider_max_concurrency,
+                max(1, remaining_budget - reserve_for_final),
+            ),
+        )
+
+    def _expand_priority(self, cell: SearchCell) -> float:
+        return round(
+            min(
+                1.0,
+                (0.45 * cell.evidence_strength)
+                + (0.35 * cell.uncertainty)
+                + (0.20 * cell.hard_gate_risk)
+                + (0.08 if not cell.incumbent_proposal_ids else 0.0),
+            ),
+            6,
+        )
+
+    def _deepen_priority(self, ledger: CoverageLedger, proposal_id: str) -> float:
+        cell = self._proposal_cell(ledger, proposal_id)
+        return round(
+            min(
+                1.0,
+                (0.45 * cell.uncertainty)
+                + (0.35 * cell.evidence_strength)
+                + (0.20 * (1.0 - cell.hard_gate_risk)),
+            ),
+            6,
+        )
+
+    def _redteam_priority(self, ledger: CoverageLedger, proposal_id: str) -> float:
+        cell = self._proposal_cell(ledger, proposal_id)
+        return round(
+            min(
+                1.0,
+                (0.50 * cell.hard_gate_risk)
+                + (0.30 * cell.uncertainty)
+                + (0.20 * cell.evidence_strength),
+            ),
+            6,
+        )
+
+    def _hybrid_member_priority(self, ledger: CoverageLedger, proposal_id: str) -> float:
+        cell = self._proposal_cell(ledger, proposal_id)
+        return round(
+            min(
+                1.0,
+                (0.50 * cell.evidence_strength)
+                + (0.30 * (1.0 - cell.hard_gate_risk))
+                + (0.20 * (1.0 - cell.uncertainty)),
+            ),
+            6,
+        )
+
+    def _hybrid_priority(self, ledger: CoverageLedger, proposal_ids: Sequence[str]) -> float:
+        member_scores = [self._hybrid_member_priority(ledger, proposal_id) for proposal_id in proposal_ids]
+        return round(sum(member_scores) / len(member_scores), 6)
+
+    def _cell_signal(self, cell: SearchCell) -> str:
+        return (
+            f"{cell.cell_id}: status={cell.coverage_status.value} uncertainty={cell.uncertainty:.2f} "
+            f"hard_gate_risk={cell.hard_gate_risk:.2f} evidence_strength={cell.evidence_strength:.2f}"
+        )
+
+    def _proposal_signal(self, ledger: CoverageLedger, proposal_id: str) -> str:
+        cell = self._proposal_cell(ledger, proposal_id)
+        return (
+            f"{proposal_id} via {cell.cell_id}: uncertainty={cell.uncertainty:.2f} "
+            f"hard_gate_risk={cell.hard_gate_risk:.2f} evidence_strength={cell.evidence_strength:.2f}"
+        )
 
     def _triage_payload(
         self,
@@ -975,12 +1390,23 @@ class ResearchRuntime(SearchRuntime):
         if ledger is None:
             raise ArgusValidationError("coverage ledger must exist before triage.")
         survivor_ids = set(triage_report.survivor_ids)
+        unexplored_cell_ids = set(triage_report.unexplored_cell_ids)
         proposal_by_cell: dict[str, list[str]] = {}
         for proposal_id, record in proposal_records.items():
             proposal_by_cell.setdefault(record.brief.cell_id, []).append(proposal_id)
         cells: list[SearchCell] = []
         for cell in ledger.cells:
             cell_proposal_ids = proposal_by_cell.get(cell.cell_id, [])
+            if cell.cell_id in unexplored_cell_ids:
+                cells.append(
+                    replace(
+                        cell,
+                        coverage_status=CoverageStatus.UNEXPLORED,
+                        incumbent_proposal_ids=[],
+                        notes=[*cell.notes, "Cell remains insufficiently explored after triage."],
+                    )
+                )
+                continue
             if not cell_proposal_ids:
                 cells.append(cell)
                 continue
@@ -1244,6 +1670,8 @@ def _render_research_bundle_markdown(
         markdown["search-space-frame.md"] = _render_frame_markdown(bundle.search_space_frame)
     if bundle.coverage_ledger is not None:
         markdown["coverage-ledger.md"] = _render_ledger_markdown(bundle.coverage_ledger)
+    for decision in bundle.scheduler_decisions:
+        markdown[f"scheduler/{decision.decision_id}.md"] = _render_scheduler_decision_markdown(decision)
     for brief in bundle.proposal_briefs:
         markdown[f"proposals/{brief.proposal_id}.md"] = _render_proposal_markdown(
             brief,
@@ -1292,6 +1720,28 @@ def _render_ledger_markdown(ledger: CoverageLedger) -> str:
                 f"  status={cell.coverage_status.value} uncertainty={cell.uncertainty:.2f} hard_gate_risk={cell.hard_gate_risk:.2f} evidence_strength={cell.evidence_strength:.2f}",
             ]
         )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_scheduler_decision_markdown(decision: SchedulerDecision) -> str:
+    lines = [
+        f"# Scheduler Decision {decision.decision_id}",
+        "",
+        f"- Action: `{decision.action.value}`",
+        f"- Remaining budget: {decision.remaining_budget}",
+        f"- Priority score: {decision.priority_score:.2f}",
+        "",
+        decision.rationale,
+    ]
+    if decision.target_cell_ids:
+        lines.extend(["", "## Target Cells"])
+        lines.extend(f"- `{cell_id}`" for cell_id in decision.target_cell_ids)
+    if decision.target_proposal_ids:
+        lines.extend(["", "## Target Proposals"])
+        lines.extend(f"- `{proposal_id}`" for proposal_id in decision.target_proposal_ids)
+    if decision.signals:
+        lines.extend(["", "## Signals"])
+        lines.extend(f"- {signal}" for signal in decision.signals)
     return "\n".join(lines).rstrip() + "\n"
 
 

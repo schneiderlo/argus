@@ -8,12 +8,17 @@ import unittest
 from argus.errors import ArgusValidationError
 from argus.models import (
     ActionType,
+    Candidate,
     LearningNote,
     LearningNoteType,
     NodeLifecycleStatus,
     ProblemSpec,
+    ProposalBrief,
+    ProposalDisposition,
+    ProposalTriageDecision,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    TriageReport,
 )
 from argus.search import (
     ResearchRuntime,
@@ -36,6 +41,108 @@ from tests.search_fixtures import (
     _operational_assistant_candidate,
     _workflow_archive_candidate,
 )
+
+
+class CoverageAwareResearchFixtureProvider(SearchFixtureProvider):
+    def _handle_seed_cell_proposals(
+        self,
+        problem_spec: ProblemSpec,
+        input_payload: dict[str, object],
+    ):
+        proposals = super()._handle_seed_cell_proposals(problem_spec, input_payload)
+        target_cell_ids = {
+            str(cell_payload["cell_id"])
+            for cell_payload in list(input_payload.get("target_cells", []))
+        }
+        if target_cell_ids == {"cell-control"}:
+            return type(proposals)(
+                proposals=[
+                    ProposalBrief(
+                        proposal_id="proposal-control-2",
+                        cell_id="cell-control",
+                        title="Adaptive control path with explicit coverage checkpoint",
+                        summary="Reseed the control cell with a stronger representative before deepening the leader.",
+                        candidate=Candidate(
+                            thesis="Adaptive control path with explicit coverage checkpoint",
+                            mechanism=(
+                                "Keep the adaptive loop, but add an explicit coverage checkpoint before final decision writing."
+                            ),
+                            assumptions=["A lighter coverage checkpoint could rescue the control family."],
+                            strengths=["Lower migration cost than the full coverage-led runtime."],
+                            failure_modes=["Still weaker than a true ledger-driven scheduler."],
+                            unknowns=["Whether the checkpoint materially improves operator trust."],
+                            implementation_shape="Adaptive runtime plus one explicit coverage review stage.",
+                            evidence=["Useful as a stronger control family for direct comparison."],
+                        ),
+                        seed_rationale="The first control proposal was too weak, so the scheduler should reseed the uncovered family once.",
+                        open_questions=["Can this lighter checkpoint close enough of the audit gap?"],
+                        evidence=["The scheduler kept the family open because the cell was still high-value."],
+                        parent_node_ids=list(input_payload.get("parent_node_ids", [])),
+                    )
+                ],
+                batch_summary="Reseeded the still-interesting control family with a stronger representative.",
+            )
+        return proposals
+
+    def _handle_triage_proposals(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> TriageReport:
+        proposals = list(input_payload["proposals"])
+        proposal_ids = [str(proposal["proposal_id"]) for proposal in proposals]
+        if "proposal-control-2" not in proposal_ids:
+            return TriageReport(
+                report_id="triage-coverage-001",
+                frame_id=str(input_payload["frame_id"]),
+                decisions=[
+                    ProposalTriageDecision(
+                        proposal_id="proposal-control",
+                        disposition=ProposalDisposition.ELIMINATE,
+                        rationale="The first control representative is too weak, but the family is still strategically relevant.",
+                        follow_up="Reseed the control family with a stronger representative.",
+                    ),
+                    ProposalTriageDecision(
+                        proposal_id="proposal-ledger",
+                        disposition=ProposalDisposition.SURVIVE,
+                        rationale="Still the strongest family overall.",
+                        follow_up="Keep it alive, but do not deepen yet while an uncovered high-value cell remains.",
+                    ),
+                ],
+                survivor_ids=["proposal-ledger"],
+                unexplored_cell_ids=["cell-control"],
+                summary="Keep the ledger leader alive, but expand the still-important control family before deepening.",
+                next_actions=["Reseed the control family before spending more depth budget on the incumbent."],
+            )
+
+        return TriageReport(
+            report_id="triage-coverage-002",
+            frame_id=str(input_payload["frame_id"]),
+            decisions=[
+                ProposalTriageDecision(
+                    proposal_id="proposal-control",
+                    disposition=ProposalDisposition.ELIMINATE,
+                    rationale="Superseded by the stronger reseeded control representative.",
+                    follow_up="Retain only the stronger control variant.",
+                ),
+                ProposalTriageDecision(
+                    proposal_id="proposal-control-2",
+                    disposition=ProposalDisposition.SURVIVE,
+                    rationale="Strong enough to compare directly against the ledger-driven option.",
+                    follow_up="Deepen it alongside the current leader.",
+                ),
+                ProposalTriageDecision(
+                    proposal_id="proposal-ledger",
+                    disposition=ProposalDisposition.SURVIVE,
+                    rationale="Remains the leading family after the control reseed.",
+                    follow_up="Deepen it now that coverage is materially complete.",
+                ),
+            ],
+            survivor_ids=["proposal-control-2", "proposal-ledger"],
+            unexplored_cell_ids=[],
+            summary="Coverage is now good enough to deepen the surviving families.",
+            next_actions=["Deepen both surviving families before the final decision."],
+        )
 
 
 class SearchRuntimeTests(unittest.TestCase):
@@ -260,13 +367,78 @@ class SearchRuntimeTests(unittest.TestCase):
             self.assertIn("write_final_decision", action_names)
             self.assertIsNotNone(loaded.research_bundle)
             self.assertEqual(
+                [decision.action.value for decision in loaded.research_bundle.scheduler_decisions],
+                ["expand", "deepen", "redteam", "stop"],
+            )
+            self.assertEqual(
                 loaded.research_bundle.final_decision_doc.selected_proposal_id,
                 "proposal-ledger",
             )
             self.assertTrue((loaded.path / "research" / "bundle.json").is_file())
             self.assertTrue((loaded.path / "research" / "markdown" / "final-decision.md").is_file())
+            self.assertTrue(
+                (loaded.path / "research" / "markdown" / "scheduler" / "schedule-001.md").is_file()
+            )
             self.assertIn("Research Decision", result.summary_markdown)
             self.assertEqual(result.final_recommendation.best_bet_node_id, "node-0003")
+
+    def test_research_runtime_expands_uncovered_high_value_cell_before_deepening(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = CoverageAwareResearchFixtureProvider(
+                root / "artifacts" / "provider_invocations"
+            )
+            runtime = ResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            runtime.run(
+                request="Choose the default research runtime to ship next.",
+                budget=8,
+                run_id="run-research-coverage-aware",
+            )
+            loaded = store.load_run("run-research-coverage-aware")
+            action_names = [call["action_name"] for call in provider.calls]
+            major_actions = [
+                action_name
+                for action_name in action_names
+                if action_name
+                in {
+                    "frame_search_space",
+                    "seed_cell_proposals",
+                    "triage_proposals",
+                    "deepen_family",
+                    "redteam_family",
+                    "assess_hybrid",
+                    "write_final_decision",
+                }
+            ]
+            scheduler_actions = [
+                decision.action.value
+                for decision in loaded.research_bundle.scheduler_decisions
+            ]
+
+            self.assertEqual(major_actions[:5], [
+                "frame_search_space",
+                "seed_cell_proposals",
+                "triage_proposals",
+                "seed_cell_proposals",
+                "triage_proposals",
+            ])
+            self.assertIn("deepen_family", major_actions[5:])
+            self.assertLess(major_actions.index("deepen_family"), major_actions.index("write_final_decision"))
+            self.assertEqual(scheduler_actions[:3], ["expand", "expand", "deepen"])
+            self.assertEqual(
+                loaded.research_bundle.scheduler_decisions[1].target_cell_ids,
+                ["cell-control"],
+            )
+            self.assertNotIn("redteam_family", major_actions[:6])
 
     def test_staged_runtime_runs_fixed_pipeline_without_redteam_or_hybrid(self) -> None:
         with TemporaryDirectory() as directory:

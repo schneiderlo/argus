@@ -44,6 +44,14 @@ class HybridVerdict(StrEnum):
     REJECT = "reject"
 
 
+class ResearchSchedulerAction(StrEnum):
+    EXPAND = "expand"
+    DEEPEN = "deepen"
+    REDTEAM = "redteam"
+    HYBRIDIZE = "hybridize"
+    STOP = "stop"
+
+
 @dataclass(frozen=True, slots=True)
 class SearchAxis:
     axis_id: str
@@ -1123,9 +1131,113 @@ class FinalDecisionDoc:
 
 
 @dataclass(frozen=True, slots=True)
+class SchedulerDecision:
+    decision_id: str
+    action: ResearchSchedulerAction
+    rationale: str
+    remaining_budget: int
+    priority_score: float
+    target_cell_ids: list[str] = field(default_factory=list)
+    target_proposal_ids: list[str] = field(default_factory=list)
+    signals: list[str] = field(default_factory=list)
+    selected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "decision_id",
+            _normalize_non_empty_string(self.decision_id, "decision_id"),
+        )
+        object.__setattr__(
+            self,
+            "action",
+            _normalize_enum(self.action, ResearchSchedulerAction, "action"),
+        )
+        object.__setattr__(
+            self,
+            "rationale",
+            _normalize_non_empty_string(self.rationale, "rationale"),
+        )
+        if not isinstance(self.remaining_budget, int) or self.remaining_budget < 0:
+            raise ArgusValidationError("remaining_budget must be an integer >= 0.")
+        object.__setattr__(
+            self,
+            "priority_score",
+            _normalize_probability(self.priority_score, "priority_score"),
+        )
+        object.__setattr__(
+            self,
+            "target_cell_ids",
+            _normalize_unique_string_list(self.target_cell_ids, "target_cell_ids"),
+        )
+        object.__setattr__(
+            self,
+            "target_proposal_ids",
+            _normalize_unique_string_list(self.target_proposal_ids, "target_proposal_ids"),
+        )
+        object.__setattr__(self, "signals", _normalize_string_list(self.signals, "signals"))
+        object.__setattr__(self, "selected_at", _normalize_datetime(self.selected_at, "selected_at"))
+
+        if self.action is ResearchSchedulerAction.EXPAND and not self.target_cell_ids:
+            raise ArgusValidationError("expand decisions must target at least one cell.")
+        if self.action is ResearchSchedulerAction.DEEPEN and not self.target_proposal_ids:
+            raise ArgusValidationError("deepen decisions must target at least one proposal.")
+        if self.action is ResearchSchedulerAction.REDTEAM and not self.target_proposal_ids:
+            raise ArgusValidationError("redteam decisions must target at least one proposal.")
+        if self.action is ResearchSchedulerAction.HYBRIDIZE and len(self.target_proposal_ids) < 2:
+            raise ArgusValidationError("hybridize decisions must target at least two proposals.")
+        if self.action is ResearchSchedulerAction.STOP:
+            if self.target_cell_ids or self.target_proposal_ids:
+                raise ArgusValidationError("stop decisions must not target cells or proposals.")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "decision_id": self.decision_id,
+            "action": self.action.value,
+            "rationale": self.rationale,
+            "remaining_budget": self.remaining_budget,
+            "priority_score": self.priority_score,
+            "target_cell_ids": list(self.target_cell_ids),
+            "target_proposal_ids": list(self.target_proposal_ids),
+            "signals": list(self.signals),
+            "selected_at": _dump_datetime(self.selected_at),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "SchedulerDecision":
+        data = _validate_payload_keys(
+            payload,
+            field_name="SchedulerDecision",
+            required={
+                "decision_id",
+                "action",
+                "rationale",
+                "remaining_budget",
+                "priority_score",
+                "target_cell_ids",
+                "target_proposal_ids",
+                "signals",
+                "selected_at",
+            },
+        )
+        return cls(
+            decision_id=data["decision_id"],
+            action=data["action"],
+            rationale=data["rationale"],
+            remaining_budget=data["remaining_budget"],
+            priority_score=data["priority_score"],
+            target_cell_ids=data["target_cell_ids"],
+            target_proposal_ids=data["target_proposal_ids"],
+            signals=data["signals"],
+            selected_at=data["selected_at"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchArtifactBundle:
     search_space_frame: SearchSpaceFrame | None = None
     coverage_ledger: CoverageLedger | None = None
+    scheduler_decisions: list[SchedulerDecision] = field(default_factory=list)
     proposal_briefs: list[ProposalBrief] = field(default_factory=list)
     triage_reports: list[TriageReport] = field(default_factory=list)
     deep_dive_docs: list[DeepDiveDoc] = field(default_factory=list)
@@ -1141,6 +1253,11 @@ class ResearchArtifactBundle:
             )
         if self.coverage_ledger is not None and not isinstance(self.coverage_ledger, CoverageLedger):
             raise ArgusValidationError("coverage_ledger must be a CoverageLedger instance or None.")
+        object.__setattr__(
+            self,
+            "scheduler_decisions",
+            _normalize_scheduler_decisions(self.scheduler_decisions, "scheduler_decisions"),
+        )
         object.__setattr__(
             self,
             "proposal_briefs",
@@ -1209,6 +1326,13 @@ class ResearchArtifactBundle:
                 raise ArgusValidationError(
                     f"ProposalBrief {brief.proposal_id} references unknown cell_id {brief.cell_id!r}."
                 )
+        for decision in self.scheduler_decisions:
+            unknown_cells = sorted(set(decision.target_cell_ids) - cell_ids)
+            if cell_ids and unknown_cells:
+                raise ArgusValidationError(
+                    "SchedulerDecision references unknown cell ids: "
+                    f"{', '.join(unknown_cells)}."
+                )
 
         for report in self.triage_reports:
             if frame is not None and report.frame_id != frame.frame_id:
@@ -1260,6 +1384,13 @@ class ResearchArtifactBundle:
                     "HybridAssessment "
                     f"{assessment.assessment_id} references unknown proposal ids: {', '.join(unknown_sources)}."
                 )
+        for decision in self.scheduler_decisions:
+            unknown_proposals = sorted(set(decision.target_proposal_ids) - proposal_ids)
+            if proposal_ids and unknown_proposals:
+                raise ArgusValidationError(
+                    "SchedulerDecision references unknown proposal ids: "
+                    f"{', '.join(unknown_proposals)}."
+                )
         if self.final_decision_doc is not None:
             if frame is not None and self.final_decision_doc.frame_id != frame.frame_id:
                 raise ArgusValidationError(
@@ -1287,6 +1418,7 @@ class ResearchArtifactBundle:
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
+            "scheduler_decisions": [decision.to_dict() for decision in self.scheduler_decisions],
             "proposal_briefs": [brief.to_dict() for brief in self.proposal_briefs],
             "triage_reports": [report.to_dict() for report in self.triage_reports],
             "deep_dive_docs": [doc.to_dict() for doc in self.deep_dive_docs],
@@ -1315,7 +1447,12 @@ class ResearchArtifactBundle:
                 "comparison_matrices",
                 "hybrid_assessments",
             },
-            optional={"search_space_frame", "coverage_ledger", "final_decision_doc"},
+            optional={
+                "search_space_frame",
+                "coverage_ledger",
+                "scheduler_decisions",
+                "final_decision_doc",
+            },
         )
         frame_payload = data.get("search_space_frame")
         ledger_payload = data.get("coverage_ledger")
@@ -1323,6 +1460,13 @@ class ResearchArtifactBundle:
         return cls(
             search_space_frame=None if frame_payload is None else SearchSpaceFrame.from_dict(frame_payload),
             coverage_ledger=None if ledger_payload is None else CoverageLedger.from_dict(ledger_payload),
+            scheduler_decisions=[
+                SchedulerDecision.from_dict(item)
+                for item in _normalize_sequence(
+                    data.get("scheduler_decisions", []),
+                    "scheduler_decisions",
+                )
+            ],
             proposal_briefs=[
                 ProposalBrief.from_dict(item)
                 for item in _normalize_sequence(data["proposal_briefs"], "proposal_briefs")
@@ -1457,6 +1601,24 @@ def _normalize_proposal_briefs(value: object, field_name: str) -> list[ProposalB
             )
         seen.add(brief.proposal_id)
         normalized.append(brief)
+    return normalized
+
+
+def _normalize_scheduler_decisions(value: object, field_name: str) -> list[SchedulerDecision]:
+    sequence = _normalize_sequence(value, field_name)
+    normalized: list[SchedulerDecision] = []
+    seen: set[str] = set()
+    for index, decision in enumerate(sequence):
+        if not isinstance(decision, SchedulerDecision):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a SchedulerDecision instance, got {type(decision).__name__}."
+            )
+        if decision.decision_id in seen:
+            raise ArgusValidationError(
+                f"{field_name} contains duplicate decision_id values: {decision.decision_id}."
+            )
+        seen.add(decision.decision_id)
+        normalized.append(decision)
     return normalized
 
 

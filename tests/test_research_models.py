@@ -18,7 +18,9 @@ from argus.models import (
     ProposalBrief,
     ProposalDisposition,
     ProposalTriageDecision,
+    ResearchSchedulerAction,
     ResearchArtifactBundle,
+    SchedulerDecision,
     SearchAxis,
     SearchCell,
     SearchSpaceFrame,
@@ -232,10 +234,21 @@ class ResearchModelTests(unittest.TestCase):
             reversal_conditions=["If benchmarks show no material decision-quality gain."],
             rejected_proposal_ids=[],
         )
+        scheduler_decision = SchedulerDecision(
+            decision_id="schedule-001",
+            action=ResearchSchedulerAction.REDTEAM,
+            rationale="Attack the leading family because its latency risk is still material.",
+            remaining_budget=2,
+            priority_score=0.64,
+            target_proposal_ids=[proposal_b.proposal_id],
+            signals=["proposal-b via cell-explicit-deep: uncertainty=0.25 hard_gate_risk=0.20 evidence_strength=0.80"],
+            selected_at=datetime(2026, 3, 8, 18, 45, 0, tzinfo=timezone.utc),
+        )
 
         bundle = ResearchArtifactBundle(
             search_space_frame=frame,
             coverage_ledger=ledger,
+            scheduler_decisions=[scheduler_decision],
             proposal_briefs=[proposal_a, proposal_b],
             triage_reports=[triage],
             deep_dive_docs=[deep_dive],
@@ -251,6 +264,7 @@ class ResearchModelTests(unittest.TestCase):
         self.assertEqual(bundle, restored)
         self.assertEqual(payload["search_space_frame"]["axes"][0]["axis_id"], "coverage")
         self.assertEqual(payload["coverage_ledger"]["cells"][1]["coverage_status"], "redteamed")
+        self.assertEqual(payload["scheduler_decisions"][0]["action"], "redteam")
         self.assertEqual(payload["final_decision_doc"]["selected_proposal_id"], "proposal-b")
 
     def test_bundle_rejects_cells_that_do_not_match_frame_axis_options(self) -> None:

@@ -33,7 +33,9 @@ from argus.models import (
     ProposalTriageDecision,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    ResearchSchedulerAction,
     ResearchArtifactBundle,
+    SchedulerDecision,
     ScoreVector,
     SearchAxis,
     SearchCell,
@@ -663,6 +665,20 @@ def _sample_research_bundle() -> ResearchArtifactBundle:
             ],
             coverage_summary="The explicit-ledger path is the current leader.",
         ),
+        scheduler_decisions=[
+            SchedulerDecision(
+                decision_id="schedule-001",
+                action=ResearchSchedulerAction.REDTEAM,
+                rationale="Attack the current leader because latency risk is still material.",
+                remaining_budget=2,
+                priority_score=0.61,
+                target_proposal_ids=["proposal-b"],
+                signals=[
+                    "proposal-b via cell-b: uncertainty=0.22 hard_gate_risk=0.18 evidence_strength=0.84"
+                ],
+                selected_at=datetime(2026, 3, 8, 18, 44, 0, tzinfo=timezone.utc),
+            )
+        ],
         proposal_briefs=[proposal],
         triage_reports=[
             TriageReport(
