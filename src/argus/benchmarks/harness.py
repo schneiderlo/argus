@@ -11,13 +11,14 @@ from argus.benchmarks.dataset import load_benchmark_cases, select_benchmark_case
 from argus.benchmarks.models import (
     BenchmarkCase,
     BenchmarkCaseResult,
+    BenchmarkRuntimeMode,
     BenchmarkRunManifest,
     BenchmarkStatus,
 )
 from argus.errors import ArgusValidationError
 from argus.models import FinalRecommendation, ProblemSpec, SearchState
 from argus.providers import Provider
-from argus.search import SearchPolicy, SearchRuntime
+from argus.search import ResearchRuntime, SearchPolicy, SearchRuntime, StagedResearchRuntime
 from argus.storage import FileSystemStateStore
 
 
@@ -38,6 +39,7 @@ class BenchmarkHarness:
         output_root: Path,
         latest_pointer: Path | None = None,
         policy: SearchPolicy | None = None,
+        runtime_modes: Sequence[BenchmarkRuntimeMode | str] | None = None,
     ) -> None:
         self._providers = self._normalize_provider_pool(
             provider=provider,
@@ -57,6 +59,7 @@ class BenchmarkHarness:
             else self._output_root / "latest.txt"
         )
         self._policy = policy
+        self._runtime_modes = self._normalize_runtime_modes(runtime_modes)
 
     def _normalize_provider_pool(
         self,
@@ -93,12 +96,47 @@ class BenchmarkHarness:
             raise ArgusValidationError("BenchmarkHarness requires at least one provider.")
         return normalized
 
+    def _normalize_runtime_modes(
+        self,
+        runtime_modes: Sequence[BenchmarkRuntimeMode | str] | None,
+    ) -> tuple[BenchmarkRuntimeMode, ...]:
+        raw_modes = (
+            [
+                BenchmarkRuntimeMode.ADAPTIVE,
+                BenchmarkRuntimeMode.STAGED,
+                BenchmarkRuntimeMode.RESEARCH,
+            ]
+            if runtime_modes is None
+            else list(runtime_modes)
+        )
+        normalized: list[BenchmarkRuntimeMode] = []
+        for index, mode in enumerate(raw_modes):
+            try:
+                normalized_mode = (
+                    mode
+                    if isinstance(mode, BenchmarkRuntimeMode)
+                    else BenchmarkRuntimeMode(str(mode).strip())
+                )
+            except ValueError as exc:
+                supported = ", ".join(item.value for item in BenchmarkRuntimeMode)
+                raise ArgusValidationError(
+                    f"runtime_modes[{index}] must be one of: {supported}."
+                ) from exc
+            if normalized_mode in normalized:
+                raise ArgusValidationError(
+                    f"runtime_modes contains duplicate values: {normalized_mode.value}."
+                )
+            normalized.append(normalized_mode)
+        if not normalized:
+            raise ArgusValidationError("runtime_modes must include at least one item.")
+        return tuple(normalized)
+
     def run(self, *, case_name: str | None = None) -> BenchmarkRunResult:
         cases = load_benchmark_cases(self._cases_dir)
         selected_cases = select_benchmark_cases(cases, case_name=case_name)
         previous_manifest = self._load_previous_manifest()
         previous_digests = {
-            result.case_id: result.output_digest
+            (result.case_id, result.runtime_mode): result.output_digest
             for result in ([] if previous_manifest is None else previous_manifest.case_results)
             if result.output_digest is not None
         }
@@ -109,33 +147,37 @@ class BenchmarkHarness:
         session_dir.mkdir(parents=True, exist_ok=False)
         (session_dir / "cases").mkdir()
 
-        runtime = SearchRuntime(
-            provider=self._provider,
-            providers=self._providers,
-            state_store=self._state_store,
-            policy=self._policy,
-            # Keep benchmark outputs comparable across sessions instead of letting
-            # prior runs change the stored fixture behavior.
-            reuse_learning_memory=False,
-        )
+        runtimes = {
+            runtime_mode: self._build_runtime(runtime_mode)
+            for runtime_mode in self._runtime_modes
+        }
         case_results: list[BenchmarkCaseResult] = []
         overall_status = BenchmarkStatus.COMPLETED
         for case in selected_cases:
-            case_results.append(
-                self._run_case(
-                    runtime=runtime,
-                    session_id=session_id,
-                    session_dir=session_dir,
-                    case=case,
-                    previous_output_digest=previous_digests.get(case.case_id),
+            case_dir = session_dir / "cases" / case.case_id
+            case_dir.mkdir(parents=True, exist_ok=False)
+            _write_json(case_dir / "case.json", case.to_dict())
+            for runtime_mode in self._runtime_modes:
+                case_results.append(
+                    self._run_case(
+                        runtime=runtimes[runtime_mode],
+                        runtime_mode=runtime_mode,
+                        session_id=session_id,
+                        session_dir=session_dir,
+                        case=case,
+                        case_dir=case_dir,
+                        previous_output_digest=previous_digests.get(
+                            (case.case_id, runtime_mode)
+                        ),
+                    )
                 )
-            )
-            if case_results[-1].status is BenchmarkStatus.FAILED:
-                overall_status = BenchmarkStatus.FAILED
+                if case_results[-1].status is BenchmarkStatus.FAILED:
+                    overall_status = BenchmarkStatus.FAILED
 
         manifest = BenchmarkRunManifest(
             session_id=session_id,
             provider_name=self._provider.name,
+            runtime_modes=list(self._runtime_modes),
             status=overall_status,
             created_at=created_at,
             cases_dir=str(self._cases_dir),
@@ -147,20 +189,39 @@ class BenchmarkHarness:
         self._latest_pointer.write_text(str(session_dir), encoding="utf-8")
         return BenchmarkRunResult(session_dir=session_dir, manifest=manifest)
 
+    def _build_runtime(self, runtime_mode: BenchmarkRuntimeMode) -> SearchRuntime:
+        runtime_cls: type[SearchRuntime]
+        if runtime_mode is BenchmarkRuntimeMode.RESEARCH:
+            runtime_cls = ResearchRuntime
+        elif runtime_mode is BenchmarkRuntimeMode.STAGED:
+            runtime_cls = StagedResearchRuntime
+        else:
+            runtime_cls = SearchRuntime
+        return runtime_cls(
+            provider=self._provider,
+            providers=self._providers,
+            state_store=self._state_store,
+            policy=self._policy,
+            # Keep benchmark outputs comparable across sessions instead of letting
+            # prior runs change the stored fixture behavior.
+            reuse_learning_memory=False,
+        )
+
     def _run_case(
         self,
         *,
         runtime: SearchRuntime,
+        runtime_mode: BenchmarkRuntimeMode,
         session_id: str,
         session_dir: Path,
         case: BenchmarkCase,
+        case_dir: Path,
         previous_output_digest: str | None,
     ) -> BenchmarkCaseResult:
-        case_dir = session_dir / "cases" / case.case_id
-        case_dir.mkdir(parents=True, exist_ok=False)
-        _write_json(case_dir / "case.json", case.to_dict())
+        mode_dir = case_dir / runtime_mode.value
+        mode_dir.mkdir(parents=True, exist_ok=False)
 
-        run_id = f"{session_id}-{case.case_id}"
+        run_id = f"{session_id}-{case.case_id}-{runtime_mode.value}"
         run_path = self._state_store.root_dir / run_id
         benchmark_problem_spec = ProblemSpec(
             request=case.problem_spec.request,
@@ -183,13 +244,15 @@ class BenchmarkHarness:
             failure_payload = {
                 "error": str(exc),
                 "failure_type": type(exc).__name__,
+                "runtime_mode": runtime_mode.value,
                 "run_id": run_id,
                 "run_path": str(run_path),
             }
-            _write_json(case_dir / "failure.json", failure_payload)
+            _write_json(mode_dir / "failure.json", failure_payload)
             result = BenchmarkCaseResult(
                 case_id=case.case_id,
                 family=case.family,
+                runtime_mode=runtime_mode,
                 status=BenchmarkStatus.FAILED,
                 run_id=run_id,
                 run_path=str(run_path),
@@ -198,11 +261,13 @@ class BenchmarkHarness:
                 error=str(exc),
                 failure_type=type(exc).__name__,
             )
-            _write_json(case_dir / "result.json", result.to_dict())
+            _write_json(mode_dir / "result.json", result.to_dict())
             return result
 
-        summary_relative_path = Path("cases") / case.case_id / "summary.md"
-        final_relative_path = Path("cases") / case.case_id / "final-recommendation.json"
+        summary_relative_path = Path("cases") / case.case_id / runtime_mode.value / "summary.md"
+        final_relative_path = (
+            Path("cases") / case.case_id / runtime_mode.value / "final-recommendation.json"
+        )
         (session_dir / summary_relative_path).write_text(
             search_result.summary_markdown,
             encoding="utf-8",
@@ -215,6 +280,7 @@ class BenchmarkHarness:
         result = BenchmarkCaseResult(
             case_id=case.case_id,
             family=case.family,
+            runtime_mode=runtime_mode,
             status=BenchmarkStatus.COMPLETED,
             run_id=search_result.manifest.run_id,
             run_path=str(search_result.run_path),
@@ -241,7 +307,7 @@ class BenchmarkHarness:
             summary_path=str(summary_relative_path),
             final_recommendation_path=str(final_relative_path),
         )
-        _write_json(case_dir / "result.json", result.to_dict())
+        _write_json(mode_dir / "result.json", result.to_dict())
         return result
 
     def _allocate_session_id(self, created_at: datetime) -> str:
@@ -271,10 +337,16 @@ def render_benchmark_report(result: BenchmarkRunResult) -> str:
         f"benchmark_session={result.manifest.session_id}",
         f"session_path={result.session_dir}",
         f"status={result.manifest.status.value}",
-        f"completed_cases={result.manifest.completed_count}",
-        f"failed_cases={result.manifest.failed_count}",
+        f"runtime_modes={','.join(mode.value for mode in result.manifest.runtime_modes)}",
+        f"cases={result.manifest.case_count}",
+        f"mode_runs={result.manifest.mode_result_count}",
+        f"completed_case_modes={result.manifest.completed_mode_count}",
+        f"failed_case_modes={result.manifest.failed_mode_count}",
     ]
-    for case_result in result.manifest.case_results:
+    for case_result in sorted(
+        result.manifest.case_results,
+        key=lambda item: (item.case_id, item.runtime_mode.value),
+    ):
         if case_result.status is BenchmarkStatus.COMPLETED:
             change_flag = (
                 "n/a"
@@ -282,12 +354,14 @@ def render_benchmark_report(result: BenchmarkRunResult) -> str:
                 else ("changed" if case_result.changed_from_previous else "unchanged")
             )
             lines.append(
-                f"{case_result.case_id}: completed run_id={case_result.run_id} "
+                f"{case_result.case_id}[{case_result.runtime_mode.value}]: completed "
+                f"run_id={case_result.run_id} "
                 f"digest={case_result.output_digest[:12]} change_vs_previous={change_flag}"
             )
             continue
         lines.append(
-            f"{case_result.case_id}: failed failure_type={case_result.failure_type} "
+            f"{case_result.case_id}[{case_result.runtime_mode.value}]: failed "
+            f"failure_type={case_result.failure_type} "
             f"error={case_result.error}"
         )
     return "\n".join(lines)

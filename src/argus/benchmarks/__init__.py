@@ -13,6 +13,7 @@ from argus.benchmarks.models import (
     BenchmarkCase,
     BenchmarkCaseResult,
     BenchmarkFamily,
+    BenchmarkRuntimeMode,
     BenchmarkRunManifest,
     BenchmarkStatus,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "BenchmarkFamily",
     "BenchmarkHarness",
     "BenchmarkNodeFixture",
+    "BenchmarkRuntimeMode",
     "EvaluatorBenchmarkCase",
     "EvaluatorBenchmarkKind",
     "BenchmarkRunManifest",

@@ -19,6 +19,7 @@ from argus.search import (
     ResearchRuntime,
     SearchPolicy,
     SearchRuntime,
+    StagedResearchRuntime,
     balanced_island_policy,
     cost_profile_names,
     conservative_island_policy,
@@ -266,6 +267,48 @@ class SearchRuntimeTests(unittest.TestCase):
             self.assertTrue((loaded.path / "research" / "markdown" / "final-decision.md").is_file())
             self.assertIn("Research Decision", result.summary_markdown)
             self.assertEqual(result.final_recommendation.best_bet_node_id, "node-0003")
+
+    def test_staged_runtime_runs_fixed_pipeline_without_redteam_or_hybrid(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            runtime = StagedResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Choose the default research runtime to ship next.",
+                budget=6,
+                run_id="run-staged-fixture",
+            )
+            loaded = store.load_run("run-staged-fixture")
+            action_names = [call["action_name"] for call in provider.calls]
+            self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+            self.assertEqual(
+                action_names,
+                [
+                    "frame_search_space",
+                    "evaluate_candidate",
+                    "seed_cell_proposals",
+                    "assess_novelty_batch",
+                    "evaluate_candidate_batch",
+                    "assess_novelty",
+                    "triage_proposals",
+                    "deepen_family",
+                    "write_final_decision",
+                ],
+            )
+            self.assertNotIn("redteam_family", action_names)
+            self.assertNotIn("assess_hybrid", action_names)
+            self.assertIsNotNone(loaded.research_bundle)
+            self.assertEqual(loaded.manifest.metadata["runtime_mode"], "staged")
+            self.assertIn("Research Decision", result.summary_markdown)
 
     def test_runtime_marks_manifest_failed_when_frame_problem_raises(self) -> None:
         with TemporaryDirectory() as directory:

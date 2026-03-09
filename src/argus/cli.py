@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import time
 
-from argus.benchmarks import BenchmarkHarness, render_benchmark_report
+from argus.benchmarks import BenchmarkHarness, BenchmarkRuntimeMode, render_benchmark_report
 from argus.config import ArgusConfig, RunConfig
 from argus.errors import ArgusError, ArgusUserError, ArgusValidationError
 from argus.inspection import (
@@ -49,6 +49,7 @@ _PROGRESS_MODES = ("auto", "plain", "jsonl", "quiet")
 _COST_PROFILE_CHOICES = cost_profile_names()
 _SEARCH_PROFILE_CHOICES = search_profile_names()
 _RUNTIME_MODE_CHOICES = ("adaptive", "research")
+_BENCHMARK_RUNTIME_MODE_CHOICES = tuple(mode.value for mode in BenchmarkRuntimeMode)
 
 
 _ACTION_LABELS: dict[str, str] = {
@@ -559,6 +560,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     benchmark_parser.add_argument(
+        "--runtime-modes",
+        default=None,
+        help=(
+            "Comma-separated benchmark runtime modes to compare. Defaults to "
+            "`adaptive,staged,research`."
+        ),
+    )
+    benchmark_parser.add_argument(
         "--run-config",
         dest="run_config_path",
         type=Path,
@@ -909,10 +918,11 @@ def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
         output_root=config.benchmark_runs_dir,
         latest_pointer=config.latest_benchmark_run_pointer,
         policy=policy,
+        runtime_modes=_parse_benchmark_runtime_modes(args.runtime_modes),
     )
     result = harness.run(case_name=args.case_name)
     print(render_benchmark_report(result))
-    return 0 if result.manifest.failed_count == 0 else 1
+    return 0 if result.manifest.failed_mode_count == 0 else 1
 
 
 def _handle_feedback(args: argparse.Namespace, config: ArgusConfig) -> int:
@@ -1218,6 +1228,35 @@ def _resolve_runtime_mode(*, args: argparse.Namespace) -> str:
             f"Unknown runtime mode {runtime_mode!r}. Supported runtime modes: {supported}."
         )
     return runtime_mode
+
+
+def _parse_benchmark_runtime_modes(value: str | None) -> list[BenchmarkRuntimeMode] | None:
+    if value is None:
+        return None
+    names = [item.strip().lower() for item in value.split(",")]
+    normalized_names = [name for name in names if name]
+    if not normalized_names:
+        supported = ", ".join(_BENCHMARK_RUNTIME_MODE_CHOICES)
+        raise ArgusUserError(
+            f"--runtime-modes must include at least one mode from: {supported}."
+        )
+    runtime_modes: list[BenchmarkRuntimeMode] = []
+    seen: set[BenchmarkRuntimeMode] = set()
+    for name in normalized_names:
+        try:
+            runtime_mode = BenchmarkRuntimeMode(name)
+        except ValueError as exc:
+            supported = ", ".join(_BENCHMARK_RUNTIME_MODE_CHOICES)
+            raise ArgusUserError(
+                f"Unknown benchmark runtime mode {name!r}. Supported modes: {supported}."
+            ) from exc
+        if runtime_mode in seen:
+            raise ArgusUserError(
+                f"--runtime-modes contains duplicate value {runtime_mode.value!r}."
+            )
+        seen.add(runtime_mode)
+        runtime_modes.append(runtime_mode)
+    return runtime_modes
 
 
 def _validate_runtime_budget(*, runtime_mode: str, budget: int) -> None:

@@ -1354,8 +1354,12 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr, "")
             self.assertIn("benchmark_session=", stdout)
-            self.assertIn("completed_cases=1", stdout)
-            self.assertIn("product-strategy-retention: completed", stdout)
+            self.assertIn("runtime_modes=adaptive,staged,research", stdout)
+            self.assertIn("cases=1", stdout)
+            self.assertIn("mode_runs=3", stdout)
+            self.assertIn("product-strategy-retention[adaptive]: completed", stdout)
+            self.assertIn("product-strategy-retention[staged]: completed", stdout)
+            self.assertIn("product-strategy-retention[research]: completed", stdout)
             self.assertEqual(len(sessions), 1)
             self.assertTrue((sessions[0] / "manifest.json").is_file())
             self.assertTrue(
@@ -1363,6 +1367,7 @@ class CliTests(unittest.TestCase):
                     sessions[0]
                     / "cases"
                     / "product-strategy-retention"
+                    / "research"
                     / "result.json"
                 ).is_file()
             )
@@ -1431,11 +1436,12 @@ class CliTests(unittest.TestCase):
             class StubHarness:
                 def __init__(self, **kwargs):
                     captured["policy"] = kwargs.get("policy")
+                    captured["runtime_modes"] = kwargs.get("runtime_modes")
 
                 def run(self, *, case_name: str | None = None):
                     del case_name
                     return SimpleNamespace(
-                        manifest=SimpleNamespace(failed_count=0)
+                        manifest=SimpleNamespace(failed_mode_count=0)
                     )
 
             with patch("argus.cli._build_provider", return_value=provider), patch(
@@ -1463,6 +1469,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(policy.seed_target, 12)
         self.assertEqual(policy.combine_limit, 2)
         self.assertEqual(policy.provider_max_concurrency, 4)
+        self.assertIsNone(captured["runtime_modes"])
+
+    def test_benchmark_command_accepts_runtime_mode_subset(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            captured: dict[str, object] = {}
+
+            class StubHarness:
+                def __init__(self, **kwargs):
+                    captured["runtime_modes"] = kwargs.get("runtime_modes")
+
+                def run(self, *, case_name: str | None = None):
+                    del case_name
+                    return SimpleNamespace(
+                        manifest=SimpleNamespace(failed_mode_count=0)
+                    )
+
+            with patch("argus.cli._build_provider", return_value=provider), patch(
+                "argus.cli.BenchmarkHarness",
+                StubHarness,
+            ), patch(
+                "argus.cli.render_benchmark_report",
+                return_value="benchmark_session=stub",
+            ):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "benchmark",
+                        "--runtime-modes",
+                        "adaptive,research",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("benchmark_session=stub", stdout)
+        self.assertEqual(
+            [mode.value for mode in captured["runtime_modes"]],
+            ["adaptive", "research"],
+        )
 
     def test_run_command_rejects_invalid_run_config(self) -> None:
         with TemporaryRepoRoot() as root:

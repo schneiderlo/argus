@@ -224,7 +224,12 @@ Run the stored benchmark suite, or a single case:
 ```bash
 uv run argus benchmark
 uv run argus benchmark --case technical-architecture-local-first
+uv run argus benchmark --runtime-modes adaptive,research
 ```
+
+By default, `argus benchmark` compares `adaptive`, `staged`, and `research` side by side for each
+case and writes mode-specific artifacts under `artifacts/benchmarks/<session_id>/cases/<case_id>/`.
+Use `--runtime-modes` to restrict the comparison set when you want a smaller head-to-head run.
 
 Record shipped outcome feedback against a persisted run/node and feed it back into reusable memory:
 

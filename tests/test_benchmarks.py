@@ -5,7 +5,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from argus.benchmarks import BenchmarkFamily, BenchmarkHarness, BenchmarkStatus, load_benchmark_cases
+from argus.benchmarks import (
+    BenchmarkFamily,
+    BenchmarkHarness,
+    BenchmarkRuntimeMode,
+    BenchmarkStatus,
+    load_benchmark_cases,
+)
 from argus.errors import ArgusValidationError
 from argus.search import SearchPolicy
 from argus.storage import FileSystemStateStore
@@ -64,6 +70,14 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
             self.assertEqual(first.manifest.status, BenchmarkStatus.COMPLETED)
             self.assertEqual(second.manifest.status, BenchmarkStatus.COMPLETED)
+            self.assertEqual(
+                [mode.value for mode in first.manifest.runtime_modes],
+                ["adaptive", "staged", "research"],
+            )
+            self.assertEqual(first.manifest.case_count, 1)
+            self.assertEqual(first.manifest.mode_result_count, 3)
+            self.assertEqual(first.manifest.completed_mode_count, 3)
+            self.assertEqual(first_case.runtime_mode, BenchmarkRuntimeMode.ADAPTIVE)
             self.assertIsNone(first_case.previous_output_digest)
             self.assertEqual(second_case.previous_output_digest, first_case.output_digest)
             self.assertFalse(second_case.changed_from_previous)
@@ -74,17 +88,50 @@ class BenchmarkHarnessTests(unittest.TestCase):
                     first.session_dir
                     / "cases"
                     / "product-strategy-retention"
+                    / "adaptive"
                     / "final-recommendation.json"
                 ).is_file()
             )
             self.assertTrue(
-                (first.session_dir / "cases" / "product-strategy-retention" / "summary.md").is_file()
+                (
+                    first.session_dir
+                    / "cases"
+                    / "product-strategy-retention"
+                    / "research"
+                    / "summary.md"
+                ).is_file()
             )
             self.assertTrue((root / "artifacts" / "runs" / first_case.run_id).is_dir())
             self.assertFalse((root / "artifacts" / "runs" / "learning-memory.json").exists())
             self.assertEqual(
                 (root / "artifacts" / "benchmarks" / "latest.txt").read_text(encoding="utf-8").strip(),
                 str(second.session_dir),
+            )
+
+    def test_harness_accepts_explicit_runtime_mode_subset(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_benchmark_case_fixture(
+                root / "benchmarks" / "cases" / "product-strategy-retention.json"
+            )
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            harness = BenchmarkHarness(
+                provider=provider,
+                state_store=FileSystemStateStore(root / "artifacts" / "runs"),
+                cases_dir=root / "benchmarks" / "cases",
+                output_root=root / "artifacts" / "benchmarks",
+                runtime_modes=[BenchmarkRuntimeMode.STAGED, BenchmarkRuntimeMode.RESEARCH],
+            )
+
+            result = harness.run(case_name="product-strategy-retention")
+
+            self.assertEqual(
+                [mode.value for mode in result.manifest.runtime_modes],
+                ["staged", "research"],
+            )
+            self.assertEqual(
+                [case_result.runtime_mode.value for case_result in result.manifest.case_results],
+                ["staged", "research"],
             )
 
     def test_harness_rejects_duplicate_provider_names_in_sequence(self) -> None:
@@ -121,6 +168,20 @@ class BenchmarkHarnessTests(unittest.TestCase):
                     state_store=FileSystemStateStore(root / "artifacts" / "runs"),
                     cases_dir=root / "benchmarks" / "cases",
                     output_root=root / "artifacts" / "benchmarks",
+                )
+
+    def test_harness_rejects_duplicate_runtime_modes(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+
+            with self.assertRaises(ArgusValidationError):
+                BenchmarkHarness(
+                    provider=provider,
+                    state_store=FileSystemStateStore(root / "artifacts" / "runs"),
+                    cases_dir=root / "benchmarks" / "cases",
+                    output_root=root / "artifacts" / "benchmarks",
+                    runtime_modes=["adaptive", "adaptive"],
                 )
 
 

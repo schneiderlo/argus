@@ -24,7 +24,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Add structured schemas and provider actions for the research pipeline stages: `frame_search_space`, `seed_cell_proposals`, `triage_proposals`, `deepen_family`, `redteam_family`, `assess_hybrid`, and `write_final_decision`.
 - [x] Extend the filesystem state store so each run can persist a structured research-artifact bundle plus rendered markdown artifacts under the run directory, instead of relying on `_render_summary_markdown` as the main user-facing output path.
 - [x] Add a new CLI/runtime mode for the research pipeline, keeping the current `argus run` path available as a control until the richer path wins on benchmarks.
-- [ ] Add benchmark support to compare three modes directly: the current adaptive runtime, the simple staged 5-step pipeline, and the new coverage-led research runtime. Use those results to decide when the richer path should become the default.
+- [x] Add benchmark support to compare three modes directly: the current adaptive runtime, the simple staged 5-step pipeline, and the new coverage-led research runtime. Use those results to decide when the richer path should become the default.
 
 - [x] Implement bounded concurrent provider dispatch for independent search phases so `argus run` latency does not scale linearly with every evaluation, novelty, stress-test, and deepen call. Keep state commits deterministic, cap concurrency per provider, and prevent intra-batch novelty races.
 - [x] Batch provider-backed novelty and evaluation for candidate-admission batches so multi-candidate generate/mutate/combine stages do not pay one semantic judge call per candidate while preserving structured judgments and serial same-batch dedupe.
@@ -42,6 +42,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 ## Next Priority
 
 - [ ] Make the scheduler coverage-aware rather than quota-aware by introducing a coverage ledger with explicit cell/family status, uncertainty, hard-gate risk, evidence strength, and incumbent references. The scheduler should pick `expand`, `deepen`, `red-team`, `hybridize`, or `stop` from that ledger state.
+- [ ] Add a provider-backed benchmark comparison judge so multi-mode benchmark sessions can score decision quality and actionability directly instead of relying only on side-by-side artifact review.
 - [ ] Replace generic node combination with a gated hybrid action that must name the repaired failure mode, complementary strengths, seam hypothesis, and complexity tax before a hybrid can survive.
 - [ ] Replace the current summary-template finish with a dedicated decision-authoring stage that reads the full artifact set and emits a typed final decision document plus richer markdown outputs.
 - [ ] Extend the observer/report views to surface research artifacts directly instead of only the node graph and summary markdown.
@@ -126,4 +127,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - The current runtime is strongest at search control, judge quality, persistence, and audit. Its main product gap is that the authoring layer still compresses most depth back into `Candidate`, `Critique`, and summary markdown instead of persisting richer decision artifacts.
 - `argus run --runtime-mode research` now executes a staged coverage-led pipeline (`frame_search_space`, `seed_cell_proposals`, `triage_proposals`, `deepen_family`, `redteam_family`, optional `assess_hybrid`, then `write_final_decision`) while `--runtime-mode adaptive` keeps the existing search loop as the control path.
 - Research-mode runs now persist `research/bundle.json` plus rendered markdown artifacts under `research/markdown/` inside each run directory, and `load_run()` exposes the typed `research_bundle` alongside the existing search-state and final-recommendation payloads.
-- The repository should treat the simpler staged research workflow as a serious benchmarked baseline rather than as an external prompt hack. The likely long-term shape is a hybrid: coverage-aware scheduling from Argus, artifact-rich authoring from staged prompts, and the existing evaluator/routing/store infrastructure underneath.
+- `argus benchmark` now compares `adaptive`, `staged`, and `research` per case by default, persisting mode-specific outputs under `artifacts/benchmarks/<session_id>/cases/<case_id>/<runtime_mode>/` and tracking digest drift separately for each mode across sessions.

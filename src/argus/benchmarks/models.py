@@ -25,6 +25,12 @@ class BenchmarkStatus(StrEnum):
     FAILED = "failed"
 
 
+class BenchmarkRuntimeMode(StrEnum):
+    ADAPTIVE = "adaptive"
+    STAGED = "staged"
+    RESEARCH = "research"
+
+
 @dataclass(frozen=True, slots=True)
 class BenchmarkCase:
     case_id: str
@@ -106,6 +112,7 @@ class BenchmarkCase:
 class BenchmarkCaseResult:
     case_id: str
     family: BenchmarkFamily
+    runtime_mode: BenchmarkRuntimeMode
     status: BenchmarkStatus
     run_id: str | None = None
     run_path: str | None = None
@@ -126,6 +133,11 @@ class BenchmarkCaseResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "case_id", _normalize_case_id(self.case_id, "case_id"))
         object.__setattr__(self, "family", _normalize_enum(self.family, BenchmarkFamily, "family"))
+        object.__setattr__(
+            self,
+            "runtime_mode",
+            _normalize_enum(self.runtime_mode, BenchmarkRuntimeMode, "runtime_mode"),
+        )
         object.__setattr__(self, "status", _normalize_enum(self.status, BenchmarkStatus, "status"))
         object.__setattr__(self, "run_id", _normalize_optional_string(self.run_id, "run_id"))
         object.__setattr__(self, "run_path", _normalize_optional_string(self.run_path, "run_path"))
@@ -226,6 +238,7 @@ class BenchmarkCaseResult:
         return {
             "case_id": self.case_id,
             "family": self.family.value,
+            "runtime_mode": self.runtime_mode.value,
             "status": self.status.value,
             "run_id": self.run_id,
             "run_path": self.run_path,
@@ -246,12 +259,19 @@ class BenchmarkCaseResult:
 
     @classmethod
     def from_dict(cls, payload: object) -> "BenchmarkCaseResult":
+        if not isinstance(payload, dict):
+            raise ArgusValidationError(
+                f"BenchmarkCaseResult must be an object, got {type(payload).__name__}."
+            )
+        raw_payload = dict(payload)
+        raw_payload.setdefault("runtime_mode", BenchmarkRuntimeMode.ADAPTIVE.value)
         data = _validate_payload_keys(
-            payload,
+            raw_payload,
             field_name="BenchmarkCaseResult",
             required={
                 "case_id",
                 "family",
+                "runtime_mode",
                 "status",
                 "run_id",
                 "run_path",
@@ -273,6 +293,7 @@ class BenchmarkCaseResult:
         return cls(
             case_id=data["case_id"],
             family=data["family"],
+            runtime_mode=data["runtime_mode"],
             status=data["status"],
             run_id=data["run_id"],
             run_path=data["run_path"],
@@ -296,6 +317,7 @@ class BenchmarkCaseResult:
 class BenchmarkRunManifest:
     session_id: str
     provider_name: str
+    runtime_modes: list[BenchmarkRuntimeMode]
     status: BenchmarkStatus
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     cases_dir: str = ""
@@ -308,6 +330,11 @@ class BenchmarkRunManifest:
             self,
             "provider_name",
             _normalize_non_empty_string(self.provider_name, "provider_name"),
+        )
+        object.__setattr__(
+            self,
+            "runtime_modes",
+            _normalize_runtime_modes(self.runtime_modes, "runtime_modes"),
         )
         object.__setattr__(self, "status", _normalize_enum(self.status, BenchmarkStatus, "status"))
         object.__setattr__(self, "created_at", _normalize_datetime(self.created_at, "created_at"))
@@ -324,61 +351,106 @@ class BenchmarkRunManifest:
         )
         if not self.case_results:
             raise ArgusValidationError("case_results must include at least one item.")
-        failed_count = self.failed_count
+        failed_count = self.failed_mode_count
         if failed_count == 0 and self.status is not BenchmarkStatus.COMPLETED:
             raise ArgusValidationError(
-                "status must be completed when all benchmark cases completed."
+                "status must be completed when all benchmark mode runs completed."
             )
         if failed_count > 0 and self.status is not BenchmarkStatus.FAILED:
-            raise ArgusValidationError("status must be failed when any benchmark case fails.")
+            raise ArgusValidationError("status must be failed when any benchmark mode run fails.")
 
     @property
     def case_count(self) -> int:
+        return len({result.case_id for result in self.case_results})
+
+    @property
+    def mode_result_count(self) -> int:
         return len(self.case_results)
 
     @property
-    def completed_count(self) -> int:
+    def completed_mode_count(self) -> int:
         return sum(result.status is BenchmarkStatus.COMPLETED for result in self.case_results)
 
     @property
-    def failed_count(self) -> int:
+    def failed_mode_count(self) -> int:
         return sum(result.status is BenchmarkStatus.FAILED for result in self.case_results)
+
+    @property
+    def completed_case_count(self) -> int:
+        return sum(
+            all(result.status is BenchmarkStatus.COMPLETED for result in group)
+            for group in _group_case_results(self.case_results).values()
+        )
+
+    @property
+    def failed_case_count(self) -> int:
+        return sum(
+            any(result.status is BenchmarkStatus.FAILED for result in group)
+            for group in _group_case_results(self.case_results).values()
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
             "session_id": self.session_id,
             "provider_name": self.provider_name,
+            "runtime_modes": [mode.value for mode in self.runtime_modes],
             "status": self.status.value,
             "created_at": _dump_datetime(self.created_at),
             "cases_dir": self.cases_dir,
             "previous_session_id": self.previous_session_id,
             "case_count": self.case_count,
-            "completed_count": self.completed_count,
-            "failed_count": self.failed_count,
+            "mode_result_count": self.mode_result_count,
+            "completed_mode_count": self.completed_mode_count,
+            "failed_mode_count": self.failed_mode_count,
+            "completed_case_count": self.completed_case_count,
+            "failed_case_count": self.failed_case_count,
             "case_results": [result.to_dict() for result in self.case_results],
         }
 
     @classmethod
     def from_dict(cls, payload: object) -> "BenchmarkRunManifest":
+        if not isinstance(payload, dict):
+            raise ArgusValidationError(
+                f"BenchmarkRunManifest must be an object, got {type(payload).__name__}."
+            )
+        raw_payload = dict(payload)
+        raw_payload.setdefault("runtime_modes", [BenchmarkRuntimeMode.ADAPTIVE.value])
+        if "mode_result_count" not in raw_payload and "case_count" in raw_payload:
+            raw_payload["mode_result_count"] = raw_payload["case_count"]
+        if "completed_mode_count" not in raw_payload and "completed_count" in raw_payload:
+            raw_payload["completed_mode_count"] = raw_payload["completed_count"]
+        if "failed_mode_count" not in raw_payload and "failed_count" in raw_payload:
+            raw_payload["failed_mode_count"] = raw_payload["failed_count"]
+        if "completed_case_count" not in raw_payload and "completed_count" in raw_payload:
+            raw_payload["completed_case_count"] = raw_payload["completed_count"]
+        if "failed_case_count" not in raw_payload and "failed_count" in raw_payload:
+            raw_payload["failed_case_count"] = raw_payload["failed_count"]
+        raw_payload.pop("completed_count", None)
+        raw_payload.pop("failed_count", None)
         data = _validate_payload_keys(
-            payload,
+            raw_payload,
             field_name="BenchmarkRunManifest",
             required={
                 "session_id",
                 "provider_name",
+                "runtime_modes",
                 "status",
                 "created_at",
                 "cases_dir",
                 "previous_session_id",
                 "case_count",
-                "completed_count",
-                "failed_count",
+                "mode_result_count",
+                "completed_mode_count",
+                "failed_mode_count",
+                "completed_case_count",
+                "failed_case_count",
                 "case_results",
             },
         )
         manifest = cls(
             session_id=data["session_id"],
             provider_name=data["provider_name"],
+            runtime_modes=data["runtime_modes"],
             status=data["status"],
             created_at=data["created_at"],
             cases_dir=data["cases_dir"],
@@ -390,8 +462,11 @@ class BenchmarkRunManifest:
         )
         expected_counts = {
             "case_count": manifest.case_count,
-            "completed_count": manifest.completed_count,
-            "failed_count": manifest.failed_count,
+            "mode_result_count": manifest.mode_result_count,
+            "completed_mode_count": manifest.completed_mode_count,
+            "failed_mode_count": manifest.failed_mode_count,
+            "completed_case_count": manifest.completed_case_count,
+            "failed_case_count": manifest.failed_case_count,
         }
         for field_name, expected in expected_counts.items():
             actual = _normalize_non_negative_int(data[field_name], field_name)
@@ -518,7 +593,50 @@ def _normalize_case_results(values: object, field_name: str) -> list[BenchmarkCa
                 f"got {type(value).__name__}."
             )
         normalized.append(value)
+    duplicate_pairs = sorted(
+        {
+            f"{result.case_id}:{result.runtime_mode.value}"
+            for result in normalized
+            if sum(
+                other.case_id == result.case_id and other.runtime_mode is result.runtime_mode
+                for other in normalized
+            )
+            > 1
+        }
+    )
+    if duplicate_pairs:
+        raise ArgusValidationError(
+            "case_results contains duplicate case_id/runtime_mode pairs: "
+            + ", ".join(duplicate_pairs)
+            + "."
+        )
     return normalized
+
+
+def _normalize_runtime_modes(values: object, field_name: str) -> list[BenchmarkRuntimeMode]:
+    normalized = [
+        _normalize_enum(value, BenchmarkRuntimeMode, f"{field_name}[{index}]")
+        for index, value in enumerate(_normalize_sequence(values, field_name))
+    ]
+    if not normalized:
+        raise ArgusValidationError(f"{field_name} must include at least one item.")
+    duplicates = sorted(
+        {mode.value for mode in normalized if normalized.count(mode) > 1}
+    )
+    if duplicates:
+        raise ArgusValidationError(
+            f"{field_name} contains duplicate values: {', '.join(duplicates)}."
+        )
+    return normalized
+
+
+def _group_case_results(
+    case_results: Sequence[BenchmarkCaseResult],
+) -> dict[str, list[BenchmarkCaseResult]]:
+    grouped: dict[str, list[BenchmarkCaseResult]] = {}
+    for result in case_results:
+        grouped.setdefault(result.case_id, []).append(result)
+    return grouped
 
 
 def _normalize_sequence(values: object, field_name: str) -> Sequence[object]:
