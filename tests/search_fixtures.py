@@ -6,9 +6,33 @@ from threading import Lock
 import time
 
 from argus.errors import ArgusValidationError
-from argus.models import ActionType, Candidate, Critique, LearningNote, LearningNoteType, ProblemSpec
+from argus.models import (
+    ActionType,
+    AdversarialReview,
+    Candidate,
+    ComparisonMatrix,
+    ComparisonMatrixRow,
+    CoverageLedger,
+    CoverageStatus,
+    Critique,
+    DeepDiveDoc,
+    FinalDecisionDoc,
+    HybridAssessment,
+    HybridVerdict,
+    LearningNote,
+    LearningNoteType,
+    ProblemSpec,
+    ProposalBrief,
+    ProposalDisposition,
+    ProposalTriageDecision,
+    SearchAxis,
+    SearchCell,
+    SearchSpaceFrame,
+    TriageReport,
+)
 from argus.providers import ProviderArtifacts, ProviderResponse
 from argus.search.contracts import CandidateBatch, LearningCompression, ProblemFrame
+from argus.search.research_contracts import FinalDecisionPackage, ProposalSeedBatch, SearchSpacePlan
 
 
 class SearchFixtureProvider:
@@ -182,6 +206,326 @@ class SearchFixtureProvider:
             candidates=candidates,
             batch_summary="Generated a balanced seed set spanning safe, bold, and obviously weak directions.",
         )
+
+    def _handle_frame_search_space(
+        self,
+        problem_spec: ProblemSpec,
+        _: dict[str, object],
+    ) -> SearchSpacePlan:
+        frame = SearchSpaceFrame(
+            frame_id="frame-001",
+            problem_statement=problem_spec.request,
+            target_decision="Choose the default Argus research runtime to ship next.",
+            hard_gates=[
+                "Must keep deterministic filesystem-backed persistence.",
+                "Must produce auditable decision-grade artifacts.",
+            ],
+            soft_criteria=[
+                "Decision quality",
+                "Operator trust",
+                "Latency discipline",
+            ],
+            baseline_options=["Keep the adaptive node runtime as the default control."],
+            axes=[
+                SearchAxis(
+                    axis_id="coverage",
+                    label="Coverage strategy",
+                    description="How explicitly the runtime plans coverage of the search space.",
+                    options=["implicit frontier", "explicit ledger"],
+                ),
+                SearchAxis(
+                    axis_id="authoring",
+                    label="Authoring depth",
+                    description="How much structured decision authoring surviving families receive.",
+                    options=["summary finish", "decision dossier"],
+                ),
+            ],
+            coverage_plan=[
+                "Seed one representative for each materially different family worth comparing.",
+                "Deepen and red-team any family that remains viable after triage.",
+            ],
+            notes=["Keep the adaptive runtime available as the benchmark control path."],
+        )
+        ledger = CoverageLedger(
+            ledger_id="ledger-001",
+            frame_id=frame.frame_id,
+            cells=[
+                SearchCell(
+                    cell_id="cell-control",
+                    label="Implicit frontier plus richer finish",
+                    axis_assignments={
+                        "coverage": "implicit frontier",
+                        "authoring": "summary finish",
+                    },
+                    hypothesis="Cheapest path, but likely still too lossy for decision-grade output.",
+                    coverage_status=CoverageStatus.UNEXPLORED,
+                    uncertainty=0.58,
+                    hard_gate_risk=0.44,
+                    evidence_strength=0.35,
+                    incumbent_proposal_ids=[],
+                    notes=["Represents the existing adaptive runtime plus a stronger finisher."],
+                ),
+                SearchCell(
+                    cell_id="cell-ledger",
+                    label="Coverage ledger with decision dossier",
+                    axis_assignments={
+                        "coverage": "explicit ledger",
+                        "authoring": "decision dossier",
+                    },
+                    hypothesis="Higher authoring cost, but materially stronger decisions and audit trail.",
+                    coverage_status=CoverageStatus.UNEXPLORED,
+                    uncertainty=0.52,
+                    hard_gate_risk=0.28,
+                    evidence_strength=0.42,
+                    incumbent_proposal_ids=[],
+                ),
+            ],
+            coverage_summary="Both major runtime families remain worth seeding.",
+            next_questions=["Does the explicit-ledger path improve decision quality enough to justify the extra authoring?"],
+            updated_at=datetime(2026, 3, 8, 18, 30, 0, tzinfo=timezone.utc),
+        )
+        return SearchSpacePlan(search_space_frame=frame, coverage_ledger=ledger)
+
+    def _handle_seed_cell_proposals(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> ProposalSeedBatch:
+        target_cells = list(input_payload.get("target_cells", []))
+        parent_node_ids = list(input_payload.get("parent_node_ids", []))
+        proposals: list[ProposalBrief] = []
+        for cell_payload in target_cells:
+            cell_id = str(cell_payload["cell_id"])
+            if cell_id == "cell-control":
+                proposals.append(
+                    ProposalBrief(
+                        proposal_id="proposal-control",
+                        cell_id=cell_id,
+                        title="Adaptive runtime with stronger finish stage",
+                        summary="Keep the current adaptive scheduler and add a typed decision-authoring finisher.",
+                        candidate=Candidate(
+                            thesis="Adaptive runtime with stronger finish stage",
+                            mechanism=(
+                                "Retain the adaptive node loop, but author a typed decision package only at the end."
+                            ),
+                            assumptions=["The current archive carries enough evidence into the finish stage."],
+                            strengths=["Lower implementation cost."],
+                            failure_modes=["Coverage remains under-planned."],
+                            unknowns=["Whether the final stage has enough family-level evidence to choose confidently."],
+                            implementation_shape="Keep search_v1 as-is and append a decision-writing step.",
+                            evidence=["The current runtime already evaluates, critiques, and ranks nodes."],
+                        ),
+                        seed_rationale="Represents the lowest-disruption path from the current implementation.",
+                        open_questions=["Can the finisher compensate for missing explicit coverage state?"],
+                        evidence=["Useful as the benchmark control."],
+                        parent_node_ids=parent_node_ids,
+                    )
+                )
+                continue
+            proposals.append(
+                ProposalBrief(
+                    proposal_id="proposal-ledger",
+                    cell_id=cell_id,
+                    title="Coverage-led research runtime",
+                    summary="Default to explicit search-space framing, coverage-led triage, and decision-grade artifacts.",
+                    candidate=Candidate(
+                        thesis="Coverage-led research runtime",
+                        mechanism=(
+                            "Frame the search space explicitly, seed important cells, triage at the family level, "
+                            "deepen survivors, red-team them, and write the final decision from the full artifact bundle."
+                        ),
+                        assumptions=["The operator values stronger decision quality enough to accept more authoring work."],
+                        strengths=["Best audit trail and strongest decision package."],
+                        failure_modes=["Authoring latency could grow too quickly."],
+                        unknowns=["How much concurrent authoring keeps the path fast enough?"],
+                        implementation_shape="Persist a typed research bundle and render per-artifact markdown under the run directory.",
+                        evidence=["The specs explicitly require coverage-led planning and typed decision artifacts."],
+                    ),
+                    seed_rationale="Matches the main product gap called out by the specs and fix plan.",
+                    open_questions=["Can the richer authoring path stay within the standard cost profile?"],
+                    evidence=["Directly addresses the missing coverage-led runtime."],
+                    parent_node_ids=parent_node_ids,
+                )
+            )
+        return ProposalSeedBatch(
+            proposals=proposals,
+            batch_summary="Seeded both the control path and the coverage-led research path for direct comparison.",
+        )
+
+    def _handle_triage_proposals(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> TriageReport:
+        proposals = list(input_payload["proposals"])
+        proposal_ids = [str(proposal["proposal_id"]) for proposal in proposals]
+        decisions: list[ProposalTriageDecision] = []
+        survivor_ids: list[str] = []
+        for proposal_id in proposal_ids:
+            if proposal_id == "proposal-ledger":
+                decisions.append(
+                    ProposalTriageDecision(
+                        proposal_id=proposal_id,
+                        disposition=ProposalDisposition.SURVIVE,
+                        rationale="Best match for explicit coverage planning and decision-grade output requirements.",
+                        follow_up="Deepen the runtime design and attack its latency risks.",
+                    )
+                )
+                survivor_ids.append(proposal_id)
+                continue
+            decisions.append(
+                ProposalTriageDecision(
+                    proposal_id=proposal_id,
+                    disposition=ProposalDisposition.ELIMINATE,
+                    rationale="Useful benchmark control, but still too lossy to be the default product path.",
+                    follow_up="Keep it as a benchmark mode rather than the default runtime.",
+                )
+            )
+        return TriageReport(
+            report_id="triage-001",
+            frame_id=str(input_payload["frame_id"]),
+            decisions=decisions,
+            survivor_ids=survivor_ids,
+            unexplored_cell_ids=[],
+            summary="The coverage-led family survives because it closes the largest product gap.",
+            next_actions=["Deepen the coverage-led family into a concrete runtime design.", "Red-team its latency and complexity risks."],
+        )
+
+    def _handle_deepen_family(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> DeepDiveDoc:
+        proposal = dict(input_payload["proposal"])
+        proposal_id = str(proposal["proposal_id"])
+        return DeepDiveDoc(
+            doc_id=f"deep-{proposal_id}",
+            proposal_id=proposal_id,
+            title=str(proposal["title"]),
+            executive_summary="Separate coverage-aware scheduling from artifact authoring and persist both.",
+            detailed_mechanism=(
+                "Create a typed search-space frame and coverage ledger, seed the highest-value uncovered cells, "
+                "triage families rather than individual prose variants, then author deep dives, adversarial reviews, "
+                "and a final decision doc from the full bundle."
+            ),
+            implementation_plan=[
+                "Add research-stage provider schemas and prompts.",
+                "Persist a structured research bundle plus rendered markdown artifacts under each run.",
+                "Keep the adaptive runtime available as a benchmark control path.",
+            ],
+            key_unknowns=["Whether the richer authoring flow can stay inside the standard latency budget."],
+            supporting_evidence=["The specs require explicit coverage planning and decision-grade artifacts."],
+            assumptions=["Provider-backed evaluation remains the main judge layer."],
+        )
+
+    def _handle_redteam_family(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> AdversarialReview:
+        proposal = dict(input_payload["proposal"])
+        proposal_id = str(proposal["proposal_id"])
+        thesis = str(proposal["candidate"]["thesis"])
+        return AdversarialReview(
+            review_id=f"review-{proposal_id}",
+            proposal_id=proposal_id,
+            thesis_under_test=thesis,
+            hidden_dependencies=["The state store must handle richer artifacts without making replay brittle."],
+            failure_modes=["Serial authoring could erase the latency win from concurrent provider dispatch."],
+            mitigations=["Dispatch independent deep dives and reviews concurrently, but persist the bundle in stable order."],
+            summary="The proposal is viable if artifact persistence and concurrency remain disciplined.",
+            verdict="Proceed, but keep latency and auditability explicit.",
+            confidence=0.74,
+            evidence=["The existing runtime already has bounded concurrent provider dispatch and deterministic state commits."],
+        )
+
+    def _handle_assess_hybrid(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> HybridAssessment:
+        source_ids = [str(item) for item in list(input_payload["source_proposal_ids"])]
+        return HybridAssessment(
+            assessment_id="hybrid-001",
+            source_proposal_ids=source_ids,
+            hybrid_name="Coverage-led runtime with lean fallback for dominated regions",
+            seam_hypothesis="Use the adaptive control path only as a bounded fallback inside clearly dominated low-value cells.",
+            repaired_failure_mode="Reduce worst-case authoring latency when the coverage ledger already shows a region is low-value.",
+            complementary_strengths=[
+                "Coverage-led planning improves decision quality.",
+                "Adaptive fallback could reduce wasted authoring effort in dominated regions.",
+            ],
+            complexity_tax="Introduces dual-mode scheduling and a harder operator story.",
+            expected_upside="Could preserve most decision-quality gains while trimming tail latency.",
+            open_questions=["Whether the seam stays auditable enough for operators to trust."],
+            verdict=HybridVerdict.HOLD,
+            summary="Promising, but not justified over shipping the pure coverage-led runtime first.",
+        )
+
+    def _handle_write_final_decision(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> FinalDecisionPackage:
+        frame_id = str(input_payload["frame_id"])
+        proposals = list(input_payload["proposals"])
+        proposal_ids = [str(proposal["proposal_id"]) for proposal in proposals]
+        rows: list[ComparisonMatrixRow] = []
+        for proposal_id in proposal_ids:
+            if proposal_id == "proposal-ledger":
+                rows.append(
+                    ComparisonMatrixRow(
+                        proposal_id=proposal_id,
+                        criterion_scores={
+                            "decision_quality": 0.9,
+                            "latency_discipline": 0.58,
+                            "operator_auditability": 0.92,
+                        },
+                        advantages=["Strongest decision quality and artifact audit trail."],
+                        liabilities=["Adds more authoring and persistence work."],
+                        takeaway="Best default if the latency stays bounded.",
+                    )
+                )
+                continue
+            rows.append(
+                ComparisonMatrixRow(
+                    proposal_id=proposal_id,
+                    criterion_scores={
+                        "decision_quality": 0.61,
+                        "latency_discipline": 0.84,
+                        "operator_auditability": 0.51,
+                    },
+                    advantages=["Cheapest migration path from the current runtime."],
+                    liabilities=["Still under-plans coverage and compresses too much into the finish stage."],
+                    takeaway="Useful control benchmark, weak default.",
+                )
+            )
+        matrix = ComparisonMatrix(
+            matrix_id="matrix-001",
+            frame_id=frame_id,
+            criteria=["decision_quality", "latency_discipline", "operator_auditability"],
+            rows=rows,
+            summary="The coverage-led runtime wins on the criteria Argus most needs to improve.",
+        )
+        decision = FinalDecisionDoc(
+            decision_id="decision-001",
+            frame_id=frame_id,
+            selected_proposal_id="proposal-ledger",
+            runner_up_proposal_id="proposal-control" if "proposal-control" in proposal_ids else None,
+            conservative_proposal_id="proposal-control" if "proposal-control" in proposal_ids else None,
+            high_upside_proposal_id="proposal-ledger",
+            summary="Ship the coverage-led research runtime and keep the adaptive path as the benchmark control.",
+            decision_rule="Prefer the option that materially improves decision quality and auditability without violating deterministic persistence.",
+            assumptions=["The richer artifact bundle remains inspectable with normal shell tools."],
+            top_risks=["Authoring latency could grow until the operator no longer trusts the runtime."],
+            mitigations=["Keep provider dispatch bounded and commit research artifacts in deterministic order."],
+            first_spike=["Persist the research bundle and run it end to end from `argus run --runtime-mode research`."],
+            kill_criteria=["If the richer bundle makes replay or verification brittle.", "If benchmarks show no material decision-quality gain."],
+            next_experiments=["Benchmark the research runtime against the adaptive control path.", "Measure latency of deep-dive and red-team stages under the standard cost profile."],
+            reversal_conditions=["If decision quality does not improve enough to justify the added artifact and latency overhead."],
+            rejected_proposal_ids=[proposal_id for proposal_id in proposal_ids if proposal_id != "proposal-ledger"],
+        )
+        return FinalDecisionPackage(comparison_matrix=matrix, final_decision_doc=decision)
 
     def _handle_assess_novelty(
         self,

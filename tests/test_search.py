@@ -16,6 +16,7 @@ from argus.models import (
     ProviderRoutingStatsEntry,
 )
 from argus.search import (
+    ResearchRuntime,
     SearchPolicy,
     SearchRuntime,
     balanced_island_policy,
@@ -227,6 +228,44 @@ class SearchRuntimeTests(unittest.TestCase):
             entries["assess_novelty"].candidate_count,
         )
         self.assertEqual(entries["compress_learning"].learning_note_count, 2)
+
+    def test_research_runtime_persists_bundle_and_final_decision(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            runtime = ResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Choose the default research runtime to ship next.",
+                budget=7,
+                run_id="run-research-fixture",
+            )
+            loaded = store.load_run("run-research-fixture")
+            action_names = [call["action_name"] for call in provider.calls]
+            self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+            self.assertIn("frame_search_space", action_names)
+            self.assertIn("seed_cell_proposals", action_names)
+            self.assertIn("triage_proposals", action_names)
+            self.assertIn("deepen_family", action_names)
+            self.assertIn("redteam_family", action_names)
+            self.assertIn("write_final_decision", action_names)
+            self.assertIsNotNone(loaded.research_bundle)
+            self.assertEqual(
+                loaded.research_bundle.final_decision_doc.selected_proposal_id,
+                "proposal-ledger",
+            )
+            self.assertTrue((loaded.path / "research" / "bundle.json").is_file())
+            self.assertTrue((loaded.path / "research" / "markdown" / "final-decision.md").is_file())
+            self.assertIn("Research Decision", result.summary_markdown)
+            self.assertEqual(result.final_recommendation.best_bet_node_id, "node-0003")
 
     def test_runtime_marks_manifest_failed_when_frame_problem_raises(self) -> None:
         with TemporaryDirectory() as directory:

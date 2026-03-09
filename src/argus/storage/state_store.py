@@ -7,6 +7,7 @@ from enum import StrEnum
 import json
 import math
 from pathlib import Path
+import shutil
 
 from argus.errors import ArgusUserError, ArgusValidationError
 from argus.models import (
@@ -20,6 +21,7 @@ from argus.models import (
     ProblemSpec,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    ResearchArtifactBundle,
     SearchIsland,
     SearchState,
 )
@@ -48,6 +50,8 @@ class RunManifest:
     outcome_feedback_path: str | None = None
     final_recommendation_path: str | None = None
     summary_path: str | None = None
+    research_bundle_path: str | None = None
+    research_artifacts_dir: str | None = None
     nodes_dir: str = "nodes"
     scores_dir: str = "scores"
     critiques_dir: str = "critiques"
@@ -127,6 +131,22 @@ class RunManifest:
             "summary_path",
             _normalize_optional_relative_path(self.summary_path, "summary_path"),
         )
+        object.__setattr__(
+            self,
+            "research_bundle_path",
+            _normalize_optional_relative_path(
+                self.research_bundle_path,
+                "research_bundle_path",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "research_artifacts_dir",
+            _normalize_optional_relative_path(
+                self.research_artifacts_dir,
+                "research_artifacts_dir",
+            ),
+        )
         object.__setattr__(self, "nodes_dir", _normalize_relative_path(self.nodes_dir, "nodes_dir"))
         object.__setattr__(self, "scores_dir", _normalize_relative_path(self.scores_dir, "scores_dir"))
         object.__setattr__(
@@ -155,6 +175,8 @@ class RunManifest:
             "outcome_feedback_path": self.outcome_feedback_path,
             "final_recommendation_path": self.final_recommendation_path,
             "summary_path": self.summary_path,
+            "research_bundle_path": self.research_bundle_path,
+            "research_artifacts_dir": self.research_artifacts_dir,
             "nodes_dir": self.nodes_dir,
             "scores_dir": self.scores_dir,
             "critiques_dir": self.critiques_dir,
@@ -186,7 +208,12 @@ class RunManifest:
                 "metadata",
                 "error",
             },
-            optional={"reusable_learning_path", "outcome_feedback_path"},
+            optional={
+                "reusable_learning_path",
+                "outcome_feedback_path",
+                "research_bundle_path",
+                "research_artifacts_dir",
+            },
         )
         return cls(
             run_id=data["run_id"],
@@ -203,6 +230,8 @@ class RunManifest:
             outcome_feedback_path=data.get("outcome_feedback_path"),
             final_recommendation_path=data["final_recommendation_path"],
             summary_path=data["summary_path"],
+            research_bundle_path=data.get("research_bundle_path"),
+            research_artifacts_dir=data.get("research_artifacts_dir"),
             nodes_dir=data["nodes_dir"],
             scores_dir=data["scores_dir"],
             critiques_dir=data["critiques_dir"],
@@ -352,6 +381,7 @@ class PersistedRun:
     outcome_feedback: OutcomeFeedbackLedger | None = None
     final_recommendation: FinalRecommendation | None = None
     summary_markdown: str | None = None
+    research_bundle: ResearchArtifactBundle | None = None
     routing_summary: ProviderRoutingStats | None = None
 
 
@@ -457,6 +487,8 @@ class FileSystemStateStore:
         run_id: str,
         *,
         state: SearchState,
+        research_bundle: ResearchArtifactBundle | None = None,
+        research_markdown: Mapping[str, str] | None = None,
         final_recommendation: FinalRecommendation | None = None,
         summary_markdown: str | None = None,
         routing_summary: ProviderRoutingStats | None = None,
@@ -477,6 +509,11 @@ class FileSystemStateStore:
         index = StateIndex.from_search_state(state)
         if final_recommendation is not None:
             self._validate_final_recommendation(final_recommendation, state)
+        if research_bundle is not None and not isinstance(research_bundle, ResearchArtifactBundle):
+            raise ArgusValidationError(
+                "research_bundle must be a ResearchArtifactBundle instance or None, "
+                f"got {type(research_bundle).__name__}."
+            )
 
         self._write_json(run_dir / manifest.problem_spec_path, state.problem_spec.to_dict())
         self._sync_nodes(run_dir, manifest, state.nodes)
@@ -495,6 +532,16 @@ class FileSystemStateStore:
             None if final_recommendation is None else final_recommendation.to_dict(),
         )
         summary_path = self._write_optional_text(run_dir, "summary.md", summary_markdown)
+        research_bundle_path = self._write_optional_json(
+            run_dir,
+            "research/bundle.json",
+            None if research_bundle is None else research_bundle.to_dict(),
+        )
+        research_artifacts_dir = self._write_research_markdown(
+            run_dir,
+            "research/markdown",
+            research_markdown,
+        )
         if routing_summary is None:
             routing_summary_path = run_dir / self._ROUTING_SUMMARY_PATH
             if routing_summary_path.exists():
@@ -528,6 +575,8 @@ class FileSystemStateStore:
             learning_notes_path=learning_notes_path,
             final_recommendation_path=final_recommendation_path,
             summary_path=summary_path,
+            research_bundle_path=research_bundle_path,
+            research_artifacts_dir=research_artifacts_dir,
             metadata=merged_metadata,
             error=normalized_error,
         )
@@ -603,6 +652,12 @@ class FileSystemStateStore:
                 raise ArgusValidationError(f"Missing summary file: {summary_path}")
             summary_markdown = summary_path.read_text(encoding="utf-8")
 
+        research_bundle: ResearchArtifactBundle | None = None
+        if manifest.research_bundle_path is not None:
+            research_bundle = ResearchArtifactBundle.from_dict(
+                self._read_json_required(run_dir / manifest.research_bundle_path)
+            )
+
         routing_summary: ProviderRoutingStats | None = None
         routing_summary_path = run_dir / self._ROUTING_SUMMARY_PATH
         if routing_summary_path.is_file():
@@ -619,6 +674,7 @@ class FileSystemStateStore:
             outcome_feedback=outcome_feedback,
             final_recommendation=final_recommendation,
             summary_markdown=summary_markdown,
+            research_bundle=research_bundle,
             routing_summary=routing_summary,
         )
 
@@ -1043,6 +1099,29 @@ class FileSystemStateStore:
         normalized_text = _normalize_non_empty_string(text, "summary_markdown")
         path.write_text(normalized_text, encoding="utf-8")
         return relative_path
+
+    def _write_research_markdown(
+        self,
+        run_dir: Path,
+        relative_dir: str,
+        markdown_files: Mapping[str, str] | None,
+    ) -> str | None:
+        root = run_dir / relative_dir
+        if not markdown_files:
+            if root.exists():
+                shutil.rmtree(root)
+            return None
+
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True, exist_ok=True)
+        for relative_path, text in sorted(markdown_files.items()):
+            normalized_relative_path = _normalize_relative_path(relative_path, "research_markdown path")
+            normalized_text = _normalize_non_empty_string(text, "research_markdown")
+            target_path = root / normalized_relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(normalized_text, encoding="utf-8")
+        return relative_dir
 
     def _validate_final_recommendation(
         self,

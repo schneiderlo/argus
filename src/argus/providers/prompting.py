@@ -77,16 +77,28 @@ def _action_specific_instructions(
     normalized_action = action_name.strip().lower()
     if normalized_action == "frame_problem":
         return _frame_problem_instructions(input_payload)
+    if normalized_action == "frame_search_space":
+        return _frame_search_space_instructions(input_payload)
     if normalized_action == "generate_seed":
         return _generate_seed_instructions(input_payload)
+    if normalized_action == "seed_cell_proposals":
+        return _seed_cell_proposals_instructions(input_payload)
+    if normalized_action == "triage_proposals":
+        return _triage_proposals_instructions(input_payload)
     if normalized_action == "stress_test":
         return _stress_test_instructions(input_payload)
     if normalized_action == "deepen":
         return _deepen_candidate_instructions(input_payload)
+    if normalized_action == "deepen_family":
+        return _deepen_family_instructions(input_payload)
+    if normalized_action == "redteam_family":
+        return _redteam_family_instructions(input_payload)
     if normalized_action == "mutate":
         return _mutate_candidate_instructions(input_payload)
     if normalized_action == "combine":
         return _combine_candidates_instructions(input_payload)
+    if normalized_action == "assess_hybrid":
+        return _assess_hybrid_instructions(input_payload)
     if normalized_action == "compress_learning":
         return _compress_learning_instructions(input_payload)
     if normalized_action == "evaluate_candidate":
@@ -101,6 +113,8 @@ def _action_specific_instructions(
         return _pairwise_rank_instructions(input_payload)
     if normalized_action == "migrate":
         return _migrate_candidate_instructions()
+    if normalized_action == "write_final_decision":
+        return _write_final_decision_instructions(input_payload)
     return _default_action_instructions(action_name, input_payload)
 
 
@@ -198,6 +212,68 @@ def _generate_seed_instructions(
     return instructions
 
 
+def _frame_search_space_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: search-space framer for Argus research mode. Convert the problem into an explicit coverage plan, not a one-shot answer.",
+        "Authoritative evidence, in order: the problem spec; any framing notes or reusable learning notes; the requirement that the runtime remain auditable and decision-grade.",
+        "Define the real decision Argus must make, the hard gates that disqualify whole families, the soft criteria that separate good survivors, and the baseline options the operator would consider without Argus.",
+        "Axes rule: create divergence axes that meaningfully partition strategy space. Avoid cosmetic axes that only rename the same mechanism.",
+        "Ledger rule: return an initial coverage_ledger whose cells correspond to the most decision-relevant regions of the search space, with explicit uncertainty, hard-gate risk, and evidence strength.",
+        "Coverage rule: prefer a compact, high-signal ledger over a combinatorial explosion. Cells should be big enough to matter and small enough to seed distinctly.",
+        "Output contract: search_space_frame and coverage_ledger must share one frame_id and give the runtime an auditable starting map for seeding, triage, deepening, and final authoring.",
+    ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes, especially outcome-backed notes, to remember which cells or hard gates matter in practice, but do not let old runs erase genuinely new regions of the search space."
+        )
+    return instructions
+
+
+def _seed_cell_proposals_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: cell-seeding worker for Argus research mode. Seed representative proposals for the selected uncovered or weakly covered cells.",
+        "Authoritative evidence, in order: the search_space_frame; the selected ledger cells; the problem spec; reusable learning notes only as priors.",
+        "Coverage rule: each proposal must clearly belong to one target cell and embody that cell's hypothesis. Do not collapse multiple cells into one vague average.",
+        "Distinctness rule: proposals for different cells must differ in mechanism, dependency shape, or tradeoff profile, not just in wording.",
+        "Proposal rule: every ProposalBrief needs a title, summary, seed_rationale, open_questions, evidence, and a candidate with enough mechanism detail to survive evaluation and triage.",
+        "Parentage rule: preserve parent_node_ids from the payload when provided so the runtime can audit which earlier nodes or baselines informed the seed.",
+        "Output contract: return one coherent ProposalBrief per seeded representative and use batch_summary to explain the strategic spread of the seeded cells.",
+    ]
+    selected_cells = input_payload.get("target_cells")
+    if isinstance(selected_cells, list):
+        instructions.append(
+            f"Selected-cell count: seed representatives for the {len(selected_cells)} cells in target_cells."
+        )
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes to avoid repeating known dead ends in each cell, but do not let prior winners force every cell into the same mechanism."
+        )
+    return instructions
+
+
+def _triage_proposals_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: family-level triage judge for Argus research mode. Cull, collapse, or keep proposals based on family merit, not presentation polish.",
+        "Authoritative evidence, in order: the search_space_frame; coverage_ledger state; proposal briefs; each proposal's evaluator score and novelty evidence; reusable learning notes only as supporting priors.",
+        "Disposition rule: mark survive only when the proposal is decision-relevant and materially stronger than the local alternatives. Mark eliminate for dominated or invalid directions. Mark collapse only when two proposals are substantively the same family and one should absorb the other.",
+        "Family rule: triage at the proposal-family level. Avoid keeping two survivors that differ only cosmetically.",
+        "Coverage rule: use unexplored_cell_ids to explicitly preserve important uncovered regions rather than letting the runtime forget them.",
+        "Rationale rule: every decision rationale must name the decisive mechanism, hard-gate issue, or dominance relation that drove the choice.",
+        "Output contract: the survivor_ids must exactly match the proposals marked survive, and next_actions should tell the runtime where to deepen, red-team, or reseed next.",
+    ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes to recognize recurring failure patterns and outcome-backed risks, but still judge the current proposals on their own evidence."
+        )
+    return instructions
+
+
 def _assess_novelty_instructions() -> list[str]:
     return [
         "Role: semantic novelty judge for Argus archive admission.",
@@ -268,6 +344,42 @@ def _deepen_candidate_instructions(
     return instructions
 
 
+def _deepen_family_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: deep-dive author for Argus research mode. Turn a surviving proposal into a decision-grade dossier.",
+        "Authoritative evidence, in order: the proposal brief; evaluator score and novelty evidence; triage rationale; reusable learning notes only as supporting priors.",
+        "Deep-dive rule: preserve the proposal's core mechanism while making the implementation plan, detailed mechanism, assumptions, and key unknowns concrete enough for an operator to act on.",
+        "Do not rewrite the proposal into a different strategy. Clarify execution, dependencies, and falsifiable questions instead.",
+        "Evidence rule: supporting_evidence must explain why the proposal is viable or what prior observation it builds on. Do not invent external facts.",
+        "Output contract: return one DeepDiveDoc that materially upgrades the proposal from a seed brief into an executable plan.",
+    ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes to stress the execution details that have mattered before, especially outcome-backed constraints and winning patterns."
+        )
+    return instructions
+
+
+def _redteam_family_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: adversarial reviewer for Argus research mode. Attack a surviving proposal as if the operator will actually ship it.",
+        "Authoritative evidence, in order: the proposal brief; any deep-dive dossier; evaluator score evidence; reusable learning notes only as prior attack surface.",
+        "Adversarial rule: surface hidden dependencies, plausible failure modes, and mitigation requirements that could reverse the decision.",
+        "Do not help the proposal by inventing excuses. If the review stays positive, make the survival case explicit and bounded.",
+        "Verdict rule: verdict should be a short direct judgment of whether the proposal survives current scrutiny, not a generic summary sentence.",
+        "Output contract: return one AdversarialReview with concrete risks, mitigations, and confidence grounded in the actual evidence.",
+    ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: outcome-backed reusable_learning_notes are especially useful here because shipped failures should bias the review toward real-world breakpoints rather than generic critique."
+        )
+    return instructions
+
+
 def _mutate_candidate_instructions(
     input_payload: Mapping[str, JSONValue],
 ) -> list[str]:
@@ -306,6 +418,24 @@ def _combine_candidates_instructions(
     if _has_reusable_learning_notes(input_payload):
         instructions.append(
             "Reusable priors: use reusable_learning_notes as evidence about which combinations tend to work or fail, especially when prior runs exposed brittle seams or hidden dependencies."
+        )
+    return instructions
+
+
+def _assess_hybrid_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: hybrid-gating judge for Argus research mode. Evaluate whether combining survivors creates a justified new seam or just complexity theater.",
+        "Authoritative evidence, in order: the source proposals; their deep dives and adversarial reviews; the search-space frame; reusable learning notes only as supporting priors.",
+        "Seam rule: do not approve a hybrid unless you can name the seam_hypothesis, the repaired_failure_mode, and the complementary strengths that make the combination better than either source alone.",
+        "Complexity-tax rule: complexity_tax must be explicit and serious. If the seam is vague or the complexity tax overwhelms the expected upside, reject or hold the hybrid.",
+        "Anti-kitchen-sink rule: combining two strong proposals is not enough. The hybrid must repair a real failure mode or unlock a new defensible upside.",
+        "Output contract: choose pursue, hold, or reject and make the summary decisive about why the hybrid does or does not clear the bar.",
+    ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes to remember brittle seams or successful integrations from prior runs, but keep the verdict grounded in the current proposal pair."
         )
     return instructions
 
@@ -358,6 +488,26 @@ def _pairwise_rank_instructions(input_payload: Mapping[str, JSONValue]) -> list[
     if _has_reusable_learning_notes(input_payload):
         instructions.append(
             "Reusable priors: when reusable_learning_notes are present, use them as prior evidence about patterns that succeeded or failed before. Notes tagged with evidence_sources containing outcome_feedback reflect shipped outcomes and should carry more weight than search-only learnings, but keep the winner grounded in the current problem and objective."
+        )
+    return instructions
+
+
+def _write_final_decision_instructions(
+    input_payload: Mapping[str, JSONValue],
+) -> list[str]:
+    instructions = [
+        "Role: final decision author for Argus research mode. Read the full artifact bundle and write the decision package the operator can act on.",
+        "Authoritative evidence, in order: the search_space_frame; current coverage_ledger; proposal briefs; triage report; deep dives; adversarial reviews; hybrid assessments; the problem spec and reusable learning notes only as supporting context.",
+        "Decision rule: choose the proposal that best satisfies the target decision under the hard gates and soft criteria. Do not default to the most eloquent or most ambitious option.",
+        "Comparison rule: produce a comparison_matrix whose criteria match the real decision and whose rows explain the decisive advantages and liabilities for each finalist.",
+        "Portfolio rule: selected_proposal_id, conservative_proposal_id, and high_upside_proposal_id should differ when the evidence supports genuinely different bets. Do not force artificial differentiation if one proposal legitimately fills more than one role.",
+        "Rejection rule: rejected_proposal_ids should include notable losers that still taught the system something, not every proposal that failed triage.",
+        "Execution rule: first_spike, kill_criteria, next_experiments, mitigations, and reversal_conditions must be concrete enough to guide an actual implementation decision.",
+        "Output contract: return both the comparison_matrix and final_decision_doc, and keep all proposal references consistent with the supplied artifact ids.",
+    ]
+    if _has_reusable_learning_notes(input_payload):
+        instructions.append(
+            "Reusable priors: use reusable_learning_notes, especially outcome-backed notes, to sharpen the decision rule and risk framing, but never let them override the current artifact evidence."
         )
     return instructions
 

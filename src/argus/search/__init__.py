@@ -1,3 +1,4 @@
+from argus.search.research_runtime import ResearchRunResult, ResearchRuntime
 from argus.search.runtime import (
     SearchIslandPolicy,
     SearchPolicy,
@@ -16,6 +17,8 @@ from argus.search.runtime import (
 __all__ = [
     "SearchIslandPolicy",
     "SearchPolicy",
+    "ResearchRunResult",
+    "ResearchRuntime",
     "SearchRunResult",
     "SearchRuntime",
     "balanced_island_policy",

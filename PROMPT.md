@@ -35,6 +35,7 @@ Execution rules:
 Product target:
 
 - Build Argus as a Codex-first decision-and-invention engine.
+- Keep `argus run --runtime-mode adaptive` as the control path and `--runtime-mode research` as the coverage-led artifact pipeline until benchmarks say otherwise.
 - Treat idea generation as search over structured candidate states, not as a one-shot answer.
 - Preserve archived stepping stones and reject near-duplicates.
 - Use evaluator-first logic, not style-first logic.

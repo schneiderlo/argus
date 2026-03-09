@@ -45,6 +45,16 @@ Run a single Argus search:
 uv run argus run "Find the best retention strategy for a workflow-heavy product."
 ```
 
+Run the new coverage-led research pipeline instead of the adaptive control runtime:
+
+```bash
+uv run argus run --runtime-mode research \
+  "Choose the default research runtime to ship next."
+```
+
+`adaptive` remains the default control path. `research` runs the staged artifact pipeline and
+persists a typed research bundle under `artifacts/runs/<run_id>/research/`.
+
 Run a search and keep the observer web UI open for that run:
 
 ```bash
@@ -181,6 +191,7 @@ Validate prompt/config/provider setup before running a real search:
 ```bash
 uv run argus dry-run --run-config run-config.toml --prompt-file request.txt
 uv run argus dry-run "Find the best retention strategy." --provider codex --cost-profile lean --json
+uv run argus dry-run "Choose the default research runtime to ship next." --runtime-mode research
 ```
 
 `argus dry-run` does not execute provider actions. It validates request input, run-config parsing,

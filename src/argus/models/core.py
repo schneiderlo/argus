@@ -16,13 +16,20 @@ type JSONValue = JSONPrimitive | list["JSONValue"] | dict[str, "JSONValue"]
 
 class ActionType(StrEnum):
     FRAME_PROBLEM = "frame_problem"
+    FRAME_SEARCH_SPACE = "frame_search_space"
     GENERATE_SEED = "generate_seed"
+    SEED_CELL_PROPOSALS = "seed_cell_proposals"
+    TRIAGE_PROPOSALS = "triage_proposals"
     MIGRATE = "migrate"
     MUTATE = "mutate"
     COMBINE = "combine"
     STRESS_TEST = "stress_test"
     DEEPEN = "deepen"
+    DEEPEN_FAMILY = "deepen_family"
+    REDTEAM_FAMILY = "redteam_family"
+    ASSESS_HYBRID = "assess_hybrid"
     RANK = "rank"
+    WRITE_FINAL_DECISION = "write_final_decision"
     COMPRESS_LEARNING = "compress_learning"
 
 

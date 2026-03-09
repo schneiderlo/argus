@@ -8,10 +8,17 @@ import unittest
 
 from argus.errors import ArgusValidationError
 from argus.models import (
+    AdversarialReview,
     ActionType,
     Candidate,
+    ComparisonMatrix,
+    ComparisonMatrixRow,
+    CoverageLedger,
+    CoverageStatus,
     Critique,
+    DeepDiveDoc,
     FinalRecommendation,
+    FinalDecisionDoc,
     LearningEvidenceSource,
     LearningMemory,
     LearningNote,
@@ -21,11 +28,19 @@ from argus.models import (
     OutcomeFeedback,
     OutcomeFeedbackStatus,
     ProblemSpec,
+    ProposalBrief,
+    ProposalDisposition,
+    ProposalTriageDecision,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    ResearchArtifactBundle,
     ScoreVector,
+    SearchAxis,
+    SearchCell,
     SearchIsland,
+    SearchSpaceFrame,
     SearchState,
+    TriageReport,
 )
 from argus.storage import FileSystemStateStore, RunStatus
 
@@ -82,6 +97,43 @@ class FileSystemStateStoreTests(unittest.TestCase):
         self.assertEqual(loaded.final_recommendation, recommendation)
         self.assertEqual(loaded.summary_markdown, "Prefer the workflow-native bet.")
         self.assertEqual(loaded.manifest.metadata["winner_count"], 1)
+
+    def test_store_persists_research_bundle_and_rendered_markdown(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = FileSystemStateStore(Path(directory) / "artifacts" / "runs")
+            problem_spec = _sample_problem_spec()
+            state = _sample_search_state(problem_spec)
+            bundle = _sample_research_bundle()
+            manifest = store.create_run(
+                problem_spec=problem_spec,
+                provider_name="codex",
+                budget=12,
+                run_id="run-20260306T020456Z-research",
+            )
+
+            refreshed_manifest = store.save_snapshot(
+                manifest.run_id,
+                state=state,
+                research_bundle=bundle,
+                research_markdown={
+                    "search-space-frame.md": "# Search Space\n",
+                    "coverage-ledger.md": "# Ledger\n",
+                    "final-decision.md": "# Final Decision\n",
+                    "proposals/proposal-b.md": "# Proposal B\n",
+                },
+                final_recommendation=_sample_final_recommendation(),
+                summary_markdown="Prefer the coverage-led path.",
+                status=RunStatus.COMPLETED,
+            )
+
+            run_dir = store.root_dir / manifest.run_id
+            loaded = store.load_run(manifest.run_id)
+            self.assertEqual(refreshed_manifest.research_bundle_path, "research/bundle.json")
+            self.assertEqual(refreshed_manifest.research_artifacts_dir, "research/markdown")
+            self.assertTrue((run_dir / "research" / "bundle.json").is_file())
+            self.assertTrue((run_dir / "research" / "markdown" / "search-space-frame.md").is_file())
+            self.assertTrue((run_dir / "research" / "markdown" / "proposals" / "proposal-b.md").is_file())
+            self.assertEqual(loaded.research_bundle, bundle)
 
     def test_save_snapshot_rejects_final_recommendations_with_unknown_node_ids(self) -> None:
         with TemporaryDirectory() as directory:
@@ -549,4 +601,146 @@ def _sample_final_recommendation() -> FinalRecommendation:
         assumptions=["Teams prefer lower coordination cost over feature breadth."],
         failure_modes=["Setup friction could limit adoption."],
         reversal_conditions=["If interviews show low willingness to change habits."],
+    )
+
+
+def _sample_research_bundle() -> ResearchArtifactBundle:
+    frame = SearchSpaceFrame(
+        frame_id="frame-001",
+        problem_statement="Choose the next default Argus runtime.",
+        target_decision="Pick the default research runtime to ship.",
+        hard_gates=["Must stay deterministic."],
+        soft_criteria=["Decision quality", "Latency"],
+        baseline_options=["Keep the adaptive runtime."],
+        axes=[
+            SearchAxis(
+                axis_id="coverage",
+                label="Coverage",
+                description="Coverage planning mode.",
+                options=["implicit frontier", "explicit ledger"],
+            ),
+            SearchAxis(
+                axis_id="authoring",
+                label="Authoring",
+                description="Artifact depth.",
+                options=["summary finish", "decision dossier"],
+            ),
+        ],
+        coverage_plan=["Seed each material family once.", "Red-team surviving families."],
+    )
+    proposal = ProposalBrief(
+        proposal_id="proposal-b",
+        cell_id="cell-b",
+        title="Coverage-led runtime",
+        summary="Use an explicit coverage ledger and typed decision artifacts.",
+        candidate=_sample_candidate("Coverage-led research runtime"),
+        seed_rationale="Directly closes the main product gap.",
+        open_questions=["Can it stay within the standard cost profile?"],
+        evidence=["The specs require explicit coverage planning."],
+        parent_node_ids=["node-0002"],
+    )
+    return ResearchArtifactBundle(
+        search_space_frame=frame,
+        coverage_ledger=CoverageLedger(
+            ledger_id="ledger-001",
+            frame_id=frame.frame_id,
+            cells=[
+                SearchCell(
+                    cell_id="cell-b",
+                    label="Explicit ledger plus decision dossier",
+                    axis_assignments={
+                        "coverage": "explicit ledger",
+                        "authoring": "decision dossier",
+                    },
+                    hypothesis="Higher authoring cost for stronger decision quality.",
+                    coverage_status=CoverageStatus.REDTEAMED,
+                    uncertainty=0.22,
+                    hard_gate_risk=0.18,
+                    evidence_strength=0.84,
+                    incumbent_proposal_ids=["proposal-b"],
+                    notes=["Current leader."],
+                )
+            ],
+            coverage_summary="The explicit-ledger path is the current leader.",
+        ),
+        proposal_briefs=[proposal],
+        triage_reports=[
+            TriageReport(
+                report_id="triage-001",
+                frame_id=frame.frame_id,
+                decisions=[
+                    ProposalTriageDecision(
+                        proposal_id="proposal-b",
+                        disposition=ProposalDisposition.SURVIVE,
+                        rationale="Best match for the target runtime.",
+                    )
+                ],
+                survivor_ids=["proposal-b"],
+                unexplored_cell_ids=[],
+                summary="The coverage-led family survives.",
+            )
+        ],
+        deep_dive_docs=[
+            DeepDiveDoc(
+                doc_id="deep-001",
+                proposal_id="proposal-b",
+                title="Coverage-led runtime design",
+                executive_summary="Separate scheduling from authoring and persist both.",
+                detailed_mechanism="Maintain a coverage ledger and write a final decision from the full bundle.",
+                implementation_plan=["Persist the bundle.", "Benchmark it against the adaptive control path."],
+                key_unknowns=["Latency under the standard cost profile."],
+                supporting_evidence=["The specs require typed artifacts."],
+                assumptions=["Provider-backed evaluation remains the main judge layer."],
+            )
+        ],
+        adversarial_reviews=[
+            AdversarialReview(
+                review_id="review-001",
+                proposal_id="proposal-b",
+                thesis_under_test=proposal.candidate.thesis,
+                hidden_dependencies=["The bundle must remain easy to replay."],
+                failure_modes=["The richer authoring path could add too much latency."],
+                mitigations=["Keep provider dispatch bounded and deterministic."],
+                summary="Viable if persistence and latency stay disciplined.",
+                verdict="Proceed with explicit latency checks.",
+                confidence=0.74,
+                evidence=["The runtime already supports deterministic state commits."],
+            )
+        ],
+        comparison_matrices=[
+            ComparisonMatrix(
+                matrix_id="matrix-001",
+                frame_id=frame.frame_id,
+                criteria=["decision_quality", "latency"],
+                rows=[
+                    ComparisonMatrixRow(
+                        proposal_id="proposal-b",
+                        criterion_scores={"decision_quality": 0.9, "latency": 0.58},
+                        advantages=["Best decision package."],
+                        liabilities=["Adds more authoring work."],
+                        takeaway="Best default if latency stays bounded.",
+                    )
+                ],
+                summary="The explicit-ledger path wins on decision quality.",
+            )
+        ],
+        hybrid_assessments=[],
+        final_decision_doc=FinalDecisionDoc(
+            decision_id="decision-001",
+            frame_id=frame.frame_id,
+            selected_proposal_id="proposal-b",
+            runner_up_proposal_id=None,
+            conservative_proposal_id="proposal-b",
+            high_upside_proposal_id="proposal-b",
+            summary="Ship the coverage-led runtime.",
+            decision_rule="Prefer the option that most improves decision quality without breaking determinism.",
+            assumptions=["Artifact persistence stays inspectable."],
+            top_risks=["Authoring latency could grow too high."],
+            mitigations=["Measure and cap stage concurrency."],
+            first_spike=["Persist the research bundle under each run."],
+            kill_criteria=["If the richer bundle breaks replay or verification."],
+            next_experiments=["Benchmark the research runtime."],
+            reversal_conditions=["If decision quality does not improve materially."],
+            rejected_proposal_ids=[],
+        ),
     )

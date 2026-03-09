@@ -27,6 +27,8 @@ from argus.inspection import (
 from argus.models import LearningNote, LearningNoteType, OutcomeFeedback, OutcomeFeedbackStatus
 from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider, Provider
 from argus.search import (
+    SearchPolicy,
+    ResearchRuntime,
     SearchRuntime,
     cost_profile_names,
     default_search_profile_for_cost_profile,
@@ -46,18 +48,26 @@ _PROVIDER_TYPES = {
 _PROGRESS_MODES = ("auto", "plain", "jsonl", "quiet")
 _COST_PROFILE_CHOICES = cost_profile_names()
 _SEARCH_PROFILE_CHOICES = search_profile_names()
+_RUNTIME_MODE_CHOICES = ("adaptive", "research")
 
 
 _ACTION_LABELS: dict[str, str] = {
     "frame_problem": "Framing",
+    "frame_search_space": "Framing search space",
     "generate_seed": "Exploring",
+    "seed_cell_proposals": "Seeding research cells",
+    "triage_proposals": "Triaging families",
     "stress_test": "Stress testing",
     "deepen": "Deepening",
+    "deepen_family": "Deepening survivor families",
+    "redteam_family": "Red-teaming survivors",
     "mutate": "Iterating",
     "combine": "Combining",
+    "assess_hybrid": "Assessing hybrids",
     "migrate": "Cross-island transfer",
     "compress_learning": "Compressing learnings",
     "rank": "Selecting finalists",
+    "write_final_decision": "Writing final decision",
 }
 
 
@@ -69,6 +79,7 @@ class _RunProgressMetadata:
     budget: int
     cost_profile: str
     search_profile: str
+    runtime_mode: str
     artifact_path: Path
 
 
@@ -356,6 +367,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
+        "--runtime-mode",
+        choices=_RUNTIME_MODE_CHOICES,
+        default="adaptive",
+        help=(
+            "Execution path for `argus run`. `adaptive` uses the existing node-search runtime, "
+            "while `research` runs the coverage-led artifact pipeline."
+        ),
+    )
+    run_parser.add_argument(
         "--provider",
         default=None,
         help=(
@@ -470,6 +490,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Search-shape preset to validate. `balanced` uses one island, while "
             "`portfolio` enables balanced, conservative, and high-upside islands."
         ),
+    )
+    dry_run_parser.add_argument(
+        "--runtime-mode",
+        choices=_RUNTIME_MODE_CHOICES,
+        default="adaptive",
+        help="Execution path to validate for a future run.",
     )
     dry_run_parser.add_argument(
         "--provider",
@@ -699,6 +725,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     run_config = _load_run_config(args.run_config_path)
     resolved_request = _resolve_run_request(args, run_config=run_config)
     request = resolved_request.text
+    runtime_mode = _resolve_runtime_mode(args=args)
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
     search_profile = _resolve_search_profile(
         args=args,
@@ -711,6 +738,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     observe_port = _resolve_observe_port(args=args, run_config=run_config)
     policy = search_policy_for_cost_profile(cost_profile, search_profile=search_profile)
     budget = _resolve_budget(args=args, run_config=run_config)
+    _validate_runtime_budget(runtime_mode=runtime_mode, budget=budget)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
         run_config=run_config,
@@ -733,6 +761,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         budget=budget,
         cost_profile=cost_profile,
         search_profile=search_profile,
+        runtime_mode=runtime_mode,
         artifact_path=state_store.root_dir / run_id,
     )
     sink = _build_progress_sink(
@@ -757,7 +786,8 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         )
 
     provider = providers[0]
-    runtime = SearchRuntime(
+    runtime = _build_runtime(
+        runtime_mode=runtime_mode,
         provider=provider,
         providers=providers,
         state_store=state_store,
@@ -782,6 +812,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     run_config = _load_run_config(args.run_config_path)
     resolved_request = _resolve_run_request(args, run_config=run_config)
     request = resolved_request.text
+    runtime_mode = _resolve_runtime_mode(args=args)
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
     search_profile = _resolve_search_profile(
         args=args,
@@ -790,6 +821,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     )
     policy = search_policy_for_cost_profile(cost_profile, search_profile=search_profile)
     budget = _resolve_budget(args=args, run_config=run_config)
+    _validate_runtime_budget(runtime_mode=runtime_mode, budget=budget)
     provider_names = _resolve_provider_names(
         provider_arg=args.provider,
         run_config=run_config,
@@ -812,6 +844,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         "budget": budget,
         "cost_profile": cost_profile,
         "search_profile": search_profile,
+        "runtime_mode": runtime_mode,
         "search_policy": policy.to_dict(),
         "provider_pool": provider_names,
         "provider_models": {
@@ -834,6 +867,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     print(f"budget={payload['budget']}")
     print(f"cost_profile={payload['cost_profile']}")
     print(f"search_profile={payload['search_profile']}")
+    print(f"runtime_mode={payload['runtime_mode']}")
     print("provider_pool=" + ",".join(provider_names))
     for provider in providers:
         print(f"provider_model[{provider.name}]={getattr(provider, 'model', None)}")
@@ -1018,6 +1052,7 @@ def _print_run_header(metadata: _RunProgressMetadata) -> None:
     print(f"Search budget: {metadata.budget} steps", file=sys.stderr)
     print(f"Cost profile: {metadata.cost_profile}", file=sys.stderr)
     print(f"Search profile: {metadata.search_profile}", file=sys.stderr)
+    print(f"Runtime mode: {metadata.runtime_mode}", file=sys.stderr)
     print(f"Artifacts: {metadata.artifact_path}", file=sys.stderr)
     print(
         f"Tip: watch with `uv run argus status {metadata.run_id}`",
@@ -1054,6 +1089,30 @@ def _print_run_recap(
     )
     print(f"{'Summary':12}  {metadata.artifact_path / 'summary.md'}", file=sys.stderr)
     print(file=sys.stderr)
+
+
+def _build_runtime(
+    *,
+    runtime_mode: str,
+    provider: Provider,
+    providers: Sequence[Provider],
+    state_store: FileSystemStateStore,
+    policy: SearchPolicy,
+    progress_sink: ProgressSink,
+    progress_verbose: bool,
+):
+    if runtime_mode == "research":
+        runtime_cls = ResearchRuntime
+    else:
+        runtime_cls = SearchRuntime
+    return runtime_cls(
+        provider=provider,
+        providers=providers,
+        state_store=state_store,
+        policy=policy,
+        progress_sink=progress_sink,
+        progress_verbose=progress_verbose,
+    )
 
 
 def _handle_observe(args: argparse.Namespace, config: ArgusConfig) -> int:
@@ -1149,6 +1208,21 @@ def _resolve_budget(
     if not isinstance(budget, int) or budget <= 0:
         raise ArgusUserError("--budget must be a positive integer.")
     return budget
+
+
+def _resolve_runtime_mode(*, args: argparse.Namespace) -> str:
+    runtime_mode = getattr(args, "runtime_mode", "adaptive")
+    if runtime_mode not in _RUNTIME_MODE_CHOICES:
+        supported = ", ".join(_RUNTIME_MODE_CHOICES)
+        raise ArgusUserError(
+            f"Unknown runtime mode {runtime_mode!r}. Supported runtime modes: {supported}."
+        )
+    return runtime_mode
+
+
+def _validate_runtime_budget(*, runtime_mode: str, budget: int) -> None:
+    if runtime_mode == "research" and budget < 4:
+        raise ArgusUserError("--runtime-mode research requires --budget >= 4.")
 
 
 def _resolve_cost_profile(

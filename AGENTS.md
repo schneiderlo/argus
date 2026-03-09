@@ -44,6 +44,11 @@ The target application described by the specs is a Python 3.12 project with:
 - evaluator-first search with provider-backed semantic judgment, novelty filtering, and archived stepping stones
 - outcome-feedback ingestion that folds shipped experiment results back into reusable learning memory with provenance
 
+The operator-facing CLI now supports two explicit runtime modes:
+
+- `argus run --runtime-mode adaptive` keeps the adaptive node-search loop as the control path
+- `argus run --runtime-mode research` runs the coverage-led research pipeline and persists a typed research bundle under the run directory
+
 ## Ralph Loop Behavior
 
 The loop is intentionally simple:

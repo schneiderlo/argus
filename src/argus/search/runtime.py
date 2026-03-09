@@ -598,14 +598,21 @@ class SearchRuntime:
     def _action_display_label(self, action_name: str) -> str:
         action_labels = {
             ActionType.FRAME_PROBLEM.value: "Framing",
+            ActionType.FRAME_SEARCH_SPACE.value: "Framing search space",
             ActionType.GENERATE_SEED.value: "Exploring",
+            ActionType.SEED_CELL_PROPOSALS.value: "Seeding research cells",
+            ActionType.TRIAGE_PROPOSALS.value: "Triaging proposal families",
             ActionType.STRESS_TEST.value: "Stress testing",
             ActionType.DEEPEN.value: "Deepening",
+            ActionType.DEEPEN_FAMILY.value: "Deepening survivor families",
+            ActionType.REDTEAM_FAMILY.value: "Red-teaming survivors",
             ActionType.MUTATE.value: "Iterating",
             ActionType.COMBINE.value: "Combining",
+            ActionType.ASSESS_HYBRID.value: "Assessing hybrids",
             ActionType.MIGRATE.value: "Cross-island transfer",
             ActionType.COMPRESS_LEARNING.value: "Compressing learnings",
             ActionType.RANK.value: "Selecting finalists",
+            ActionType.WRITE_FINAL_DECISION.value: "Writing final decision",
         }
         return action_labels.get(action_name, action_name)
 

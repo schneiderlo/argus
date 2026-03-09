@@ -214,6 +214,35 @@ class CliTests(unittest.TestCase):
         self.assertIn("Completed in", stderr)
         self.assertIn("Argus Recommendation", stdout)
 
+    def test_run_command_supports_research_runtime_mode(self) -> None:
+        with TemporaryRepoRoot() as root:
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            with patch("argus.cli._build_provider", return_value=provider):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "run",
+                        "Choose the default research runtime to ship next.",
+                        "--runtime-mode",
+                        "research",
+                        "--budget",
+                        "7",
+                        "--progress",
+                        "quiet",
+                    ]
+                )
+
+            runs = sorted(
+                path for path in (root / "artifacts" / "runs").iterdir() if path.is_dir()
+            )
+            run_dir = runs[0]
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Completed in", stderr)
+            self.assertIn("Argus Recommendation", stdout)
+            self.assertTrue((run_dir / "research" / "bundle.json").is_file())
+            self.assertTrue((run_dir / "research" / "markdown" / "final-decision.md").is_file())
+
     def test_run_command_cli_request_overrides_run_config_prompt_file(self) -> None:
         with TemporaryRepoRoot() as root:
             provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
@@ -1086,6 +1115,7 @@ class CliTests(unittest.TestCase):
             budget=12,
             cost_profile="standard",
             search_profile="portfolio",
+            runtime_mode="adaptive",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
@@ -1126,6 +1156,7 @@ class CliTests(unittest.TestCase):
             budget=12,
             cost_profile="standard",
             search_profile="portfolio",
+            runtime_mode="adaptive",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata, interactive=True)
@@ -1192,6 +1223,7 @@ class CliTests(unittest.TestCase):
             budget=12,
             cost_profile="standard",
             search_profile="portfolio",
+            runtime_mode="adaptive",
             artifact_path=Path("/tmp"),
         )
         renderer = _AutoProgressRenderer(metadata)

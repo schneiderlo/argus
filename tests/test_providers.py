@@ -21,6 +21,7 @@ from argus.providers import (
     StructuredOutputSchema,
 )
 from argus.search.contracts import problem_frame_schema
+from argus.search.research_contracts import final_decision_package_schema, search_space_plan_schema
 
 
 class CodexProviderTests(unittest.TestCase):
@@ -691,6 +692,69 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("Note budget: return at most 4 compressed learning notes.", prompt_text)
         self.assertIn("Compression goal: Extract reusable patterns, failure modes, and constraints", prompt_text)
 
+    def test_run_action_materializes_action_specific_research_prompts(self) -> None:
+        with TemporaryDirectory() as directory:
+            frame_runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_search_space_plan_payload()),
+                )
+            )
+            decision_runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_final_decision_package_payload()),
+                )
+            )
+            frame_provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations" / "frame",
+                runner=frame_runner,
+            )
+            decision_provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations" / "decision",
+                runner=decision_runner,
+            )
+
+            frame_response = frame_provider.run_action(
+                action_name="frame_search_space",
+                problem_spec=_problem_spec(),
+                input_payload={"request": _problem_spec().request, "budget": 7},
+                output_schema=search_space_plan_schema(),
+            )
+            decision_response = decision_provider.run_action(
+                action_name="write_final_decision",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "frame_id": "frame-001",
+                    "proposals": [
+                        {
+                            "proposal_id": "proposal-ledger",
+                            "cell_id": "cell-ledger",
+                            "title": "Coverage-led runtime",
+                            "summary": "Use an explicit coverage ledger.",
+                            "candidate": _candidate_payload(),
+                            "seed_rationale": "Closes the main product gap.",
+                            "open_questions": ["Latency?"],
+                            "evidence": ["Spec-aligned."],
+                            "parent_node_ids": ["node-0002"],
+                        }
+                    ],
+                },
+                output_schema=final_decision_package_schema(),
+            )
+
+            frame_prompt = frame_response.artifacts.prompt_path.read_text(encoding="utf-8")
+            decision_prompt = decision_response.artifacts.prompt_path.read_text(encoding="utf-8")
+
+        self.assertIn("Role: search-space framer for Argus research mode.", frame_prompt)
+        self.assertIn("Ledger rule: return an initial coverage_ledger", frame_prompt)
+        self.assertIn("Role: final decision author for Argus research mode.", decision_prompt)
+        self.assertIn("Comparison rule: produce a comparison_matrix", decision_prompt)
+
     def test_run_action_pairwise_prompt_mentions_outcome_feedback_priors(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(
@@ -1201,4 +1265,86 @@ def _comparison_payload(node_id: str) -> dict[str, object]:
         "candidate": _candidate_payload(),
         "score": _evaluation_payload()["score"],
         "novelty_score": 0.63,
+    }
+
+
+def _search_space_plan_payload() -> dict[str, object]:
+    return {
+        "search_space_frame": {
+            "frame_id": "frame-001",
+            "problem_statement": "Choose the next Argus research runtime.",
+            "target_decision": "Pick the default runtime to ship.",
+            "hard_gates": ["Must stay deterministic."],
+            "soft_criteria": ["Decision quality", "Latency"],
+            "baseline_options": ["Keep the adaptive runtime."],
+            "axes": [
+                {
+                    "axis_id": "coverage",
+                    "label": "Coverage",
+                    "description": "Coverage planning mode.",
+                    "options": ["implicit frontier", "explicit ledger"],
+                }
+            ],
+            "coverage_plan": ["Seed each material family once."],
+            "notes": ["Keep the adaptive path as a benchmark control."],
+        },
+        "coverage_ledger": {
+            "ledger_id": "ledger-001",
+            "frame_id": "frame-001",
+            "cells": [
+                {
+                    "cell_id": "cell-ledger",
+                    "label": "Explicit ledger",
+                    "axis_assignments": {"coverage": "explicit ledger"},
+                    "hypothesis": "Higher authoring cost for stronger decisions.",
+                    "coverage_status": "unexplored",
+                    "uncertainty": 0.55,
+                    "hard_gate_risk": 0.24,
+                    "evidence_strength": 0.42,
+                    "incumbent_proposal_ids": [],
+                    "notes": [],
+                }
+            ],
+            "coverage_summary": "The explicit-ledger path is worth seeding.",
+            "next_questions": ["Can it stay within the latency budget?"],
+            "updated_at": "2026-03-08T18:30:00Z",
+        },
+    }
+
+
+def _final_decision_package_payload() -> dict[str, object]:
+    return {
+        "comparison_matrix": {
+            "matrix_id": "matrix-001",
+            "frame_id": "frame-001",
+            "criteria": ["decision_quality", "latency"],
+            "rows": [
+                {
+                    "proposal_id": "proposal-ledger",
+                    "criterion_scores": {
+                        "decision_quality": 0.9,
+                        "latency": 0.58,
+                    },
+                    "advantages": ["Best decision package."],
+                    "liabilities": ["More authoring work."],
+                    "takeaway": "Best default if latency stays bounded.",
+                }
+            ],
+            "summary": "The coverage-led path wins on decision quality.",
+        },
+        "final_decision_doc": {
+            "decision_id": "decision-001",
+            "frame_id": "frame-001",
+            "selected_proposal_id": "proposal-ledger",
+            "summary": "Ship the coverage-led runtime.",
+            "decision_rule": "Prefer the option that most improves decision quality without breaking determinism.",
+            "assumptions": ["Artifact persistence stays inspectable."],
+            "top_risks": ["Authoring latency could grow too high."],
+            "mitigations": ["Keep provider dispatch bounded and deterministic."],
+            "first_spike": ["Persist the research bundle under each run."],
+            "kill_criteria": ["If the richer bundle breaks replay or verification."],
+            "next_experiments": ["Benchmark the research runtime."],
+            "reversal_conditions": ["If decision quality does not improve materially."],
+            "rejected_proposal_ids": [],
+        },
     }
