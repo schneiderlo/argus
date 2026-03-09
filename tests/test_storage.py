@@ -759,4 +759,6 @@ def _sample_research_bundle() -> ResearchArtifactBundle:
             reversal_conditions=["If decision quality does not improve materially."],
             rejected_proposal_ids=[],
         ),
+        decision_summary_markdown="# Argus Recommendation\n\nShip the coverage-led runtime.\n",
+        decision_report_markdown="# Final Decision Memo\n\nThe coverage-led runtime should ship next.\n",
     )

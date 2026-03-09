@@ -448,7 +448,14 @@ class SearchRuntimeTests(unittest.TestCase):
                 loaded.research_bundle.final_decision_doc.selected_proposal_id,
                 "proposal-ledger",
             )
+            self.assertIn("Research Decision", loaded.research_bundle.decision_summary_markdown)
+            self.assertIn("Final Decision Memo", loaded.research_bundle.decision_report_markdown)
+            self.assertEqual(
+                result.summary_markdown,
+                loaded.research_bundle.decision_summary_markdown,
+            )
             self.assertTrue((loaded.path / "research" / "bundle.json").is_file())
+            self.assertTrue((loaded.path / "research" / "markdown" / "decision-summary.md").is_file())
             self.assertTrue((loaded.path / "research" / "markdown" / "final-decision.md").is_file())
             self.assertTrue(
                 (loaded.path / "research" / "markdown" / "scheduler" / "schedule-001.md").is_file()

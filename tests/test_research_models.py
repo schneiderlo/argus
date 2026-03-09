@@ -256,6 +256,8 @@ class ResearchModelTests(unittest.TestCase):
             comparison_matrices=[matrix],
             hybrid_assessments=[hybrid],
             final_decision_doc=decision,
+            decision_summary_markdown="# Argus Recommendation\n\nShip the coverage-led runtime.\n",
+            decision_report_markdown="# Final Decision Memo\n\nThe coverage-led runtime should ship next.\n",
         )
 
         payload = bundle.to_dict()
@@ -266,6 +268,8 @@ class ResearchModelTests(unittest.TestCase):
         self.assertEqual(payload["coverage_ledger"]["cells"][1]["coverage_status"], "redteamed")
         self.assertEqual(payload["scheduler_decisions"][0]["action"], "redteam")
         self.assertEqual(payload["final_decision_doc"]["selected_proposal_id"], "proposal-b")
+        self.assertIn("decision_summary_markdown", payload)
+        self.assertIn("decision_report_markdown", payload)
 
     def test_bundle_rejects_cells_that_do_not_match_frame_axis_options(self) -> None:
         frame = SearchSpaceFrame(
@@ -301,6 +305,80 @@ class ResearchModelTests(unittest.TestCase):
 
         with self.assertRaises(ArgusValidationError):
             ResearchArtifactBundle(search_space_frame=frame, coverage_ledger=ledger)
+
+    def test_bundle_requires_authored_markdown_when_final_decision_exists(self) -> None:
+        frame = SearchSpaceFrame(
+            frame_id="frame-003",
+            problem_statement="Choose the next runtime mode.",
+            target_decision="Select one runtime.",
+            hard_gates=["Stay deterministic."],
+            soft_criteria=["Decision quality"],
+            baseline_options=["Adaptive runtime"],
+            axes=[
+                SearchAxis(
+                    axis_id="coverage",
+                    label="Coverage",
+                    description="Coverage planning mode.",
+                    options=["implicit frontier", "explicit ledger"],
+                )
+            ],
+            coverage_plan=["Seed the most important family."],
+        )
+        proposal = ProposalBrief(
+            proposal_id="proposal-explicit",
+            cell_id="cell-explicit",
+            title="Coverage-led runtime",
+            summary="Use an explicit ledger.",
+            candidate=_sample_candidate(thesis="Coverage-led runtime"),
+            seed_rationale="Closes the main gap.",
+            open_questions=["Latency?"],
+            evidence=["Spec-aligned."],
+            parent_node_ids=["node-0002"],
+        )
+        ledger = CoverageLedger(
+            ledger_id="ledger-003",
+            frame_id=frame.frame_id,
+            cells=[
+                SearchCell(
+                    cell_id="cell-explicit",
+                    label="Explicit ledger",
+                    axis_assignments={"coverage": "explicit ledger"},
+                    hypothesis="More explicit planning produces better decisions.",
+                    coverage_status=CoverageStatus.REDTEAMED,
+                    uncertainty=0.22,
+                    hard_gate_risk=0.18,
+                    evidence_strength=0.84,
+                    incumbent_proposal_ids=["proposal-explicit"],
+                )
+            ],
+            coverage_summary="The explicit-ledger path is the leader.",
+        )
+        decision = FinalDecisionDoc(
+            decision_id="decision-003",
+            frame_id=frame.frame_id,
+            selected_proposal_id=proposal.proposal_id,
+            runner_up_proposal_id=None,
+            conservative_proposal_id=proposal.proposal_id,
+            high_upside_proposal_id=proposal.proposal_id,
+            summary="Ship the coverage-led runtime.",
+            decision_rule="Prefer the option with the best decision quality.",
+            assumptions=["Persistence stays inspectable."],
+            top_risks=["Latency could grow."],
+            mitigations=["Bound concurrency."],
+            first_spike=["Persist the bundle."],
+            kill_criteria=["If replay becomes brittle."],
+            next_experiments=["Benchmark it."],
+            reversal_conditions=["If decision quality does not improve."],
+            rejected_proposal_ids=[],
+        )
+
+        with self.assertRaises(ArgusValidationError):
+            ResearchArtifactBundle(
+                search_space_frame=frame,
+                coverage_ledger=ledger,
+                proposal_briefs=[proposal],
+                final_decision_doc=decision,
+            )
 
     def test_triage_report_requires_survivor_ids_to_match_survive_decisions(self) -> None:
         with self.assertRaises(ArgusValidationError):

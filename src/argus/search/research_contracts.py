@@ -131,6 +131,8 @@ class ProposalSeedBatch:
 class FinalDecisionPackage:
     comparison_matrix: ComparisonMatrix
     final_decision_doc: FinalDecisionDoc
+    decision_summary_markdown: str
+    decision_report_markdown: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.comparison_matrix, ComparisonMatrix):
@@ -143,6 +145,10 @@ class FinalDecisionPackage:
                 "final_decision_doc must be a FinalDecisionDoc instance, "
                 f"got {type(self.final_decision_doc).__name__}."
             )
+        if not isinstance(self.decision_summary_markdown, str) or not self.decision_summary_markdown.strip():
+            raise ArgusValidationError("decision_summary_markdown must be a non-empty string.")
+        if not isinstance(self.decision_report_markdown, str) or not self.decision_report_markdown.strip():
+            raise ArgusValidationError("decision_report_markdown must be a non-empty string.")
         if self.comparison_matrix.frame_id != self.final_decision_doc.frame_id:
             raise ArgusValidationError(
                 "comparison_matrix.frame_id must match final_decision_doc.frame_id."
@@ -172,6 +178,8 @@ class FinalDecisionPackage:
         return {
             "comparison_matrix": self.comparison_matrix.to_dict(),
             "final_decision_doc": self.final_decision_doc.to_dict(),
+            "decision_summary_markdown": self.decision_summary_markdown.strip(),
+            "decision_report_markdown": self.decision_report_markdown.strip(),
         }
 
     @classmethod
@@ -180,7 +188,12 @@ class FinalDecisionPackage:
             raise ArgusValidationError(
                 f"FinalDecisionPackage must be an object, got {type(payload).__name__}."
             )
-        expected = {"comparison_matrix", "final_decision_doc"}
+        expected = {
+            "comparison_matrix",
+            "final_decision_doc",
+            "decision_summary_markdown",
+            "decision_report_markdown",
+        }
         actual = set(payload)
         extra = sorted(actual - expected)
         missing = sorted(expected - actual)
@@ -194,6 +207,8 @@ class FinalDecisionPackage:
         return cls(
             comparison_matrix=ComparisonMatrix.from_dict(payload["comparison_matrix"]),
             final_decision_doc=FinalDecisionDoc.from_dict(payload["final_decision_doc"]),
+            decision_summary_markdown=payload["decision_summary_markdown"],
+            decision_report_markdown=payload["decision_report_markdown"],
         )
 
 
@@ -271,10 +286,17 @@ def final_decision_package_schema() -> StructuredOutputSchema[FinalDecisionPacka
         json_schema={
             "type": "object",
             "additionalProperties": False,
-            "required": ["comparison_matrix", "final_decision_doc"],
+            "required": [
+                "comparison_matrix",
+                "final_decision_doc",
+                "decision_summary_markdown",
+                "decision_report_markdown",
+            ],
             "properties": {
                 "comparison_matrix": _comparison_matrix_schema(),
                 "final_decision_doc": _final_decision_doc_schema(),
+                "decision_summary_markdown": {"type": "string", "minLength": 1},
+                "decision_report_markdown": {"type": "string", "minLength": 1},
             },
         },
         validator=FinalDecisionPackage.from_dict,

@@ -341,7 +341,15 @@ class BenchmarkHarness:
         research_final_decision = None
         research_bundle = getattr(search_result, "research_bundle", None)
         if research_bundle is not None and research_bundle.final_decision_doc is not None:
-            research_final_decision = research_bundle.final_decision_doc.to_dict()
+            research_final_decision = {
+                "final_decision_doc": research_bundle.final_decision_doc.to_dict(),
+                "decision_summary_markdown": research_bundle.decision_summary_markdown,
+                "decision_report_markdown": research_bundle.decision_report_markdown,
+            }
+            if research_bundle.comparison_matrices:
+                research_final_decision["comparison_matrix"] = (
+                    research_bundle.comparison_matrices[-1].to_dict()
+                )
         return _CaseExecutionResult(
             result=result,
             completed_output=_CompletedBenchmarkModeOutput(

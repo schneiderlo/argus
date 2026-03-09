@@ -603,6 +603,8 @@ class ResearchRuntime(SearchRuntime):
                 bundle,
                 comparison_matrices=[final_package.comparison_matrix],
                 final_decision_doc=final_package.final_decision_doc,
+                decision_summary_markdown=final_package.decision_summary_markdown,
+                decision_report_markdown=final_package.decision_report_markdown,
             )
             learning_notes = _derive_research_learning_notes(bundle)
             session.set_learning_notes(learning_notes)
@@ -1503,7 +1505,8 @@ class ResearchRuntime(SearchRuntime):
         decision = bundle.final_decision_doc
         if decision is None:
             raise ArgusValidationError("final decision document is required.")
-        summary_markdown = _render_research_summary_markdown(bundle, proposal_records)
+        if bundle.decision_summary_markdown is None:
+            raise ArgusValidationError("decision summary markdown is required.")
         return FinalRecommendation(
             best_bet_node_id=proposal_records[decision.selected_proposal_id].node_id,
             conservative_node_id=None
@@ -1517,7 +1520,7 @@ class ResearchRuntime(SearchRuntime):
                 for proposal_id in decision.rejected_proposal_ids
                 if proposal_id in proposal_records
             ],
-            summary_markdown=summary_markdown,
+            summary_markdown=bundle.decision_summary_markdown,
             next_experiments=list(decision.next_experiments),
             assumptions=list(decision.assumptions),
             failure_modes=list(decision.top_risks),
@@ -1595,72 +1598,6 @@ def _derive_research_learning_notes(bundle: ResearchArtifactBundle) -> list[Lear
     return notes
 
 
-def _render_research_summary_markdown(
-    bundle: ResearchArtifactBundle,
-    proposal_records: Mapping[str, _ResearchProposalRecord],
-) -> str:
-    decision = bundle.final_decision_doc
-    if decision is None:
-        raise ArgusValidationError("final decision document is required to render the summary.")
-    selected = proposal_records[decision.selected_proposal_id].brief
-    lines = [
-        "# Argus Recommendation",
-        "",
-        "## Research Decision",
-        decision.summary,
-        "",
-        "## Best Bet",
-        f"- Node: `{proposal_records[decision.selected_proposal_id].node_id}`",
-        f"- Proposal: `{selected.title}`",
-        f"- Thesis: {selected.candidate.thesis}",
-    ]
-    if decision.conservative_proposal_id is not None:
-        conservative = proposal_records[decision.conservative_proposal_id]
-        lines.extend(
-            [
-                "",
-                "## Conservative Option",
-                f"- Node: `{conservative.node_id}`",
-                f"- Proposal: `{conservative.brief.title}`",
-            ]
-        )
-    if decision.high_upside_proposal_id is not None:
-        high_upside = proposal_records[decision.high_upside_proposal_id]
-        lines.extend(
-            [
-                "",
-                "## High-Upside Option",
-                f"- Node: `{high_upside.node_id}`",
-                f"- Proposal: `{high_upside.brief.title}`",
-            ]
-        )
-    lines.extend(
-        [
-            "",
-            "## Decision Rule",
-            decision.decision_rule,
-            "",
-            "## Top Risks",
-        ]
-    )
-    lines.extend(f"- {risk}" for risk in decision.top_risks)
-    lines.extend(
-        [
-            "",
-            "## First Spike",
-        ]
-    )
-    lines.extend(f"- {step}" for step in decision.first_spike)
-    lines.extend(
-        [
-            "",
-            "## Next Experiments",
-        ]
-    )
-    lines.extend(f"- {item}" for item in decision.next_experiments)
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def _render_research_bundle_markdown(
     bundle: ResearchArtifactBundle,
     proposal_records: Mapping[str, _ResearchProposalRecord],
@@ -1687,9 +1624,13 @@ def _render_research_bundle_markdown(
         markdown[f"comparison/{matrix.matrix_id}.md"] = _render_matrix_markdown(matrix)
     for assessment in bundle.hybrid_assessments:
         markdown[f"hybrids/{assessment.assessment_id}.md"] = _render_hybrid_markdown(assessment)
+    if bundle.decision_summary_markdown is not None:
+        markdown["decision-summary.md"] = bundle.decision_summary_markdown
     if bundle.final_decision_doc is not None:
-        markdown["final-decision.md"] = _render_final_decision_markdown(
-            bundle.final_decision_doc
+        markdown["final-decision.md"] = (
+            bundle.decision_report_markdown
+            if bundle.decision_report_markdown is not None
+            else _render_final_decision_markdown(bundle.final_decision_doc)
         )
     return markdown
 

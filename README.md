@@ -53,7 +53,9 @@ uv run argus run --runtime-mode research \
 ```
 
 `adaptive` remains the default control path. `research` runs the staged artifact pipeline and
-persists a typed research bundle under `artifacts/runs/<run_id>/research/`.
+persists a typed research bundle under `artifacts/runs/<run_id>/research/`, including the
+provider-authored `decision-summary.md` and `final-decision.md` outputs from the dedicated
+decision-authoring stage.
 
 Run a search and keep the observer web UI open for that run:
 

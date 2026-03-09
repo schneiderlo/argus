@@ -506,7 +506,9 @@ def _write_final_decision_instructions(
         "Portfolio rule: selected_proposal_id, conservative_proposal_id, and high_upside_proposal_id should differ when the evidence supports genuinely different bets. Do not force artificial differentiation if one proposal legitimately fills more than one role.",
         "Rejection rule: rejected_proposal_ids should include notable losers that still taught the system something, not every proposal that failed triage.",
         "Execution rule: first_spike, kill_criteria, next_experiments, mitigations, and reversal_conditions must be concrete enough to guide an actual implementation decision.",
-        "Output contract: return both the comparison_matrix and final_decision_doc, and keep all proposal references consistent with the supplied artifact ids.",
+        "Authoring rule: write both decision_summary_markdown and decision_report_markdown from the current artifact bundle. The summary should be concise and decision-grade; the report should read like an operator memo with explicit best-bet logic, tradeoffs, runner-up conditions, risks, and immediate next steps.",
+        "Grounding rule: every claim in the markdown outputs should trace back to the supplied artifacts. Do not invent evidence, hidden research, or stakeholder preferences that are not in the bundle.",
+        "Output contract: return comparison_matrix, final_decision_doc, decision_summary_markdown, and decision_report_markdown, and keep all proposal references consistent with the supplied artifact ids.",
     ]
     if _has_reusable_learning_notes(input_payload):
         instructions.append(

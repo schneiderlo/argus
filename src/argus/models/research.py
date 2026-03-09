@@ -1245,6 +1245,8 @@ class ResearchArtifactBundle:
     comparison_matrices: list[ComparisonMatrix] = field(default_factory=list)
     hybrid_assessments: list[HybridAssessment] = field(default_factory=list)
     final_decision_doc: FinalDecisionDoc | None = None
+    decision_summary_markdown: str | None = None
+    decision_report_markdown: str | None = None
 
     def __post_init__(self) -> None:
         if self.search_space_frame is not None and not isinstance(self.search_space_frame, SearchSpaceFrame):
@@ -1290,6 +1292,22 @@ class ResearchArtifactBundle:
         )
         if self.final_decision_doc is not None and not isinstance(self.final_decision_doc, FinalDecisionDoc):
             raise ArgusValidationError("final_decision_doc must be a FinalDecisionDoc instance or None.")
+        object.__setattr__(
+            self,
+            "decision_summary_markdown",
+            _normalize_optional_string(
+                self.decision_summary_markdown,
+                "decision_summary_markdown",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "decision_report_markdown",
+            _normalize_optional_string(
+                self.decision_report_markdown,
+                "decision_report_markdown",
+            ),
+        )
 
         frame = self.search_space_frame
         ledger = self.coverage_ledger
@@ -1415,6 +1433,14 @@ class ResearchArtifactBundle:
                     "FinalDecisionDoc references unknown proposal ids: "
                     f"{', '.join(unknown_decision_refs)}."
                 )
+            if self.decision_summary_markdown is None:
+                raise ArgusValidationError(
+                    "decision_summary_markdown is required when final_decision_doc is present."
+                )
+            if self.decision_report_markdown is None:
+                raise ArgusValidationError(
+                    "decision_report_markdown is required when final_decision_doc is present."
+                )
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -1432,6 +1458,10 @@ class ResearchArtifactBundle:
             payload["coverage_ledger"] = self.coverage_ledger.to_dict()
         if self.final_decision_doc is not None:
             payload["final_decision_doc"] = self.final_decision_doc.to_dict()
+        if self.decision_summary_markdown is not None:
+            payload["decision_summary_markdown"] = self.decision_summary_markdown
+        if self.decision_report_markdown is not None:
+            payload["decision_report_markdown"] = self.decision_report_markdown
         return payload
 
     @classmethod
@@ -1452,6 +1482,8 @@ class ResearchArtifactBundle:
                 "coverage_ledger",
                 "scheduler_decisions",
                 "final_decision_doc",
+                "decision_summary_markdown",
+                "decision_report_markdown",
             },
         )
         frame_payload = data.get("search_space_frame")
@@ -1492,6 +1524,8 @@ class ResearchArtifactBundle:
                 for item in _normalize_sequence(data["hybrid_assessments"], "hybrid_assessments")
             ],
             final_decision_doc=None if decision_payload is None else FinalDecisionDoc.from_dict(decision_payload),
+            decision_summary_markdown=data.get("decision_summary_markdown"),
+            decision_report_markdown=data.get("decision_report_markdown"),
         )
 
 

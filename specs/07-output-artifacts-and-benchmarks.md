@@ -51,6 +51,14 @@ The richer final decision artifact should additionally preserve:
 - the first implementation spike and kill criteria
 - the explicit decision rule used to act under uncertainty
 
+Research-mode runs should also persist dedicated markdown outputs authored by the
+final decision stage itself rather than only a local summary template. At minimum
+that authored set should include:
+
+- a concise decision summary markdown artifact for the top-level report
+- a fuller final decision memo markdown artifact grounded in the comparison,
+  deep-dive, and adversarial evidence
+
 ## Benchmark Dataset
 
 The repository must eventually contain benchmark fixtures that cover:

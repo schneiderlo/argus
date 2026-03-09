@@ -329,6 +329,8 @@ class StagedResearchRuntime(ResearchRuntime):
                 bundle,
                 comparison_matrices=[final_package.comparison_matrix],
                 final_decision_doc=final_package.final_decision_doc,
+                decision_summary_markdown=final_package.decision_summary_markdown,
+                decision_report_markdown=final_package.decision_report_markdown,
             )
             learning_notes = _derive_research_learning_notes(bundle)
             session.set_learning_notes(learning_notes)

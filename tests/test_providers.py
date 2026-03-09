@@ -826,6 +826,8 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("Ledger rule: return an initial coverage_ledger", frame_prompt)
         self.assertIn("Role: final decision author for Argus research mode.", decision_prompt)
         self.assertIn("Comparison rule: produce a comparison_matrix", decision_prompt)
+        self.assertIn("decision_summary_markdown", decision_prompt)
+        self.assertIn("decision_report_markdown", decision_prompt)
 
     def test_run_action_pairwise_prompt_mentions_outcome_feedback_priors(self) -> None:
         with TemporaryDirectory() as directory:
@@ -1500,4 +1502,12 @@ def _final_decision_package_payload() -> dict[str, object]:
             "reversal_conditions": ["If decision quality does not improve materially."],
             "rejected_proposal_ids": [],
         },
+        "decision_summary_markdown": (
+            "# Argus Recommendation\n\n"
+            "Ship the coverage-led runtime.\n"
+        ),
+        "decision_report_markdown": (
+            "# Final Decision Memo\n\n"
+            "The coverage-led runtime should ship next.\n"
+        ),
     }

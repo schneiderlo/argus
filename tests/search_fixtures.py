@@ -532,7 +532,36 @@ class SearchFixtureProvider:
             reversal_conditions=["If decision quality does not improve enough to justify the added artifact and latency overhead."],
             rejected_proposal_ids=[proposal_id for proposal_id in proposal_ids if proposal_id != "proposal-ledger"],
         )
-        return FinalDecisionPackage(comparison_matrix=matrix, final_decision_doc=decision)
+        return FinalDecisionPackage(
+            comparison_matrix=matrix,
+            final_decision_doc=decision,
+            decision_summary_markdown=(
+                "# Argus Recommendation\n\n"
+                "## Research Decision\n"
+                "Ship the coverage-led research runtime and keep the adaptive path as the benchmark control.\n\n"
+                "## Best Bet\n"
+                "- Proposal: `Coverage-led research runtime`\n"
+                "- Why it wins: strongest decision quality and audit trail.\n\n"
+                "## Next Experiments\n"
+                "- Benchmark the research runtime against the adaptive control path.\n"
+                "- Measure latency of deep-dive and red-team stages under the standard cost profile.\n"
+            ),
+            decision_report_markdown=(
+                "# Final Decision Memo\n\n"
+                "## Recommendation\n"
+                "Ship the coverage-led research runtime as the default path and retain the adaptive runtime as the control.\n\n"
+                "## Why This Wins\n"
+                "- It closes the biggest product gap: explicit coverage planning plus decision-grade artifacts.\n"
+                "- It keeps deterministic persistence and replay intact.\n\n"
+                "## Runner-Up\n"
+                "The adaptive runtime remains useful as the cheaper benchmark control, but it is still too lossy for the default operator workflow.\n\n"
+                "## Risks And Mitigations\n"
+                "- Risk: authoring latency grows too high.\n"
+                "- Mitigation: keep provider dispatch bounded and persist artifacts in deterministic order.\n\n"
+                "## First Spike\n"
+                "- Persist the research bundle and run it end to end from `argus run --runtime-mode research`.\n"
+            ),
+        )
 
     def _handle_judge_benchmark_modes(
         self,
