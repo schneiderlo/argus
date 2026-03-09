@@ -61,6 +61,11 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v node >/dev/null 2>&1; then
+  echo "node is required for frontend verification" >&2
+  exit 1
+fi
+
 if [[ ! -f "$UI_DIR/package-lock.json" ]]; then
   echo "Frontend lockfile missing: expected $UI_DIR/package-lock.json" >&2
   exit 1
@@ -81,6 +86,7 @@ uv run --locked --no-sync --python 3.12 python -V
 uv run --locked --no-sync --python 3.12 python -m compileall src tests
 uv run --locked --no-sync --python 3.12 python -m unittest discover -s tests -t .
 uv run --locked --no-sync --python 3.12 ruff check .
+node --test "$UI_DIR/src/lib/components/networkGraphModel.test.js"
 npm --prefix "$UI_DIR" run check
 npm --prefix "$UI_DIR" run build
 

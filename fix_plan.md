@@ -59,7 +59,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 
 - [x] Move the observer UI off full-state polling onto typed status/event updates with periodic snapshot reconciliation, and expose a lightweight run-status API so the graph/report views can show current action, active invocations, and live event history without reloading the full search state every second.
 - [x] Persist structured pairwise decision artifacts and surface them directly in the report view instead of relying on summary markdown alone.
-- [ ] Upgrade the observer graph from action/id labels to idea-first labels plus island, migration, novelty, and winner-lineage overlays.
+- [x] Upgrade the observer graph from action/id labels to idea-first labels plus island, migration, novelty, and winner-lineage overlays.
 - [x] Replace the memory ledger's provider-only aggregation with a provider x action matrix and reusable-learning filters that distinguish outcome-backed priors from search-only priors.
 
 - [x] **Phase 1: Setup Svelte 5 & API Expansion**
@@ -134,3 +134,4 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - `argus benchmark` now compares `adaptive`, `staged`, and `research` per case by default, persisting mode-specific outputs under `artifacts/benchmarks/<session_id>/cases/<case_id>/<runtime_mode>/` and tracking digest drift separately for each mode across sessions.
 - Benchmark sessions now also persist a provider-backed per-case comparison artifact (`comparison.json` plus `comparison.md`) that scores decision quality, actionability, tradeoff clarity, risk quality, and experiment quality across runtime modes, marks a winner and runner-up, and records skipped/failed comparison states in the session manifest.
 - The observer state payload now includes the persisted `research_bundle`, and the final report renders typed research artifacts directly: search-space framing, coverage ledger cells, proposal briefs, triage and scheduler traces, deep dives, adversarial reviews, comparison matrices, hybrid assessments, and the final decision document/memo.
+- The observer graph now derives node/edge presentation through `src/argus/render/ui/src/lib/components/networkGraphModel.js`, rendering thesis-first labels plus explicit island, migration, novelty, and winner-lineage cues, with a deterministic Node test gating those overlays in verification.

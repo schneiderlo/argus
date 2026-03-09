@@ -5,6 +5,7 @@
   import { DataSet } from 'vis-data';
   import { uiState, getStyle } from '$lib/stores.svelte';
   import type { SearchStatePayload } from '$lib/types';
+  import { deriveGraphPresentation } from '$lib/components/networkGraphModel.js';
 
   let container: HTMLElement;
   let network: Network;
@@ -124,89 +125,28 @@
 
   function syncGraphData(state: SearchStatePayload) {
       if (!state.nodes) return;
+      const presentation = deriveGraphPresentation(state, {
+          isLightMode: uiState.isLightMode,
+          getStyle,
+      });
+      syncDataSet(nodes, presentation.nodes as Node[]);
+      syncDataSet(edges, presentation.edges as Edge[]);
+  }
 
-      const visNodes: Node[] = [];
-      const visEdges: Edge[] = [];
-      const childToParents: Record<string, string[]> = {};
+  function syncDataSet(
+      dataSet: DataSet<Node | Edge, 'id'>,
+      items: Array<Node | Edge>
+  ) {
+      const nextIds = new Set(items.map((item) => String(item.id)));
+      const staleIds = dataSet
+          .getIds()
+          .map((item) => String(item))
+          .filter((item) => !nextIds.has(item));
 
-      for (const nodeId in state.nodes) {
-          const node = state.nodes[nodeId];
-          if (node.parent_ids && node.parent_ids.length > 0) {
-              childToParents[nodeId] = node.parent_ids;
-              for (const parentId of node.parent_ids) {
-                  visEdges.push({
-                      id: `${parentId}-${nodeId}`,
-                      from: parentId,
-                      to: nodeId,
-                      color: { opacity: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? 0.2 : 0.8 },
-                      dashes: (node.lifecycle_status === 'pruned' || node.lifecycle_status === 'rejected') ? [4, 4] : false
-                  });
-              }
-          } else {
-              childToParents[nodeId] = [];
-          }
+      if (staleIds.length > 0) {
+          dataSet.remove(staleIds);
       }
-
-      const nodeLevels: Record<string, number> = {};
-      function getLevel(id: string): number {
-          if (nodeLevels[id] !== undefined) return nodeLevels[id];
-          const parents = childToParents[id] || [];
-          if (parents.length === 0) {
-              nodeLevels[id] = 0;
-              return 0;
-          }
-          let maxParentLevel = -1;
-          for (const pid of parents) {
-              if (nodeLevels[pid] === undefined) {
-                  nodeLevels[pid] = 0;
-                  nodeLevels[pid] = getLevel(pid);
-              }
-              if (nodeLevels[pid] > maxParentLevel) {
-                  maxParentLevel = nodeLevels[pid];
-              }
-          }
-          nodeLevels[id] = maxParentLevel + 1;
-          return nodeLevels[id];
-      }
-
-      for (const nodeId in state.nodes) {
-          const node = state.nodes[nodeId];
-          const status = node.lifecycle_status;
-          const style = getStyle(status);
-
-          let labelText = `<b>${node.action_type.toUpperCase()}</b>\n${nodeId}`;
-          if (node.score && node.score.total_score !== undefined) {
-              labelText += `\n★ ${node.score.total_score.toFixed(2)}`;
-          }
-
-          const nodeConfig: Node = {
-              id: nodeId,
-              level: getLevel(nodeId),
-              label: labelText,
-              color: {
-                  background: style.bg,
-                  border: style.border,
-                  highlight: { background: style.bg, border: uiState.isLightMode ? '#000' : '#fff' },
-                  hover: { background: style.bg, border: uiState.isLightMode ? '#000' : '#fff' }
-              },
-              font: { multi: 'html', color: style.text }
-          };
-
-          if (status === 'pruned' || status === 'rejected') {
-              nodeConfig.shapeProperties = { borderDashes: [4, 4] };
-              nodeConfig.font = {
-                  ...(typeof nodeConfig.font === 'object' ? nodeConfig.font : {}),
-                  color: uiState.isLightMode ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)',
-              };
-          }
-
-          visNodes.push(nodeConfig);
-      }
-
-      // Instead of clear/add, update efficiently using vis-data
-      // We only want to add new items or update changed ones to avoid resetting physics/positions 
-      nodes.update(visNodes);
-      edges.update(visEdges);
+      dataSet.update(items);
   }
 </script>
 
