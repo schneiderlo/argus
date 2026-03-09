@@ -60,7 +60,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Move the observer UI off full-state polling onto typed status/event updates with periodic snapshot reconciliation, and expose a lightweight run-status API so the graph/report views can show current action, active invocations, and live event history without reloading the full search state every second.
 - [x] Persist structured pairwise decision artifacts and surface them directly in the report view instead of relying on summary markdown alone.
 - [ ] Upgrade the observer graph from action/id labels to idea-first labels plus island, migration, novelty, and winner-lineage overlays.
-- [ ] Replace the memory ledger's provider-only aggregation with a provider x action matrix and reusable-learning filters that distinguish outcome-backed priors from search-only priors.
+- [x] Replace the memory ledger's provider-only aggregation with a provider x action matrix and reusable-learning filters that distinguish outcome-backed priors from search-only priors.
 
 - [x] **Phase 1: Setup Svelte 5 & API Expansion**
   - [x] Initialize Svelte 5 + Vite under `src/argus/render/ui`.
@@ -126,6 +126,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - Multi-provider routed actions now retry against the remaining configured providers when the first choice fails or times out, while still recording provider-failure counts for the failed attempts in routing telemetry and keeping admitted-node attribution tied to the provider that ultimately succeeded.
 - `./scripts/verify.sh` now gates observer UI changes with both `npm --prefix src/argus/render/ui run check` and `npm --prefix src/argus/render/ui run build`, so the served `src/argus/render/dist` bundle cannot silently drift behind the Svelte source tree.
 - The observer now exposes `/api/runs/{id}/status` plus `/api/status`, the Svelte UI consumes typed API contracts instead of `any`, the run graph polls status/events with periodic snapshot reconciliation, the report auto-refreshes while a run is active, and the dashboard/top bar now show search-budget terminology plus live current-action context.
+- The observer memory ledger now surfaces provider-routing telemetry as a provider x action matrix rather than provider-only rollups, and it lets the operator filter reusable priors by outcome-backed, mixed-evidence, and search-only provenance so shipped learnings can be inspected separately from search-time notes.
 - The main remaining paper-aligned gap is deeper future policy learning beyond provider routing, especially stronger outcome-backed search-control updates and benchmark regimes that measure decision quality rather than only replayable runtime behavior.
 - The research final-decision stage now returns provider-authored `decision_summary_markdown` and `decision_report_markdown` alongside the typed comparison matrix and `FinalDecisionDoc`, so the operator-facing report is grounded in the full artifact bundle instead of a local summary template.
 - `argus run --runtime-mode research` now executes a staged coverage-led pipeline (`frame_search_space`, `seed_cell_proposals`, `triage_proposals`, `deepen_family`, `redteam_family`, optional `assess_hybrid`, then `write_final_decision`) while `--runtime-mode adaptive` keeps the existing search loop as the control path.

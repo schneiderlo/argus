@@ -311,6 +311,33 @@ class ObserverReportSourceTests(unittest.TestCase):
         self.assertIn("Search Budget", source)
         self.assertNotIn("Token Budget", source)
 
+    def test_memory_route_uses_provider_by_action_matrix_instead_of_provider_only_rollup(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/memory/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("Provider x Action Matrix", source)
+        self.assertIn("action boundary instead of collapsing into provider-only totals", source)
+        self.assertIn("buildRoutingMatrix", source)
+        self.assertNotIn("Provider Telemetry", source)
+
+    def test_memory_route_exposes_outcome_backed_and_search_only_learning_filters(self) -> None:
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src/argus/render/ui/src/routes/memory/+page.svelte"
+        )
+
+        source = route_path.read_text(encoding="utf-8")
+
+        self.assertIn("Outcome-backed", source)
+        self.assertIn("Search-only", source)
+        self.assertIn("Mixed evidence", source)
+        self.assertIn("classifyEvidenceProfile", source)
+        self.assertIn("evidenceFilter", source)
+
 
 def _sample_problem_spec() -> ProblemSpec:
     return ProblemSpec(
