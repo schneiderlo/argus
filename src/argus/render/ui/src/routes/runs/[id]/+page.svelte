@@ -1,10 +1,9 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { page } from '$app/stores';
-  import { fetchRunEvents, fetchRunStatus, fetchState } from '$lib/api';
+  import { fetchRunStatus, fetchState } from '$lib/api';
   import { uiState } from '$lib/stores.svelte';
 
-  import EventTape from '$lib/components/EventTape.svelte';
   import NetworkGraph from '$lib/components/NetworkGraph.svelte';
   import NodeSidebar from '$lib/components/NodeSidebar.svelte';
 
@@ -20,7 +19,6 @@
           uiState.selectedNodeId = null;
           uiState.searchState = null;
           uiState.runStatus = null;
-          uiState.runEvents = [];
           tickCount = 0;
           void syncState();
           void syncLiveData();
@@ -38,15 +36,11 @@
   async function syncLiveData() {
       if (!isMounted || !uiState.activeRunId) return;
 
-      const [status, events] = await Promise.all([
-          fetchRunStatus(uiState.activeRunId),
-          fetchRunEvents(uiState.activeRunId, 120),
-      ]);
+      const status = await fetchRunStatus(uiState.activeRunId);
 
       if (status) {
           uiState.runStatus = status;
       }
-      uiState.runEvents = events;
 
       tickCount += 1;
       const shouldReconcile =
@@ -86,7 +80,6 @@
       </div>
       <NodeSidebar />
   </div>
-  <EventTape />
 </div>
 
 <style>
@@ -94,19 +87,22 @@
       display: flex;
       flex: 1;
       min-height: 0;
+      height: calc(100vh - 60px);
       flex-direction: column;
+      overflow: hidden;
   }
 
   .main-content {
       display: flex;
       flex: 1;
       min-height: 0;
+      overflow: hidden;
   }
 
   .graph-stage {
       position: relative;
       flex: 1;
       min-width: 0;
-      min-height: 0;
+      min-height: 320px;
   }
 </style>

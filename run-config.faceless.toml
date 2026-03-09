@@ -7,7 +7,7 @@ observe = true
 observe_port = 8080
 # Optional request input. Set either `request` or `prompt_file`, not both.
 # request = """Find the best retention strategy for a workflow-heavy product."""
-prompt_file = "new_paradigm.md"
+prompt_file = "faceless.md"
 provider_pool = ["gemini_31_pro_preview", "gemini_flash", "gemini_25_pro"]
 
 # [providers.codex_spark]

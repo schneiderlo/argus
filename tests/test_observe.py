@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
 
 from argus.config import ArgusConfig
 from argus.models import (
@@ -168,11 +169,9 @@ class ObserverPayloadTests(unittest.TestCase):
         self.assertEqual(_state_payload(persisted_run), {})
 
     def test_status_payload_uses_run_status_summary_shape(self) -> None:
-        with unittest.mock.patch(
-            "argus.observe.build_run_status_summary"
-        ) as build_summary:
-            build_summary.return_value = unittest.mock.Mock(
-                to_dict=unittest.mock.Mock(
+        with patch("argus.observe.build_run_status_summary") as build_summary:
+            build_summary.return_value = Mock(
+                to_dict=Mock(
                     return_value={
                         "run_id": "run-observer-fixture",
                         "status": "running",
@@ -222,7 +221,7 @@ class ObserverReportSourceTests(unittest.TestCase):
         self.assertIn("{@html summaryHtml()}", route_source)
         self.assertIn("export function renderRichMarkdown", renderer_source)
 
-    def test_observer_graph_route_uses_status_and_events_api(self) -> None:
+    def test_observer_graph_route_uses_live_status_api(self) -> None:
         route_path = (
             Path(__file__).resolve().parents[1]
             / "src/argus/render/ui/src/routes/runs/[id]/+page.svelte"
@@ -231,8 +230,7 @@ class ObserverReportSourceTests(unittest.TestCase):
         source = route_path.read_text(encoding="utf-8")
 
         self.assertIn("fetchRunStatus", source)
-        self.assertIn("fetchRunEvents", source)
-        self.assertIn("EventTape", source)
+        self.assertNotIn("EventTape", source)
 
     def test_report_route_auto_refreshes_while_running(self) -> None:
         route_path = (
