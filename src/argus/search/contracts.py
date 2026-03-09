@@ -4,7 +4,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from argus.errors import ArgusValidationError
-from argus.models import Candidate, Critique, JSONValue, LearningNote, ProblemSpec
+from argus.models import (
+    Candidate,
+    Critique,
+    HybridVerdict,
+    JSONValue,
+    LearningNote,
+    ProblemSpec,
+)
 from argus.providers import StructuredOutputSchema
 
 
@@ -80,6 +87,165 @@ class CandidateBatch:
         )
         return cls(
             candidates=[Candidate.from_dict(item) for item in _normalize_sequence(data["candidates"], "candidates")],
+            batch_summary=data["batch_summary"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HybridCandidateDecision:
+    hybrid_name: str
+    seam_hypothesis: str
+    repaired_failure_mode: str
+    complementary_strengths: list[str]
+    complexity_tax: str
+    expected_upside: str
+    open_questions: list[str]
+    verdict: HybridVerdict
+    summary: str
+    candidate: Candidate | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "hybrid_name",
+            _normalize_non_empty_string(self.hybrid_name, "hybrid_name"),
+        )
+        object.__setattr__(
+            self,
+            "seam_hypothesis",
+            _normalize_non_empty_string(self.seam_hypothesis, "seam_hypothesis"),
+        )
+        object.__setattr__(
+            self,
+            "repaired_failure_mode",
+            _normalize_non_empty_string(self.repaired_failure_mode, "repaired_failure_mode"),
+        )
+        object.__setattr__(
+            self,
+            "complementary_strengths",
+            _normalize_string_list(self.complementary_strengths, "complementary_strengths"),
+        )
+        object.__setattr__(
+            self,
+            "complexity_tax",
+            _normalize_non_empty_string(self.complexity_tax, "complexity_tax"),
+        )
+        object.__setattr__(
+            self,
+            "expected_upside",
+            _normalize_non_empty_string(self.expected_upside, "expected_upside"),
+        )
+        object.__setattr__(
+            self,
+            "open_questions",
+            _normalize_string_list(self.open_questions, "open_questions"),
+        )
+        object.__setattr__(
+            self,
+            "verdict",
+            _normalize_hybrid_verdict(self.verdict, "verdict"),
+        )
+        object.__setattr__(self, "summary", _normalize_non_empty_string(self.summary, "summary"))
+        candidate = self.candidate
+        if candidate is not None and not isinstance(candidate, Candidate):
+            raise ArgusValidationError(
+                "candidate must be a Candidate instance or None, "
+                f"got {type(candidate).__name__}."
+            )
+        if self.verdict is HybridVerdict.PURSUE and candidate is None:
+            raise ArgusValidationError(
+                "candidate must be provided when verdict is pursue."
+            )
+        if self.verdict is not HybridVerdict.PURSUE and candidate is not None:
+            raise ArgusValidationError(
+                "candidate must be omitted unless verdict is pursue."
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "hybrid_name": self.hybrid_name,
+            "seam_hypothesis": self.seam_hypothesis,
+            "repaired_failure_mode": self.repaired_failure_mode,
+            "complementary_strengths": list(self.complementary_strengths),
+            "complexity_tax": self.complexity_tax,
+            "expected_upside": self.expected_upside,
+            "open_questions": list(self.open_questions),
+            "verdict": self.verdict.value,
+            "summary": self.summary,
+            "candidate": None,
+        }
+        if self.candidate is not None:
+            payload["candidate"] = self.candidate.to_dict()
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "HybridCandidateDecision":
+        data = _validate_payload_keys(
+            payload,
+            field_name="HybridCandidateDecision",
+            required={
+                "hybrid_name",
+                "seam_hypothesis",
+                "repaired_failure_mode",
+                "complementary_strengths",
+                "complexity_tax",
+                "expected_upside",
+                "open_questions",
+                "verdict",
+                "summary",
+                "candidate",
+            },
+        )
+        candidate_payload = data["candidate"]
+        return cls(
+            hybrid_name=data["hybrid_name"],
+            seam_hypothesis=data["seam_hypothesis"],
+            repaired_failure_mode=data["repaired_failure_mode"],
+            complementary_strengths=data["complementary_strengths"],
+            complexity_tax=data["complexity_tax"],
+            expected_upside=data["expected_upside"],
+            open_questions=data["open_questions"],
+            verdict=data["verdict"],
+            summary=data["summary"],
+            candidate=None if candidate_payload is None else Candidate.from_dict(candidate_payload),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HybridCandidateBatch:
+    decisions: list[HybridCandidateDecision]
+    batch_summary: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "decisions",
+            _normalize_hybrid_decisions(self.decisions, "decisions"),
+        )
+        object.__setattr__(
+            self,
+            "batch_summary",
+            _normalize_non_empty_string(self.batch_summary, "batch_summary"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "decisions": [decision.to_dict() for decision in self.decisions],
+            "batch_summary": self.batch_summary,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: object) -> "HybridCandidateBatch":
+        data = _validate_payload_keys(
+            payload,
+            field_name="HybridCandidateBatch",
+            required={"decisions", "batch_summary"},
+        )
+        return cls(
+            decisions=[
+                HybridCandidateDecision.from_dict(item)
+                for item in _normalize_sequence(data["decisions"], "decisions")
+            ],
             batch_summary=data["batch_summary"],
         )
 
@@ -178,6 +344,26 @@ def critique_schema() -> StructuredOutputSchema[Critique]:
     )
 
 
+def hybrid_candidate_batch_schema() -> StructuredOutputSchema[HybridCandidateBatch]:
+    return StructuredOutputSchema(
+        name="hybrid_candidate_batch",
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["decisions", "batch_summary"],
+            "properties": {
+                "decisions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": _hybrid_candidate_decision_schema(),
+                },
+                "batch_summary": {"type": "string", "minLength": 1},
+            },
+        },
+        validator=HybridCandidateBatch.from_dict,
+    )
+
+
 def learning_compression_schema() -> StructuredOutputSchema[LearningCompression]:
     return StructuredOutputSchema(
         name="learning_compression",
@@ -269,6 +455,49 @@ def _learning_note_schema() -> dict[str, JSONValue]:
     }
 
 
+def _hybrid_candidate_decision_schema() -> dict[str, JSONValue]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "hybrid_name",
+            "seam_hypothesis",
+            "repaired_failure_mode",
+            "complementary_strengths",
+            "complexity_tax",
+            "expected_upside",
+            "open_questions",
+            "verdict",
+            "summary",
+            "candidate",
+        ],
+        "properties": {
+            "hybrid_name": {"type": "string", "minLength": 1},
+            "seam_hypothesis": {"type": "string", "minLength": 1},
+            "repaired_failure_mode": {"type": "string", "minLength": 1},
+            "complementary_strengths": _string_array_schema(),
+            "complexity_tax": {"type": "string", "minLength": 1},
+            "expected_upside": {"type": "string", "minLength": 1},
+            "open_questions": _string_array_schema(),
+            "verdict": {
+                "type": "string",
+                "enum": [
+                    HybridVerdict.PURSUE.value,
+                    HybridVerdict.HOLD.value,
+                    HybridVerdict.REJECT.value,
+                ],
+            },
+            "summary": {"type": "string", "minLength": 1},
+            "candidate": {
+                "oneOf": [
+                    {"type": "null"},
+                    _candidate_schema(),
+                ]
+            },
+        },
+    }
+
+
 def _string_array_schema() -> dict[str, JSONValue]:
     return {
         "type": "array",
@@ -310,6 +539,27 @@ def _normalize_learning_notes(value: object, field_name: str) -> list[LearningNo
     return normalized
 
 
+def _normalize_hybrid_decisions(
+    value: object,
+    field_name: str,
+) -> list[HybridCandidateDecision]:
+    if not _is_sequence(value):
+        raise ArgusValidationError(
+            f"{field_name} must be a list of hybrid decisions, got {type(value).__name__}."
+        )
+    normalized: list[HybridCandidateDecision] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, HybridCandidateDecision):
+            raise ArgusValidationError(
+                f"{field_name}[{index}] must be a HybridCandidateDecision instance, "
+                f"got {type(item).__name__}."
+            )
+        normalized.append(item)
+    if not normalized:
+        raise ArgusValidationError(f"{field_name} must not be empty.")
+    return normalized
+
+
 def _normalize_non_empty_string(value: object, field_name: str) -> str:
     if not isinstance(value, str):
         raise ArgusValidationError(
@@ -327,6 +577,23 @@ def _normalize_string_list(value: object, field_name: str) -> list[str]:
     for index, item in enumerate(normalized):
         strings.append(_normalize_non_empty_string(item, f"{field_name}[{index}]"))
     return strings
+
+
+def _normalize_hybrid_verdict(value: object, field_name: str) -> HybridVerdict:
+    if isinstance(value, HybridVerdict):
+        return value
+    if not isinstance(value, str):
+        raise ArgusValidationError(
+            f"{field_name} must be a HybridVerdict or string, got {type(value).__name__}."
+        )
+    normalized = value.strip()
+    try:
+        return HybridVerdict(normalized)
+    except ValueError as exc:
+        supported = ", ".join(verdict.value for verdict in HybridVerdict)
+        raise ArgusValidationError(
+            f"{field_name} must be one of: {supported}."
+        ) from exc
 
 
 def _normalize_sequence(value: object, field_name: str) -> list[object]:

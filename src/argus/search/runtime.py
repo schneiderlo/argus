@@ -38,10 +38,12 @@ from argus.models import (
 from argus.providers import Provider, StructuredOutputSchema
 from argus.progress import NullProgressSink, ProgressSink, build_event
 from argus.search.contracts import (
+    HybridCandidateDecision,
     ProblemFrame,
     candidate_batch_schema,
     candidate_schema,
     critique_schema,
+    hybrid_candidate_batch_schema,
     learning_compression_schema,
     problem_frame_schema,
 )
@@ -1376,28 +1378,56 @@ class SearchRuntime:
                     action_name=ActionType.COMBINE,
                     problem_spec=session.problem_spec,
                     input_payload=input_payload,
-                    output_schema=candidate_batch_schema(),
+                    output_schema=hybrid_candidate_batch_schema(),
                 )
             )
 
         responses = self._dispatch_provider_requests(routing_tracker, requests)
         for (island_id, primary, secondary), response in zip(selected_pairs, responses):
             session.consume_budget()
-            self._admit_candidate_batch(
-                session,
-                island_id=island_id,
-                action_type=ActionType.COMBINE,
-                routing_tracker=routing_tracker,
-                requests=[
-                    _CandidateAdmissionRequest(
-                        candidate=candidate,
-                        parent_ids=(primary.node_id, secondary.node_id),
-                        batch_summary=response.payload.batch_summary,
-                        source_provider_name=response.provider_name,
-                    )
-                    for candidate in response.payload.candidates
-                ],
-            )
+            pursued_decisions = [
+                decision
+                for decision in response.payload.decisions
+                if decision.verdict.value == "pursue"
+            ]
+            if pursued_decisions:
+                self._admit_candidate_batch(
+                    session,
+                    island_id=island_id,
+                    action_type=ActionType.COMBINE,
+                    routing_tracker=routing_tracker,
+                    requests=[
+                        _CandidateAdmissionRequest(
+                            candidate=_required_hybrid_candidate(decision),
+                            parent_ids=(primary.node_id, secondary.node_id),
+                            batch_summary=response.payload.batch_summary,
+                            source_provider_name=response.provider_name,
+                            metadata_patch={
+                                "hybrid_gate": _hybrid_gate_metadata(decision),
+                            },
+                        )
+                        for decision in pursued_decisions
+                    ],
+                )
+            for decision in response.payload.decisions:
+                if decision.verdict.value == "pursue":
+                    continue
+                self._emit_progress(
+                    "hybrid_rejected",
+                    run_id=session.run_id,
+                    step_count=session.step_count,
+                    budget_spent=session.budget_spent,
+                    payload={
+                        "action": ActionType.COMBINE.value,
+                        "provider": response.provider_name,
+                        "island_id": island_id,
+                        "primary_node_id": primary.node_id,
+                        "secondary_node_id": secondary.node_id,
+                        "verdict": decision.verdict.value,
+                        "hybrid_name": decision.hybrid_name,
+                        "summary": decision.summary,
+                    },
+                )
         session.refresh_frontier(limit=self._policy.frontier_limit)
 
     def _migrate_between_islands(
@@ -3640,6 +3670,28 @@ def _build_next_experiments(best: Node) -> list[str]:
     if not experiments:
         experiments.append("Prototype the best bet and measure whether the mechanism works in real operator workflow.")
     return _collect_unique_strings(experiments, limit=4)
+
+
+def _required_hybrid_candidate(decision: HybridCandidateDecision) -> Candidate:
+    if decision.candidate is None:
+        raise ArgusValidationError(
+            "combine returned pursue without a candidate payload."
+        )
+    return decision.candidate
+
+
+def _hybrid_gate_metadata(decision: HybridCandidateDecision) -> dict[str, JSONValue]:
+    return {
+        "hybrid_name": decision.hybrid_name,
+        "seam_hypothesis": decision.seam_hypothesis,
+        "repaired_failure_mode": decision.repaired_failure_mode,
+        "complementary_strengths": list(decision.complementary_strengths),
+        "complexity_tax": decision.complexity_tax,
+        "expected_upside": decision.expected_upside,
+        "open_questions": list(decision.open_questions),
+        "verdict": decision.verdict.value,
+        "summary": decision.summary,
+    }
 
 
 def _render_summary_markdown(

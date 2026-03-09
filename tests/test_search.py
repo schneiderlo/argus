@@ -9,6 +9,7 @@ from argus.errors import ArgusValidationError
 from argus.models import (
     ActionType,
     Candidate,
+    HybridVerdict,
     LearningNote,
     LearningNoteType,
     NodeLifecycleStatus,
@@ -20,6 +21,7 @@ from argus.models import (
     ProviderRoutingStatsEntry,
     TriageReport,
 )
+from argus.search.contracts import HybridCandidateBatch, HybridCandidateDecision
 from argus.search import (
     ResearchRuntime,
     SearchPolicy,
@@ -145,7 +147,65 @@ class CoverageAwareResearchFixtureProvider(SearchFixtureProvider):
         )
 
 
+class RejectingHybridFixtureProvider(SearchFixtureProvider):
+    def _handle_combine(
+        self,
+        _: ProblemSpec,
+        input_payload: dict[str, object],
+    ) -> HybridCandidateBatch:
+        primary = Candidate.from_dict(input_payload["primary_candidate"])
+        secondary = Candidate.from_dict(input_payload["secondary_candidate"])
+        return HybridCandidateBatch(
+            decisions=[
+                HybridCandidateDecision(
+                    hybrid_name="Kitchen-sink retention mashup",
+                    seam_hypothesis="The two ideas would need a larger product surface instead of one clean seam.",
+                    repaired_failure_mode="Neither candidate's main weakness is actually repaired by bolting them together.",
+                    complementary_strengths=[
+                        primary.strengths[0],
+                        secondary.strengths[0],
+                    ],
+                    complexity_tax="Would force the product to ship two partially connected mechanisms at once.",
+                    expected_upside="Only superficial breadth, not a cleaner winning mechanism.",
+                    open_questions=["Which mechanism would the operator actually lead with?"],
+                    verdict=HybridVerdict.REJECT,
+                    summary="Reject the hybrid because the seam is vague and the complexity tax overwhelms the upside.",
+                )
+            ],
+            batch_summary="Rejected the attempted hybrid because it never cleared the seam gate.",
+        )
+
+
 class SearchRuntimeTests(unittest.TestCase):
+    def test_hybrid_candidate_decision_requires_candidate_only_for_pursued_hybrids(self) -> None:
+        with self.assertRaises(ArgusValidationError):
+            HybridCandidateDecision(
+                hybrid_name="Unsupported hybrid",
+                seam_hypothesis="The seam is unclear.",
+                repaired_failure_mode="No real failure mode is repaired.",
+                complementary_strengths=["More breadth."],
+                complexity_tax="Adds surface area without focus.",
+                expected_upside="Only superficial upside.",
+                open_questions=["Why combine these at all?"],
+                verdict=HybridVerdict.PURSUE,
+                summary="Should fail because candidate is missing.",
+                candidate=None,
+            )
+
+        with self.assertRaises(ArgusValidationError):
+            HybridCandidateDecision(
+                hybrid_name="Rejected hybrid carrying a candidate",
+                seam_hypothesis="The seam exists only on paper.",
+                repaired_failure_mode="Still does not repair the actual weakness.",
+                complementary_strengths=["Looks broader."],
+                complexity_tax="Ships too many ideas at once.",
+                expected_upside="Weak and speculative.",
+                open_questions=["Which piece matters most?"],
+                verdict=HybridVerdict.REJECT,
+                summary="Should fail because rejected hybrids must not return a candidate.",
+                candidate=_workflow_archive_candidate(),
+            )
+
     def test_action_router_uses_ucb_to_explore_under_sampled_provider(self) -> None:
         codex_provider = SearchFixtureProvider(Path("/tmp/argus-router-codex"), name="codex")
         gemini_provider = SearchFixtureProvider(Path("/tmp/argus-router-gemini"), name="gemini")
@@ -336,6 +396,20 @@ class SearchRuntimeTests(unittest.TestCase):
             entries["assess_novelty"].candidate_count,
         )
         self.assertEqual(entries["compress_learning"].learning_note_count, 2)
+        combine_nodes = [
+            node
+            for node in result.state.nodes.values()
+            if node.action_type is ActionType.COMBINE and node.node_id in result.state.archive_ids
+        ]
+        self.assertEqual(len(combine_nodes), 1)
+        self.assertEqual(
+            combine_nodes[0].metadata["hybrid_gate"]["repaired_failure_mode"],
+            "Peer benchmarks fail when trust and proprietary-data value are not established first.",
+        )
+        self.assertEqual(
+            combine_nodes[0].metadata["hybrid_gate"]["verdict"],
+            "pursue",
+        )
 
     def test_research_runtime_persists_bundle_and_final_decision(self) -> None:
         with TemporaryDirectory() as directory:
@@ -675,6 +749,43 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(len(generate_calls), 2)
         self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
         self.assertTrue(result.state.archive_ids)
+
+    def test_runtime_rejects_hybrids_that_fail_the_combine_gate(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = RejectingHybridFixtureProvider(
+                root / "artifacts" / "provider_invocations"
+            )
+            runtime = SearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    seed_target=4,
+                    stress_test_limit=2,
+                    deepen_limit=2,
+                    mutate_limit=1,
+                    combine_limit=1,
+                    frontier_limit=4,
+                    rejected_limit=2,
+                    max_learning_notes=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Design the best retention strategy for a workflow-heavy product.",
+                budget=9,
+                run_id="run-search-hybrid-gate",
+            )
+
+        combine_calls = [call for call in provider.calls if call["action_name"] == "combine"]
+        combine_nodes = [
+            node for node in result.state.nodes.values() if node.action_type is ActionType.COMBINE
+        ]
+
+        self.assertEqual(len(combine_calls), 1)
+        self.assertEqual(combine_nodes, [])
+        self.assertTrue(result.final_recommendation.best_bet_node_id in result.state.archive_ids)
 
     def test_runtime_revisits_archive_parents_when_stage_budget_exceeds_frontier(self) -> None:
         with TemporaryDirectory() as directory:

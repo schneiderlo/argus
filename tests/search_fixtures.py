@@ -32,7 +32,13 @@ from argus.models import (
     TriageReport,
 )
 from argus.providers import ProviderArtifacts, ProviderResponse
-from argus.search.contracts import CandidateBatch, LearningCompression, ProblemFrame
+from argus.search.contracts import (
+    CandidateBatch,
+    HybridCandidateBatch,
+    HybridCandidateDecision,
+    LearningCompression,
+    ProblemFrame,
+)
 from argus.search.research_contracts import FinalDecisionPackage, ProposalSeedBatch, SearchSpacePlan
 
 
@@ -1132,20 +1138,39 @@ class SearchFixtureProvider:
         self,
         _: ProblemSpec,
         input_payload: dict[str, object],
-    ) -> CandidateBatch:
-        return CandidateBatch(
-            candidates=[
-                Candidate(
-                    thesis="Workflow-native decision archive paired with peer benchmarks",
-                    mechanism=(
-                        "Use the archived workflow data as the base product, then layer in trusted peer benchmarks only once enough internal value is proven."
+    ) -> HybridCandidateBatch:
+        return HybridCandidateBatch(
+            decisions=[
+                HybridCandidateDecision(
+                    hybrid_name="Workflow-native archive with delayed peer benchmark layer",
+                    seam_hypothesis=(
+                        "The private workflow archive repairs the trust and cold-start weaknesses of the benchmark concept, "
+                        "so the benchmark layer only activates after the archive already compounds value."
                     ),
-                    assumptions=["Teams will share benchmark data once the private archive already delivers clear value."],
-                    strengths=["Combines durable artifacts with network-style upside."],
-                    failure_modes=["Could still become operationally heavy."],
-                    unknowns=["What level of trust is required before benchmark sharing works?"], 
-                    implementation_shape="Private archive first, benchmark layer second.",
-                    evidence=["Hybridizing the strongest moat with the boldest upside can preserve both if sequencing is disciplined."],
+                    repaired_failure_mode="Peer benchmarks fail when trust and proprietary-data value are not established first.",
+                    complementary_strengths=[
+                        "Workflow archive provides durable internal value and auditable artifacts.",
+                        "Benchmarks add upside only after the product already owns the core ritual.",
+                    ],
+                    complexity_tax=(
+                        "The product still has to sequence two modes and delay the benchmark layer until enough private value exists."
+                    ),
+                    expected_upside="Preserves the strongest moat while keeping a credible path to higher upside later.",
+                    open_questions=["What trust threshold is high enough before any benchmark sharing turns on?"],
+                    verdict=HybridVerdict.PURSUE,
+                    summary="Pursue the hybrid because sequencing repairs the benchmark idea's weakest dependency without bloating the initial product.",
+                    candidate=Candidate(
+                        thesis="Workflow-native decision archive paired with peer benchmarks",
+                        mechanism=(
+                            "Use the archived workflow data as the base product, then layer in trusted peer benchmarks only once enough internal value is proven."
+                        ),
+                        assumptions=["Teams will share benchmark data once the private archive already delivers clear value."],
+                        strengths=["Combines durable artifacts with network-style upside."],
+                        failure_modes=["Could still become operationally heavy."],
+                        unknowns=["What level of trust is required before benchmark sharing works?"],
+                        implementation_shape="Private archive first, benchmark layer second.",
+                        evidence=["Hybridizing the strongest moat with the boldest upside can preserve both if sequencing is disciplined."],
+                    ),
                 )
             ],
             batch_summary="Combined the most credible moat with the highest-upside extension.",

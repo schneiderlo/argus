@@ -21,7 +21,7 @@ from argus.providers import (
     ProviderInvocationError,
     StructuredOutputSchema,
 )
-from argus.search.contracts import problem_frame_schema
+from argus.search.contracts import hybrid_candidate_batch_schema, problem_frame_schema
 from argus.search.research_contracts import final_decision_package_schema, search_space_plan_schema
 
 
@@ -608,12 +608,31 @@ class CodexProviderTests(unittest.TestCase):
     def test_run_action_materializes_action_specific_refinement_prompts(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(
-                outcome=CompletedRunnerResult(
-                    returncode=0,
-                    stdout='{"event":"completed"}\n',
-                    stderr="",
-                    last_message=json.dumps(_candidate_payload()),
-                )
+                outcome=[
+                    CompletedRunnerResult(
+                        returncode=0,
+                        stdout='{"event":"completed"}\n',
+                        stderr="",
+                        last_message=json.dumps(_candidate_payload()),
+                    ),
+                    CompletedRunnerResult(
+                        returncode=0,
+                        stdout='{"event":"completed"}\n',
+                        stderr="",
+                        last_message=json.dumps(
+                            {
+                                "candidates": [_candidate_payload()],
+                                "batch_summary": "Mutated the candidate without changing the core mechanism.",
+                            }
+                        ),
+                    ),
+                    CompletedRunnerResult(
+                        returncode=0,
+                        stdout='{"event":"completed"}\n',
+                        stderr="",
+                        last_message=json.dumps(_hybrid_candidate_batch_payload()),
+                    ),
+                ]
             )
             provider = CodexProvider(
                 artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
@@ -664,19 +683,7 @@ class CodexProviderTests(unittest.TestCase):
                         "goal": "Fuse compatible strengths only if the combined direction remains coherent and distinct."
                     },
                 },
-                output_schema=StructuredOutputSchema(
-                    name="candidate_batch",
-                    json_schema={
-                        "type": "object",
-                        "required": ["candidates", "batch_summary"],
-                        "properties": {
-                            "candidates": {"type": "array", "items": _candidate_schema().json_schema},
-                            "batch_summary": {"type": "string"},
-                        },
-                        "additionalProperties": False,
-                    },
-                    validator=lambda payload: payload,
-                ),
+                output_schema=hybrid_candidate_batch_schema(),
             )
             deepen_prompt = deepen_response.artifacts.prompt_path.read_text(encoding="utf-8")
             mutate_prompt = mutate_response.artifacts.prompt_path.read_text(encoding="utf-8")
@@ -685,8 +692,8 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("Deepening goal: Increase specificity and execution readiness", deepen_prompt)
         self.assertIn("Role: mutation worker for Argus.", mutate_prompt)
         self.assertIn("Mutation goal: Address the sharpest weakness", mutate_prompt)
-        self.assertIn("Role: combination worker for Argus.", combine_prompt)
-        self.assertIn("Combination rule: keep only the compatible strengths.", combine_prompt)
+        self.assertIn("Role: hybrid synthesis worker for Argus adaptive search.", combine_prompt)
+        self.assertIn("Gate rule: every hybrid decision must explicitly name the repaired_failure_mode", combine_prompt)
 
     def test_run_action_materializes_action_specific_learning_compression_prompt(self) -> None:
         with TemporaryDirectory() as directory:
@@ -1276,6 +1283,33 @@ def _candidate_payload() -> dict[str, object]:
         "unknowns": ["How much configuration the target segment will accept."],
         "implementation_shape": "Persist the workflow state and score outcomes explicitly.",
         "evidence": ["Argus should favor evaluator-first, replayable systems."],
+    }
+
+
+def _hybrid_candidate_batch_payload() -> dict[str, object]:
+    return {
+        "decisions": [
+            {
+                "hybrid_name": "Workflow archive with delayed benchmark layer",
+                "seam_hypothesis": (
+                    "The workflow archive establishes trust and recurring value before the benchmark layer turns on."
+                ),
+                "repaired_failure_mode": "The benchmark idea fails when trust and proprietary value are too weak at launch.",
+                "complementary_strengths": [
+                    "Archive path creates durable internal value.",
+                    "Benchmark path creates upside after trust exists.",
+                ],
+                "complexity_tax": "Requires sequencing two modes and deferring the benchmark layer.",
+                "expected_upside": "Preserves the moat while keeping a credible expansion path.",
+                "open_questions": [
+                    "What trust threshold is high enough before any benchmark sharing turns on?"
+                ],
+                "verdict": "pursue",
+                "summary": "Pursue the hybrid because sequencing repairs the core weakness without bloating the initial product.",
+                "candidate": _candidate_payload(),
+            }
+        ],
+        "batch_summary": "Evaluated one hybrid seam and approved the strongest version.",
     }
 
 

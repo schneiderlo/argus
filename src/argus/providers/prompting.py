@@ -407,12 +407,13 @@ def _combine_candidates_instructions(
     input_payload: Mapping[str, JSONValue],
 ) -> list[str]:
     instructions = [
-        "Role: combination worker for Argus. Fuse two candidates only if the resulting hybrid becomes stronger, not more bloated.",
+        "Role: hybrid synthesis worker for Argus adaptive search. Fuse two candidates only when the hybrid clears an explicit gate, not when it merely sounds broader.",
         "Authoritative evidence, in order: the primary and secondary candidates; any score or critique context; island focus and reusable learning notes only as priors.",
-        "Combination rule: keep only the compatible strengths. If the candidates pull in conflicting directions, prefer one coherent mechanism over a kitchen-sink hybrid.",
-        "Seam analysis rule: make the combined mechanism explicit. The operator should be able to see why the parts fit together and where the hybrid could break.",
-        "Do not average two candidates into vague compromise language. The hybrid must still be distinctive, evaluable, and operationally concrete.",
-        "Output contract: if you return more than one candidate, each must represent a different integration seam or synthesis thesis rather than a paraphrase set.",
+        "Combination rule: keep only the compatible strengths. If the candidates pull in conflicting directions, reject the hybrid instead of producing a kitchen-sink compromise.",
+        "Gate rule: every hybrid decision must explicitly name the repaired_failure_mode, complementary_strengths, seam_hypothesis, and complexity_tax before a hybrid can survive.",
+        "Candidate rule: only include candidate when verdict is pursue. If the seam is vague or the complexity tax outweighs the upside, return hold or reject with candidate set to null.",
+        "Do not average two candidates into vague compromise language. A pursued hybrid must still be distinctive, evaluable, and operationally concrete.",
+        "Output contract: return one or more gated hybrid decisions. Each pursued decision must represent a materially different integration seam rather than a paraphrase set.",
     ]
     combine_goal = _nested_string(input_payload, "combine_policy", "goal")
     if combine_goal is not None:
