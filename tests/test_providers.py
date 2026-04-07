@@ -921,7 +921,9 @@ class CodexProviderTests(unittest.TestCase):
 
 
 class GeminiProviderTests(unittest.TestCase):
-    def test_run_action_uses_headless_json_mode_and_unwraps_response_text(self) -> None:
+    def test_run_action_uses_headless_json_mode_with_stdin_prompt_and_unwraps_response_text(
+        self,
+    ) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(
                 outcome=CompletedRunnerResult(
@@ -960,12 +962,15 @@ class GeminiProviderTests(unittest.TestCase):
             command = runner.calls[0]["command"]
             self.assertEqual(command[0], "gemini")
             self.assertIn("--prompt", command)
+            self.assertEqual(command[command.index("--prompt") + 1], "")
             self.assertIn("--output-format", command)
             self.assertIn("json", command)
             self.assertNotIn("--approval-mode", command)
             self.assertIn("--model", command)
             self.assertIn("gemini-2.5-pro", command)
             self.assertEqual(runner.calls[0]["cwd"], response.artifacts.sandbox_dir)
+            self.assertEqual(runner.calls[0]["input"], prompt_text)
+            self.assertNotIn(prompt_text, command)
             self.assertEqual(last_message_text, json.dumps(_candidate_payload()))
 
     def test_run_action_unwraps_markdown_fenced_response_text(self) -> None:

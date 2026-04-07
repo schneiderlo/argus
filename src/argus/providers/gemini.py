@@ -32,7 +32,7 @@ class GeminiProvider(CliProviderBase):
         command = [
             self.binary,
             "--prompt",
-            prompt_text,
+            "",
             "--output-format",
             "json",
         ]
@@ -52,6 +52,7 @@ class GeminiProvider(CliProviderBase):
         return {
             "cwd": artifacts.sandbox_dir,
             "env": env,
+            "input": prompt_text,
         }
 
     def _extract_response_text(
