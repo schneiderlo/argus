@@ -187,7 +187,7 @@ class SearchCell:
         return cls(
             cell_id=data["cell_id"],
             label=data["label"],
-            axis_assignments=dict(data["axis_assignments"]),
+            axis_assignments=_normalize_axis_assignments(data["axis_assignments"], "axis_assignments"),
             hypothesis=data["hypothesis"],
             coverage_status=data["coverage_status"],
             uncertainty=data["uncertainty"],
@@ -807,7 +807,7 @@ class ComparisonMatrixRow:
         )
         return cls(
             proposal_id=data["proposal_id"],
-            criterion_scores=dict(data["criterion_scores"]),
+            criterion_scores=_normalize_criterion_scores(data["criterion_scores"], "criterion_scores"),
             advantages=data["advantages"],
             liabilities=data["liabilities"],
             takeaway=data["takeaway"],
@@ -1331,13 +1331,14 @@ class ResearchArtifactBundle:
         cell_ids = set()
         if ledger is not None:
             cell_ids = {cell.cell_id for cell in ledger.cells}
-            for cell in ledger.cells:
-                unknown_incumbents = sorted(set(cell.incumbent_proposal_ids) - proposal_ids)
-                if unknown_incumbents:
-                    raise ArgusValidationError(
-                        "coverage_ledger cells reference unknown proposal ids: "
-                        f"{', '.join(unknown_incumbents)}."
-                    )
+            if proposal_ids:
+                for cell in ledger.cells:
+                    unknown_incumbents = sorted(set(cell.incumbent_proposal_ids) - proposal_ids)
+                    if unknown_incumbents:
+                        raise ArgusValidationError(
+                            "coverage_ledger cells reference unknown proposal ids: "
+                            f"{', '.join(unknown_incumbents)}."
+                        )
 
         for brief in self.proposal_briefs:
             if cell_ids and brief.cell_id not in cell_ids:
@@ -1540,6 +1541,31 @@ def _normalize_string_mapping(value: object, field_name: str) -> dict[str, str]:
     return normalized
 
 
+def _normalize_axis_assignments(value: object, field_name: str) -> dict[str, str]:
+    if isinstance(value, dict):
+        return _normalize_string_mapping(value, field_name)
+
+    sequence = _normalize_sequence(value, field_name)
+    normalized: dict[str, str] = {}
+    for index, item in enumerate(sequence):
+        assignment = _validate_payload_keys(
+            item,
+            field_name=f"{field_name}[{index}]",
+            required={"axis_id", "choice"},
+        )
+        axis_id = _normalize_non_empty_string(
+            assignment["axis_id"],
+            f"{field_name}[{index}].axis_id",
+        )
+        if axis_id in normalized:
+            raise ArgusValidationError(f"{field_name} contains duplicate axis_id values: {axis_id}.")
+        normalized[axis_id] = _normalize_non_empty_string(
+            assignment["choice"],
+            f"{field_name}[{index}].choice",
+        )
+    return normalized
+
+
 def _normalize_float_mapping(value: object, field_name: str) -> dict[str, float]:
     mapping = _normalize_mapping(value, field_name)
     normalized: dict[str, float] = {}
@@ -1547,6 +1573,33 @@ def _normalize_float_mapping(value: object, field_name: str) -> dict[str, float]
         normalized[_normalize_non_empty_string(key, f"{field_name}.key")] = _normalize_float(
             item,
             f"{field_name}.{key}",
+        )
+    return normalized
+
+
+def _normalize_criterion_scores(value: object, field_name: str) -> dict[str, float]:
+    if isinstance(value, dict):
+        return _normalize_float_mapping(value, field_name)
+
+    sequence = _normalize_sequence(value, field_name)
+    normalized: dict[str, float] = {}
+    for index, item in enumerate(sequence):
+        score_entry = _validate_payload_keys(
+            item,
+            field_name=f"{field_name}[{index}]",
+            required={"criterion_id", "score"},
+        )
+        criterion_id = _normalize_non_empty_string(
+            score_entry["criterion_id"],
+            f"{field_name}[{index}].criterion_id",
+        )
+        if criterion_id in normalized:
+            raise ArgusValidationError(
+                f"{field_name} contains duplicate criterion_id values: {criterion_id}."
+            )
+        normalized[criterion_id] = _normalize_float(
+            score_entry["score"],
+            f"{field_name}[{index}].score",
         )
     return normalized
 

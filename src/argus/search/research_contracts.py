@@ -331,7 +331,7 @@ def _search_space_frame_schema() -> dict[str, JSONValue]:
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["axis_id", "label", "description", "options"],
+                    "required": ["axis_id", "label", "description", "options", "rationale"],
                     "properties": {
                         "axis_id": {"type": "string", "minLength": 1},
                         "label": {"type": "string", "minLength": 1},
@@ -378,6 +378,30 @@ def _coverage_ledger_schema() -> dict[str, JSONValue]:
     }
 
 
+def _axis_assignment_entry_schema() -> dict[str, JSONValue]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["axis_id", "choice"],
+        "properties": {
+            "axis_id": {"type": "string", "minLength": 1},
+            "choice": {"type": "string", "minLength": 1},
+        },
+    }
+
+
+def _criterion_score_entry_schema() -> dict[str, JSONValue]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["criterion_id", "score"],
+        "properties": {
+            "criterion_id": {"type": "string", "minLength": 1},
+            "score": {"type": "number"},
+        },
+    }
+
+
 def _search_cell_schema() -> dict[str, JSONValue]:
     return {
         "type": "object",
@@ -398,8 +422,9 @@ def _search_cell_schema() -> dict[str, JSONValue]:
             "cell_id": {"type": "string", "minLength": 1},
             "label": {"type": "string", "minLength": 1},
             "axis_assignments": {
-                "type": "object",
-                "additionalProperties": {"type": "string", "minLength": 1},
+                "type": "array",
+                "minItems": 1,
+                "items": _axis_assignment_entry_schema(),
             },
             "hypothesis": {"type": "string", "minLength": 1},
             "coverage_status": {
@@ -474,7 +499,13 @@ def _triage_report_schema() -> dict[str, JSONValue]:
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["proposal_id", "disposition", "rationale"],
+                    "required": [
+                        "proposal_id",
+                        "disposition",
+                        "rationale",
+                        "merged_into_proposal_id",
+                        "follow_up",
+                    ],
                     "properties": {
                         "proposal_id": {"type": "string", "minLength": 1},
                         "disposition": {
@@ -583,10 +614,7 @@ def _comparison_matrix_schema() -> dict[str, JSONValue]:
                     ],
                     "properties": {
                         "proposal_id": {"type": "string", "minLength": 1},
-                        "criterion_scores": {
-                            "type": "object",
-                            "additionalProperties": {"type": "number"},
-                        },
+                        "criterion_scores": {"type": "array", "minItems": 1, "items": _criterion_score_entry_schema()},
                         "advantages": _string_array_schema(),
                         "liabilities": _string_array_schema(),
                         "takeaway": {"type": "string", "minLength": 1},
@@ -643,6 +671,9 @@ def _final_decision_doc_schema() -> dict[str, JSONValue]:
             "decision_id",
             "frame_id",
             "selected_proposal_id",
+            "runner_up_proposal_id",
+            "conservative_proposal_id",
+            "high_upside_proposal_id",
             "summary",
             "decision_rule",
             "assumptions",
@@ -686,6 +717,7 @@ def _candidate_schema() -> dict[str, JSONValue]:
             "strengths",
             "failure_modes",
             "unknowns",
+            "implementation_shape",
             "evidence",
         ],
         "properties": {

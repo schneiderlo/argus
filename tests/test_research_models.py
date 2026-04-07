@@ -26,6 +26,7 @@ from argus.models import (
     SearchSpaceFrame,
     TriageReport,
 )
+from argus.search.research_contracts import SearchSpacePlan
 
 
 class ResearchModelTests(unittest.TestCase):
@@ -270,6 +271,82 @@ class ResearchModelTests(unittest.TestCase):
         self.assertEqual(payload["final_decision_doc"]["selected_proposal_id"], "proposal-b")
         self.assertIn("decision_summary_markdown", payload)
         self.assertIn("decision_report_markdown", payload)
+
+    def test_search_cell_from_dict_accepts_structured_axis_assignment_entries(self) -> None:
+        cell = SearchCell.from_dict(
+            {
+                "cell_id": "cell-explicit-deep",
+                "label": "Explicit + deep authoring",
+                "axis_assignments": [
+                    {"axis_id": "authoring", "choice": "decision dossier"},
+                    {"axis_id": "coverage", "choice": "explicit ledger"},
+                ],
+                "hypothesis": "Higher authoring cost, but materially stronger final decisions.",
+                "coverage_status": "redteamed",
+                "uncertainty": 0.25,
+                "hard_gate_risk": 0.2,
+                "evidence_strength": 0.8,
+                "incumbent_proposal_ids": ["proposal-b"],
+                "notes": [],
+            }
+        )
+
+        self.assertEqual(
+            cell.axis_assignments,
+            {
+                "authoring": "decision dossier",
+                "coverage": "explicit ledger",
+            },
+        )
+        self.assertEqual(
+            cell.to_dict()["axis_assignments"],
+            {
+                "authoring": "decision dossier",
+                "coverage": "explicit ledger",
+            },
+        )
+
+    def test_search_space_plan_allows_incumbent_ids_before_proposal_briefs_exist(self) -> None:
+        plan = SearchSpacePlan(
+            search_space_frame=SearchSpaceFrame(
+                frame_id="frame-002",
+                problem_statement="Choose the next runtime mode.",
+                target_decision="Select one runtime.",
+                hard_gates=["Stay deterministic."],
+                soft_criteria=["Decision quality"],
+                baseline_options=["Adaptive runtime"],
+                axes=[
+                    SearchAxis(
+                        axis_id="coverage",
+                        label="Coverage",
+                        description="Coverage planning mode.",
+                        options=["implicit frontier", "explicit ledger"],
+                    )
+                ],
+                coverage_plan=["Seed the most important family."],
+            ),
+            coverage_ledger=CoverageLedger(
+                ledger_id="ledger-002",
+                frame_id="frame-002",
+                cells=[
+                    SearchCell(
+                        cell_id="cell-explicit",
+                        label="Explicit ledger",
+                        axis_assignments={"coverage": "explicit ledger"},
+                        hypothesis="Worth seeding first.",
+                        incumbent_proposal_ids=["proposal-ledger"],
+                    )
+                ],
+                coverage_summary="The explicit-ledger cell is the main candidate.",
+                next_questions=["Can it stay inside the latency budget?"],
+                updated_at=datetime(2026, 3, 8, 18, 30, 0, tzinfo=timezone.utc),
+            ),
+        )
+
+        self.assertEqual(
+            plan.coverage_ledger.cells[0].incumbent_proposal_ids,
+            ["proposal-ledger"],
+        )
 
     def test_bundle_rejects_cells_that_do_not_match_frame_axis_options(self) -> None:
         frame = SearchSpaceFrame(

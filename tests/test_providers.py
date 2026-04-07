@@ -22,7 +22,15 @@ from argus.providers import (
     StructuredOutputSchema,
 )
 from argus.search.contracts import hybrid_candidate_batch_schema, problem_frame_schema
-from argus.search.research_contracts import final_decision_package_schema, search_space_plan_schema
+from argus.search.research_contracts import (
+    adversarial_review_schema,
+    deep_dive_doc_schema,
+    final_decision_package_schema,
+    hybrid_assessment_schema,
+    proposal_seed_batch_schema,
+    search_space_plan_schema,
+    triage_report_schema,
+)
 
 
 class CodexProviderTests(unittest.TestCase):
@@ -43,6 +51,41 @@ class CodexProviderTests(unittest.TestCase):
                 "required": [],
             },
         )
+
+    def test_search_space_plan_schema_uses_structured_axis_assignment_entries(self) -> None:
+        schema = search_space_plan_schema().json_schema
+        axis_assignments = (
+            schema["properties"]["coverage_ledger"]["properties"]["cells"]["items"]["properties"]["axis_assignments"]
+        )
+        self.assertEqual(axis_assignments["type"], "array")
+        self.assertEqual(axis_assignments["minItems"], 1)
+        self.assertEqual(
+            axis_assignments["items"],
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["axis_id", "choice"],
+                "properties": {
+                    "axis_id": {"type": "string", "minLength": 1},
+                    "choice": {"type": "string", "minLength": 1},
+                },
+            },
+        )
+
+    def test_research_structured_output_schemas_require_every_object_property(self) -> None:
+        schemas = {
+            "search_space_plan": search_space_plan_schema().json_schema,
+            "proposal_seed_batch": proposal_seed_batch_schema().json_schema,
+            "triage_report": triage_report_schema().json_schema,
+            "deep_dive_doc": deep_dive_doc_schema().json_schema,
+            "adversarial_review": adversarial_review_schema().json_schema,
+            "hybrid_assessment": hybrid_assessment_schema().json_schema,
+            "final_decision_package": final_decision_package_schema().json_schema,
+        }
+
+        for name, schema in schemas.items():
+            with self.subTest(schema=name):
+                self._assert_all_object_properties_are_required(schema, path=name)
 
     def test_run_action_materializes_prompt_and_validates_structured_output(self) -> None:
         with TemporaryDirectory() as directory:
@@ -101,6 +144,21 @@ class CodexProviderTests(unittest.TestCase):
             self.assertIn("--skip-git-repo-check", command)
             self.assertIn("--output-schema", command)
             self.assertIn("-o", command)
+
+    def _assert_all_object_properties_are_required(self, schema: object, path: str) -> None:
+        if isinstance(schema, dict):
+            if schema.get("type") == "object" and "properties" in schema:
+                self.assertEqual(
+                    sorted(schema.get("required", [])),
+                    sorted(schema["properties"]),
+                    msg=f"{path} has properties missing from required",
+                )
+            for key, value in schema.items():
+                self._assert_all_object_properties_are_required(value, f"{path}.{key}")
+            return
+        if isinstance(schema, list):
+            for index, value in enumerate(schema):
+                self._assert_all_object_properties_are_required(value, f"{path}[{index}]")
 
     def test_run_action_passes_reasoning_effort_override_to_codex(self) -> None:
         with TemporaryDirectory() as directory:
@@ -1475,6 +1533,7 @@ def _search_space_plan_payload() -> dict[str, object]:
                     "label": "Coverage",
                     "description": "Coverage planning mode.",
                     "options": ["implicit frontier", "explicit ledger"],
+                    "rationale": None,
                 }
             ],
             "coverage_plan": ["Seed each material family once."],
@@ -1487,7 +1546,7 @@ def _search_space_plan_payload() -> dict[str, object]:
                 {
                     "cell_id": "cell-ledger",
                     "label": "Explicit ledger",
-                    "axis_assignments": {"coverage": "explicit ledger"},
+                    "axis_assignments": [{"axis_id": "coverage", "choice": "explicit ledger"}],
                     "hypothesis": "Higher authoring cost for stronger decisions.",
                     "coverage_status": "unexplored",
                     "uncertainty": 0.55,
@@ -1513,10 +1572,10 @@ def _final_decision_package_payload() -> dict[str, object]:
             "rows": [
                 {
                     "proposal_id": "proposal-ledger",
-                    "criterion_scores": {
-                        "decision_quality": 0.9,
-                        "latency": 0.58,
-                    },
+                    "criterion_scores": [
+                        {"criterion_id": "decision_quality", "score": 0.9},
+                        {"criterion_id": "latency", "score": 0.58},
+                    ],
                     "advantages": ["Best decision package."],
                     "liabilities": ["More authoring work."],
                     "takeaway": "Best default if latency stays bounded.",
@@ -1528,6 +1587,9 @@ def _final_decision_package_payload() -> dict[str, object]:
             "decision_id": "decision-001",
             "frame_id": "frame-001",
             "selected_proposal_id": "proposal-ledger",
+            "runner_up_proposal_id": None,
+            "conservative_proposal_id": None,
+            "high_upside_proposal_id": None,
             "summary": "Ship the coverage-led runtime.",
             "decision_rule": "Prefer the option that most improves decision quality without breaking determinism.",
             "assumptions": ["Artifact persistence stays inspectable."],
