@@ -333,7 +333,7 @@ def search_policy_for_cost_profile(
             rejected_limit=5,
             max_learning_notes=6,
             reusable_learning_limit=6,
-            provider_max_concurrency=4,
+            provider_max_concurrency=8,
             compression_interval=6,
             island_policies=_island_policies_for_search_profile(resolved_search_profile),
         )

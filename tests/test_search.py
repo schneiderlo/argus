@@ -306,7 +306,7 @@ class SearchRuntimeTests(unittest.TestCase):
         self.assertEqual(max_profile.stress_test_limit, 6)
         self.assertEqual(max_profile.combine_limit, 2)
         self.assertEqual(max_profile.frontier_limit, 8)
-        self.assertEqual(max_profile.provider_max_concurrency, 4)
+        self.assertEqual(max_profile.provider_max_concurrency, 8)
         self.assertEqual(
             [policy.island_id for policy in max_profile.island_policies],
             ["balanced", "conservative", "upside"],

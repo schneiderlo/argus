@@ -1523,7 +1523,7 @@ class CliTests(unittest.TestCase):
         self.assertIsInstance(policy, SearchPolicy)
         self.assertEqual(policy.seed_target, 12)
         self.assertEqual(policy.combine_limit, 2)
-        self.assertEqual(policy.provider_max_concurrency, 4)
+        self.assertEqual(policy.provider_max_concurrency, 8)
         self.assertIsNone(captured["runtime_modes"])
 
     def test_benchmark_command_accepts_runtime_mode_subset(self) -> None:
