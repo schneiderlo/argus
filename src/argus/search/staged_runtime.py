@@ -13,7 +13,6 @@ from argus.models import (
 from argus.models.research import CoverageStatus
 from argus.search.research_contracts import (
     deep_dive_doc_schema,
-    final_decision_package_schema,
     proposal_seed_batch_schema,
     search_space_plan_schema,
     triage_report_schema,
@@ -25,7 +24,6 @@ from argus.search.research_runtime import (
     _derive_research_learning_notes,
     _frame_candidate_from_search_space,
     _render_research_bundle_markdown,
-    _validate_final_package,
     _validate_search_space_plan,
     _validate_seed_batch,
     _validate_triage_report,
@@ -311,20 +309,15 @@ class StagedResearchRuntime(ResearchRuntime):
                 self._persist_research_snapshot(manifest.run_id, session, bundle=bundle)
 
             current_action = ActionType.WRITE_FINAL_DECISION.value
-            final_response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.WRITE_FINAL_DECISION,
+            final_package = self._author_final_decision_package(
+                routing_tracker=routing_tracker,
                 problem_spec=session.problem_spec,
-                input_payload=self._final_decision_payload(
-                    frame=plan.search_space_frame,
-                    bundle=bundle,
-                    proposal_records=proposal_records,
-                    reusable_learning_notes=session.reusable_learning_notes,
-                ),
-                output_schema=final_decision_package_schema(),
+                frame=plan.search_space_frame,
+                bundle=bundle,
+                proposal_records=proposal_records,
+                reusable_learning_notes=session.reusable_learning_notes,
             )
             session.consume_budget()
-            final_package = _validate_final_package(final_response.payload)
             bundle = replace(
                 bundle,
                 comparison_matrices=[final_package.comparison_matrix],

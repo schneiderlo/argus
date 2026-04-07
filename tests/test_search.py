@@ -180,6 +180,40 @@ class RejectingHybridFixtureProvider(SearchFixtureProvider):
         )
 
 
+class RepairingFinalDecisionFixtureProvider(SearchFixtureProvider):
+    def _handle_write_final_decision(
+        self,
+        problem_spec: ProblemSpec,
+        input_payload: dict[str, object],
+    ):
+        if "schema_repair_feedback" in input_payload:
+            return super()._handle_write_final_decision(problem_spec, input_payload)
+        invalid_payload = super()._handle_write_final_decision(problem_spec, input_payload).to_dict()
+        invalid_payload["comparison_matrix"]["rows"] = [
+            row
+            for row in invalid_payload["comparison_matrix"]["rows"]
+            if row["proposal_id"] != "proposal-control"
+        ]
+        return invalid_payload
+
+
+class UnknownProposalIdFinalDecisionFixtureProvider(SearchFixtureProvider):
+    def _handle_write_final_decision(
+        self,
+        problem_spec: ProblemSpec,
+        input_payload: dict[str, object],
+    ):
+        if "schema_repair_feedback" in input_payload:
+            return super()._handle_write_final_decision(problem_spec, input_payload)
+        invalid_payload = super()._handle_write_final_decision(problem_spec, input_payload).to_dict()
+        for row in invalid_payload["comparison_matrix"]["rows"]:
+            if row["proposal_id"] == "proposal-ledger":
+                row["proposal_id"] = "coverage-led-runtime"
+        invalid_payload["final_decision_doc"]["selected_proposal_id"] = "coverage-led-runtime"
+        invalid_payload["final_decision_doc"]["high_upside_proposal_id"] = "coverage-led-runtime"
+        return invalid_payload
+
+
 class SearchRuntimeTests(unittest.TestCase):
     def test_hybrid_candidate_decision_requires_candidate_only_for_pursued_hybrids(self) -> None:
         with self.assertRaises(ArgusValidationError):
@@ -682,6 +716,91 @@ class SearchRuntimeTests(unittest.TestCase):
                     survivor_ids=triage_report.survivor_ids,
                     bundle=SimpleNamespace(deep_dive_docs=[]),
                 ),
+            )
+
+    def test_research_runtime_repairs_final_decision_schema_mismatch(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = RepairingFinalDecisionFixtureProvider(
+                root / "artifacts" / "provider_invocations"
+            )
+            runtime = ResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Choose the default research runtime to ship next.",
+                budget=7,
+                run_id="run-research-final-decision-repair",
+            )
+            loaded = store.load_run("run-research-final-decision-repair")
+            decision_calls = [
+                call for call in provider.calls if call["action_name"] == "write_final_decision"
+            ]
+
+            self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+            self.assertEqual(len(decision_calls), 2)
+            self.assertNotIn("schema_repair_feedback", decision_calls[0]["input_payload"])
+            repair_feedback = decision_calls[1]["input_payload"]["schema_repair_feedback"]
+            self.assertEqual(
+                repair_feedback["missing_comparison_matrix_proposal_ids"],
+                ["proposal-control"],
+            )
+            self.assertIn(
+                "proposal-control",
+                [row.proposal_id for row in loaded.research_bundle.comparison_matrices[0].rows],
+            )
+            self.assertEqual(
+                loaded.research_bundle.final_decision_doc.runner_up_proposal_id,
+                "proposal-control",
+            )
+
+    def test_research_runtime_repairs_unknown_final_decision_proposal_ids(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = UnknownProposalIdFinalDecisionFixtureProvider(
+                root / "artifacts" / "provider_invocations"
+            )
+            runtime = ResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Choose the default research runtime to ship next.",
+                budget=7,
+                run_id="run-research-final-decision-unknown-id-repair",
+            )
+            loaded = store.load_run("run-research-final-decision-unknown-id-repair")
+            decision_calls = [
+                call for call in provider.calls if call["action_name"] == "write_final_decision"
+            ]
+
+            self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+            self.assertEqual(len(decision_calls), 2)
+            repair_feedback = decision_calls[1]["input_payload"]["schema_repair_feedback"]
+            self.assertEqual(
+                repair_feedback["unknown_proposal_ids"],
+                ["coverage-led-runtime"],
+            )
+            self.assertEqual(
+                repair_feedback["available_proposal_ids"],
+                ["proposal-control", "proposal-ledger"],
+            )
+            self.assertIn(
+                "proposal-ledger",
+                [row.proposal_id for row in loaded.research_bundle.comparison_matrices[0].rows],
             )
 
     def test_staged_runtime_runs_fixed_pipeline_without_redteam_or_hybrid(self) -> None:

@@ -36,7 +36,7 @@ from argus.models import (
     SearchIsland,
     SearchState,
 )
-from argus.providers import Provider, StructuredOutputSchema
+from argus.providers import Provider, ProviderInvocationError, StructuredOutputSchema
 from argus.progress import NullProgressSink, ProgressSink, build_event
 from argus.search.contracts import (
     HybridCandidateDecision,
@@ -1771,18 +1771,188 @@ class SearchRuntime:
         output_schema,
     ):
         normalized_action = action_name.value if isinstance(action_name, ActionType) else action_name
-        response, _ = self._run_with_provider_fallback(
-            routing_tracker,
-            action_name=normalized_action,
-            attempt=lambda provider: provider.run_action(
-                action_name=action_name,
-                problem_spec=problem_spec,
-                input_payload=input_payload,
-                output_schema=output_schema,
+        failures: list[Exception] = []
+        for provider in self._providers_for_action(normalized_action):
+            if self._progress_verbose:
+                self._emit_progress(
+                    "provider_invocation",
+                    run_id=self._active_run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    payload={
+                        "action": normalized_action,
+                        "provider": provider.name,
+                    },
+                )
+            routing_tracker.record_invocation(
+                action_name=normalized_action,
+                provider_name=provider.name,
+            )
+            try:
+                response = provider.run_action(
+                    action_name=action_name,
+                    problem_spec=problem_spec,
+                    input_payload=input_payload,
+                    output_schema=output_schema,
+                )
+            except Exception as exc:
+                routing_tracker.record_provider_failure(
+                    action_name=normalized_action,
+                    provider_name=provider.name,
+                )
+                if self._progress_verbose:
+                    self._emit_progress(
+                        "provider_failed",
+                        run_id=self._active_run_id,
+                        step_count=0,
+                        budget_spent=0,
+                        payload={
+                            "action": normalized_action,
+                            "provider": provider.name,
+                        },
+                    )
+                repaired_input_payload = self._schema_repair_payload(
+                    action_name=normalized_action,
+                    input_payload=input_payload,
+                    failure=exc,
+                )
+                if repaired_input_payload is None:
+                    failures.append(exc)
+                    continue
+                if self._progress_verbose:
+                    self._emit_progress(
+                        "provider_invocation",
+                        run_id=self._active_run_id,
+                        step_count=0,
+                        budget_spent=0,
+                        payload={
+                            "action": normalized_action,
+                            "provider": provider.name,
+                            "status": "schema-repair",
+                        },
+                    )
+                routing_tracker.record_invocation(
+                    action_name=normalized_action,
+                    provider_name=provider.name,
+                )
+                try:
+                    response = provider.run_action(
+                        action_name=action_name,
+                        problem_spec=problem_spec,
+                        input_payload=repaired_input_payload,
+                        output_schema=output_schema,
+                    )
+                except Exception as repair_exc:
+                    failures.append(repair_exc)
+                    routing_tracker.record_provider_failure(
+                        action_name=normalized_action,
+                        provider_name=provider.name,
+                    )
+                    if self._progress_verbose:
+                        self._emit_progress(
+                            "provider_failed",
+                            run_id=self._active_run_id,
+                            step_count=0,
+                            budget_spent=0,
+                            payload={
+                                "action": normalized_action,
+                                "provider": provider.name,
+                                "status": "schema-repair",
+                            },
+                        )
+                    continue
+                if self._progress_verbose:
+                    self._emit_progress(
+                        "provider_invocation",
+                        run_id=self._active_run_id,
+                        step_count=0,
+                        budget_spent=0,
+                        payload={
+                            "action": normalized_action,
+                            "provider": provider.name,
+                            "status": "ok",
+                            "repair": True,
+                        },
+                    )
+                return response
+            if self._progress_verbose:
+                self._emit_progress(
+                    "provider_invocation",
+                    run_id=self._active_run_id,
+                    step_count=0,
+                    budget_spent=0,
+                    payload={
+                        "action": normalized_action,
+                        "provider": provider.name,
+                        "status": "ok",
+                    },
+                )
+            return response
+
+        if not failures:
+            raise ArgusValidationError(
+                f"No providers are available for action {normalized_action!r}."
+            )
+        raise failures[0]
+
+    def _schema_repair_payload(
+        self,
+        *,
+        action_name: str,
+        input_payload: Mapping[str, JSONValue],
+        failure: Exception,
+    ) -> dict[str, JSONValue] | None:
+        if action_name != ActionType.WRITE_FINAL_DECISION.value:
+            return None
+        if "schema_repair_feedback" in input_payload:
+            return None
+        validation_message = self._schema_validation_message(failure)
+        if validation_message is None:
+            return None
+        marker = "final_decision_doc references proposal ids missing from comparison_matrix rows:"
+        if marker not in validation_message:
+            return None
+        missing_ids = [
+            proposal_id.strip()
+            for proposal_id in validation_message.split(marker, 1)[1].split(",")
+            if proposal_id.strip()
+        ]
+        available_proposal_ids: list[str] = []
+        proposals = input_payload.get("proposals")
+        if isinstance(proposals, Sequence):
+            for proposal in proposals:
+                if not isinstance(proposal, Mapping):
+                    continue
+                proposal_id = proposal.get("proposal_id")
+                if isinstance(proposal_id, str) and proposal_id.strip():
+                    available_proposal_ids.append(proposal_id.strip())
+        repaired_payload = dict(input_payload)
+        repaired_payload["schema_repair_feedback"] = {
+            "validation_error": validation_message,
+            "missing_comparison_matrix_proposal_ids": missing_ids,
+            "available_proposal_ids": available_proposal_ids,
+            "repair_rule": (
+                "Return a fully corrected FinalDecisionPackage. Every proposal_id referenced "
+                "anywhere in final_decision_doc must appear exactly once in comparison_matrix.rows. "
+                "Add missing rows rather than leaving dangling references."
             ),
-            emit_progress=True,
-        )
-        return response
+        }
+        return repaired_payload
+
+    def _schema_validation_message(self, failure: Exception) -> str | None:
+        if isinstance(failure, ProviderInvocationError):
+            if failure.failure.error_type != "schema_validation":
+                return None
+            message = failure.failure.message
+        elif isinstance(failure, ArgusValidationError):
+            message = str(failure)
+        else:
+            return None
+        prefix = "Provider output failed schema validation:"
+        normalized_message = message.strip()
+        if normalized_message.startswith(prefix):
+            normalized_message = normalized_message[len(prefix) :].strip()
+        return normalized_message or None
 
     def _dispatch_provider_requests(
         self,

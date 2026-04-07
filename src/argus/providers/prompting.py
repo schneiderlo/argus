@@ -502,14 +502,62 @@ def _write_final_decision_instructions(
         "Role: final decision author for Argus research mode. Read the full artifact bundle and write the decision package the operator can act on.",
         "Authoritative evidence, in order: the search_space_frame; current coverage_ledger; proposal briefs; triage report; deep dives; adversarial reviews; hybrid assessments; the problem spec and reusable learning notes only as supporting context.",
         "Decision rule: choose the proposal that best satisfies the target decision under the hard gates and soft criteria. Do not default to the most eloquent or most ambitious option.",
+        "Artifact-id fidelity rule: reuse the exact proposal_id strings from the proposals payload. Do not rename, shorten, or invent friendlier ids anywhere in comparison_matrix or final_decision_doc.",
         "Comparison rule: produce a comparison_matrix whose criteria match the real decision and whose rows explain the decisive advantages and liabilities for each finalist.",
+        "Row-completeness rule: every proposal_id referenced anywhere in final_decision_doc must appear exactly once in comparison_matrix.rows.",
         "Portfolio rule: selected_proposal_id, conservative_proposal_id, and high_upside_proposal_id should differ when the evidence supports genuinely different bets. Do not force artificial differentiation if one proposal legitimately fills more than one role.",
         "Rejection rule: rejected_proposal_ids should include notable losers that still taught the system something, not every proposal that failed triage.",
         "Execution rule: first_spike, kill_criteria, next_experiments, mitigations, and reversal_conditions must be concrete enough to guide an actual implementation decision.",
         "Authoring rule: write both decision_summary_markdown and decision_report_markdown from the current artifact bundle. The summary should be concise and decision-grade; the report should read like an operator memo with explicit best-bet logic, tradeoffs, runner-up conditions, risks, and immediate next steps.",
         "Grounding rule: every claim in the markdown outputs should trace back to the supplied artifacts. Do not invent evidence, hidden research, or stakeholder preferences that are not in the bundle.",
-        "Output contract: return comparison_matrix, final_decision_doc, decision_summary_markdown, and decision_report_markdown, and keep all proposal references consistent with the supplied artifact ids.",
+        "Output contract: return comparison_matrix, final_decision_doc, decision_summary_markdown, and decision_report_markdown, keep all proposal references consistent with the supplied artifact ids, and ensure no final_decision_doc reference points to a proposal missing from comparison_matrix.rows.",
     ]
+    repair_feedback = input_payload.get("schema_repair_feedback")
+    if isinstance(repair_feedback, Mapping):
+        validation_error = repair_feedback.get("validation_error")
+        if isinstance(validation_error, str) and validation_error.strip():
+            instructions.append(
+                f"Schema repair: the previous attempt failed validation with: {validation_error.strip()}"
+            )
+        missing_ids = repair_feedback.get("missing_comparison_matrix_proposal_ids")
+        if isinstance(missing_ids, list):
+            normalized_missing_ids = [
+                proposal_id.strip()
+                for proposal_id in missing_ids
+                if isinstance(proposal_id, str) and proposal_id.strip()
+            ]
+            if normalized_missing_ids:
+                instructions.append(
+                    "Schema repair target: add comparison_matrix rows for these referenced proposal ids: "
+                    + ", ".join(normalized_missing_ids)
+                )
+        unknown_ids = repair_feedback.get("unknown_proposal_ids")
+        if isinstance(unknown_ids, list):
+            normalized_unknown_ids = [
+                proposal_id.strip()
+                for proposal_id in unknown_ids
+                if isinstance(proposal_id, str) and proposal_id.strip()
+            ]
+            if normalized_unknown_ids:
+                instructions.append(
+                    "Schema repair target: remove invented proposal ids and replace them with exact ids from the proposals payload: "
+                    + ", ".join(normalized_unknown_ids)
+                )
+        available_ids = repair_feedback.get("available_proposal_ids")
+        if isinstance(available_ids, list):
+            normalized_available_ids = [
+                proposal_id.strip()
+                for proposal_id in available_ids
+                if isinstance(proposal_id, str) and proposal_id.strip()
+            ]
+            if normalized_available_ids:
+                instructions.append(
+                    "Allowed proposal ids for this decision package: "
+                    + ", ".join(normalized_available_ids)
+                )
+        instructions.append(
+            "Repair rule: return a fully corrected FinalDecisionPackage, not a partial delta. If you still reference a proposal in final_decision_doc, that proposal_id must appear exactly once in comparison_matrix.rows."
+        )
     if _has_reusable_learning_notes(input_payload):
         instructions.append(
             "Reusable priors: use reusable_learning_notes, especially outcome-backed notes, to sharpen the decision rule and risk framing, but never let them override the current artifact evidence."

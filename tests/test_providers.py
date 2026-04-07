@@ -915,9 +915,160 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("Role: search-space framer for Argus research mode.", frame_prompt)
         self.assertIn("Ledger rule: return an initial coverage_ledger", frame_prompt)
         self.assertIn("Role: final decision author for Argus research mode.", decision_prompt)
+        self.assertIn(
+            "Artifact-id fidelity rule: reuse the exact proposal_id strings from the proposals payload.",
+            decision_prompt,
+        )
         self.assertIn("Comparison rule: produce a comparison_matrix", decision_prompt)
+        self.assertIn(
+            "Row-completeness rule: every proposal_id referenced anywhere in final_decision_doc must appear exactly once in comparison_matrix.rows.",
+            decision_prompt,
+        )
         self.assertIn("decision_summary_markdown", decision_prompt)
         self.assertIn("decision_report_markdown", decision_prompt)
+
+    def test_write_final_decision_prompt_surfaces_schema_repair_feedback(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_final_decision_package_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name="write_final_decision",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "frame_id": "frame-001",
+                    "proposals": [
+                        {
+                            "proposal_id": "proposal-ledger",
+                            "cell_id": "cell-ledger",
+                            "title": "Coverage-led runtime",
+                            "summary": "Use an explicit coverage ledger.",
+                            "candidate": _candidate_payload(),
+                            "seed_rationale": "Closes the main product gap.",
+                            "open_questions": ["Latency?"],
+                            "evidence": ["Spec-aligned."],
+                            "parent_node_ids": ["node-0002"],
+                        },
+                        {
+                            "proposal_id": "proposal-control",
+                            "cell_id": "cell-control",
+                            "title": "Adaptive control path",
+                            "summary": "Keep the lighter control path as the benchmark.",
+                            "candidate": _candidate_payload(),
+                            "seed_rationale": "Useful benchmark control.",
+                            "open_questions": ["Does it stay too lossy?"],
+                            "evidence": ["Lower migration cost."],
+                            "parent_node_ids": ["node-0003"],
+                        },
+                    ],
+                    "schema_repair_feedback": {
+                        "validation_error": (
+                            "final_decision_doc references proposal ids missing from comparison_matrix rows: "
+                            "proposal-control"
+                        ),
+                        "missing_comparison_matrix_proposal_ids": ["proposal-control"],
+                        "available_proposal_ids": ["proposal-ledger", "proposal-control"],
+                        "repair_rule": "Return a fully corrected FinalDecisionPackage.",
+                    },
+                },
+                output_schema=final_decision_package_schema(),
+            )
+
+            prompt = response.artifacts.prompt_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "Schema repair: the previous attempt failed validation with: final_decision_doc references proposal ids missing from comparison_matrix rows: proposal-control",
+            prompt,
+        )
+        self.assertIn(
+            "Schema repair target: add comparison_matrix rows for these referenced proposal ids: proposal-control",
+            prompt,
+        )
+        self.assertIn(
+            "Allowed proposal ids for this decision package: proposal-ledger, proposal-control",
+            prompt,
+        )
+        self.assertIn(
+            "Repair rule: return a fully corrected FinalDecisionPackage, not a partial delta.",
+            prompt,
+        )
+
+    def test_write_final_decision_prompt_surfaces_unknown_proposal_id_repair_feedback(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_final_decision_package_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name="write_final_decision",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "frame_id": "frame-001",
+                    "proposals": [
+                        {
+                            "proposal_id": "proposal-ledger",
+                            "cell_id": "cell-ledger",
+                            "title": "Coverage-led runtime",
+                            "summary": "Use an explicit coverage ledger.",
+                            "candidate": _candidate_payload(),
+                            "seed_rationale": "Closes the main product gap.",
+                            "open_questions": ["Latency?"],
+                            "evidence": ["Spec-aligned."],
+                            "parent_node_ids": ["node-0002"],
+                        },
+                        {
+                            "proposal_id": "proposal-control",
+                            "cell_id": "cell-control",
+                            "title": "Adaptive control path",
+                            "summary": "Keep the lighter control path as the benchmark.",
+                            "candidate": _candidate_payload(),
+                            "seed_rationale": "Useful benchmark control.",
+                            "open_questions": ["Does it stay too lossy?"],
+                            "evidence": ["Lower migration cost."],
+                            "parent_node_ids": ["node-0003"],
+                        },
+                    ],
+                    "schema_repair_feedback": {
+                        "validation_error": (
+                            "ComparisonMatrix matrix-001 references unknown proposal ids: coverage-led-runtime."
+                        ),
+                        "unknown_proposal_ids": ["coverage-led-runtime"],
+                        "available_proposal_ids": ["proposal-ledger", "proposal-control"],
+                        "repair_rule": "Reuse the exact proposal_id strings from the proposals payload.",
+                    },
+                },
+                output_schema=final_decision_package_schema(),
+            )
+
+            prompt = response.artifacts.prompt_path.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "Schema repair target: remove invented proposal ids and replace them with exact ids from the proposals payload: coverage-led-runtime",
+            prompt,
+        )
+        self.assertIn(
+            "Allowed proposal ids for this decision package: proposal-ledger, proposal-control",
+            prompt,
+        )
 
     def test_run_action_pairwise_prompt_mentions_outcome_feedback_priors(self) -> None:
         with TemporaryDirectory() as directory:

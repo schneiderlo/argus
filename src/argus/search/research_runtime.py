@@ -585,20 +585,15 @@ class ResearchRuntime(SearchRuntime):
                     "reason": "Compile the research bundle into a typed final decision package.",
                 },
             )
-            final_response = self._run_provider_action(
-                routing_tracker,
-                action_name=ActionType.WRITE_FINAL_DECISION,
+            final_package = self._author_final_decision_package(
+                routing_tracker=routing_tracker,
                 problem_spec=session.problem_spec,
-                input_payload=self._final_decision_payload(
-                    frame=plan.search_space_frame,
-                    bundle=bundle,
-                    proposal_records=proposal_records,
-                    reusable_learning_notes=session.reusable_learning_notes,
-                ),
-                output_schema=final_decision_package_schema(),
+                frame=plan.search_space_frame,
+                bundle=bundle,
+                proposal_records=proposal_records,
+                reusable_learning_notes=session.reusable_learning_notes,
             )
             session.consume_budget()
-            final_package = _validate_final_package(final_response.payload)
             bundle = replace(
                 bundle,
                 comparison_matrices=[final_package.comparison_matrix],
@@ -1283,6 +1278,140 @@ class ResearchRuntime(SearchRuntime):
                 note.to_prompt_dict() for note in reusable_learning_notes
             ]
         return payload
+
+    def _author_final_decision_package(
+        self,
+        *,
+        routing_tracker: _RoutingTracker,
+        problem_spec: ProblemSpec,
+        frame: SearchSpaceFrame,
+        bundle: ResearchArtifactBundle,
+        proposal_records: Mapping[str, _ResearchProposalRecord],
+        reusable_learning_notes: Sequence[object],
+    ) -> FinalDecisionPackage:
+        input_payload = self._final_decision_payload(
+            frame=frame,
+            bundle=bundle,
+            proposal_records=proposal_records,
+            reusable_learning_notes=reusable_learning_notes,
+        )
+        final_response = self._run_provider_action(
+            routing_tracker,
+            action_name=ActionType.WRITE_FINAL_DECISION,
+            problem_spec=problem_spec,
+            input_payload=input_payload,
+            output_schema=final_decision_package_schema(),
+        )
+        final_package = _validate_final_package(final_response.payload)
+        try:
+            self._validate_final_package_against_bundle(
+                bundle=bundle,
+                final_package=final_package,
+            )
+            return final_package
+        except ArgusValidationError as exc:
+            repaired_payload = self._final_decision_repair_payload(
+                input_payload=input_payload,
+                validation_error=exc,
+            )
+            if repaired_payload is None:
+                raise
+        repaired_response = self._run_provider_action(
+            routing_tracker,
+            action_name=ActionType.WRITE_FINAL_DECISION,
+            problem_spec=problem_spec,
+            input_payload=repaired_payload,
+            output_schema=final_decision_package_schema(),
+        )
+        repaired_package = _validate_final_package(repaired_response.payload)
+        self._validate_final_package_against_bundle(
+            bundle=bundle,
+            final_package=repaired_package,
+        )
+        return repaired_package
+
+    def _validate_final_package_against_bundle(
+        self,
+        *,
+        bundle: ResearchArtifactBundle,
+        final_package: FinalDecisionPackage,
+    ) -> None:
+        proposal_ids = {brief.proposal_id for brief in bundle.proposal_briefs}
+        unknown_matrix_ids = sorted(
+            {row.proposal_id for row in final_package.comparison_matrix.rows} - proposal_ids
+        )
+        if unknown_matrix_ids:
+            raise ArgusValidationError(
+                "ComparisonMatrix "
+                f"{final_package.comparison_matrix.matrix_id} references unknown proposal ids: "
+                + ", ".join(unknown_matrix_ids)
+                + "."
+            )
+        decision_refs = {
+            final_package.final_decision_doc.selected_proposal_id,
+            *(
+                proposal_id
+                for proposal_id in (
+                    final_package.final_decision_doc.runner_up_proposal_id,
+                    final_package.final_decision_doc.conservative_proposal_id,
+                    final_package.final_decision_doc.high_upside_proposal_id,
+                )
+                if proposal_id is not None
+            ),
+            *final_package.final_decision_doc.rejected_proposal_ids,
+        }
+        unknown_decision_ids = sorted(decision_refs - proposal_ids)
+        if unknown_decision_ids:
+            raise ArgusValidationError(
+                "FinalDecisionDoc references unknown proposal ids: "
+                + ", ".join(unknown_decision_ids)
+                + "."
+            )
+
+    def _final_decision_repair_payload(
+        self,
+        *,
+        input_payload: Mapping[str, JSONValue],
+        validation_error: ArgusValidationError,
+    ) -> dict[str, JSONValue] | None:
+        if "schema_repair_feedback" in input_payload:
+            return None
+        validation_message = str(validation_error).strip()
+        unknown_ids: list[str] = []
+        for marker in (
+            "references unknown proposal ids:",
+            "references proposal ids missing from comparison_matrix rows:",
+        ):
+            if marker not in validation_message:
+                continue
+            unknown_ids = [
+                proposal_id.strip().rstrip(".")
+                for proposal_id in validation_message.split(marker, 1)[1].split(",")
+                if proposal_id.strip().rstrip(".")
+            ]
+            break
+        if not unknown_ids:
+            return None
+        proposals = input_payload.get("proposals")
+        available_proposal_ids: list[str] = []
+        if isinstance(proposals, Sequence):
+            for proposal in proposals:
+                if not isinstance(proposal, Mapping):
+                    continue
+                proposal_id = proposal.get("proposal_id")
+                if isinstance(proposal_id, str) and proposal_id.strip():
+                    available_proposal_ids.append(proposal_id.strip())
+        repaired_payload = dict(input_payload)
+        repaired_payload["schema_repair_feedback"] = {
+            "validation_error": validation_message,
+            "unknown_proposal_ids": unknown_ids,
+            "available_proposal_ids": available_proposal_ids,
+            "repair_rule": (
+                "Return a fully corrected FinalDecisionPackage. Reuse the exact proposal_id "
+                "strings from the proposals payload and do not invent or rename ids."
+            ),
+        }
+        return repaired_payload
 
     def _proposal_admission_request(
         self,
