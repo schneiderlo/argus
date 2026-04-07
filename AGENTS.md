@@ -37,7 +37,7 @@ Read in this order:
 The target application described by the specs is a Python 3.12 project with:
 
 - a CLI entrypoint named `argus`
-- `uv` as the package manager and environment runner
+- `uv` as the package manager and environment runner, with optional Nix dev-shell support for provisioning the Python and frontend toolchain on Linux/WSL
 - typed domain models for problem specs, candidates, critique objects, score vectors, nodes, learning notes, and final recommendations
 - a local filesystem state store
 - a provider abstraction with Codex as the first-class provider
@@ -59,4 +59,4 @@ The loop is intentionally simple:
 
 The operator will tune `PROMPT.md` and `fix_plan.md` over time. Respect both files as mutable control surfaces.
 
-`./scripts/verify.sh` is expected to run through `uv` on Python 3.12. Passing verification with a dirty worktree is treated as process failure, not success.
+`./scripts/verify.sh` is expected to run through `uv` on Python 3.12. The toolchain may be supplied by the host or by the optional Nix dev shell, but the repository-facing commands remain `uv`-based. Passing verification with a dirty worktree is treated as process failure, not success.

@@ -8,6 +8,11 @@ The first implementation must use Python 3.12. The system should prefer the stan
 
 The project must use `uv` as the package manager and environment runner. The initial scaffold should therefore be compatible with commands such as `uv sync`, `uv run pytest`, and `uv run argus ...`.
 
+The repository may also provide an optional Nix dev shell to provision the
+toolchain on Linux/WSL, especially `python3.12`, `uv`, `node`, and `npm`, but
+that shell is a host-environment convenience layer only. It must not replace
+`uv` as the repository's package manager or normal command runner.
+
 ## Package Layout
 
 The target package layout should look like this once implementation begins:

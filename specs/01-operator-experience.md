@@ -31,6 +31,20 @@ The operator should not need to edit the loop runner for normal steering.
 
 The operator must also be able to feed back shipped experiment results without hand-editing stored ledgers. The repository should therefore expose a CLI workflow such as `argus feedback ...` that records typed outcome evidence against a persisted run/node and folds the derived learnings back into reusable memory.
 
+## Toolchain Experience
+
+The repo-facing workflow should stay stable whether the operator installs tools
+directly on the host or enters an optional Nix dev shell on Linux/WSL. The
+operator commands should still be the same repository commands:
+
+- `uv sync --group dev`
+- `uv run argus ...`
+- `./scripts/verify.sh`
+
+Nix may provision `python3.12`, `uv`, `node`, and `npm`, but it should not
+replace `uv` as the package manager or the main command runner inside the
+repository.
+
 ## Required Artifacts Per Iteration
 
 Each run iteration must produce a dedicated folder under `artifacts/agent_runs/` that stores:
