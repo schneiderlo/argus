@@ -171,6 +171,10 @@ class ResearchRuntime(SearchRuntime):
                 output_schema=search_space_plan_schema(),
             )
             plan = _validate_search_space_plan(plan_response.payload)
+            plan = replace(
+                plan,
+                coverage_ledger=self._normalize_initial_coverage_ledger(plan.coverage_ledger),
+            )
             current_action = "evaluate_candidate"
             root_candidate = _frame_candidate_from_search_space(plan.search_space_frame)
             root_assessment, evaluation_provider_name = self._evaluate_candidate(
@@ -1279,6 +1283,37 @@ class ResearchRuntime(SearchRuntime):
             ]
         return payload
 
+    def _normalize_initial_coverage_ledger(
+        self,
+        ledger: CoverageLedger,
+    ) -> CoverageLedger:
+        normalized_cells: list[SearchCell] = []
+        normalized = False
+        for cell in ledger.cells:
+            if cell.coverage_status is CoverageStatus.UNEXPLORED and not cell.incumbent_proposal_ids:
+                normalized_cells.append(cell)
+                continue
+            normalized = True
+            notes = list(cell.notes)
+            notes.append(
+                "Argus normalized the provider-framed ledger back to a pre-seeding state before proposal generation."
+            )
+            normalized_cells.append(
+                replace(
+                    cell,
+                    coverage_status=CoverageStatus.UNEXPLORED,
+                    incumbent_proposal_ids=[],
+                    notes=notes,
+                )
+            )
+        if not normalized:
+            return ledger
+        return replace(
+            ledger,
+            cells=normalized_cells,
+            updated_at=_utcnow(),
+        )
+
     def _author_final_decision_package(
         self,
         *,
@@ -1289,6 +1324,10 @@ class ResearchRuntime(SearchRuntime):
         proposal_records: Mapping[str, _ResearchProposalRecord],
         reusable_learning_notes: Sequence[object],
     ) -> FinalDecisionPackage:
+        if not bundle.proposal_briefs:
+            raise ArgusValidationError(
+                "write_final_decision requires at least one proposal brief; the research bundle was never seeded."
+            )
         input_payload = self._final_decision_payload(
             frame=frame,
             bundle=bundle,

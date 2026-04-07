@@ -147,6 +147,10 @@ class StagedResearchRuntime(ResearchRuntime):
                 output_schema=search_space_plan_schema(),
             )
             plan = _validate_search_space_plan(plan_response.payload)
+            plan = replace(
+                plan,
+                coverage_ledger=self._normalize_initial_coverage_ledger(plan.coverage_ledger),
+            )
             current_action = "evaluate_candidate"
             root_candidate = _frame_candidate_from_search_space(plan.search_space_frame)
             root_assessment, evaluation_provider_name = self._evaluate_candidate(

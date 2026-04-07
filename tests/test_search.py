@@ -214,6 +214,42 @@ class UnknownProposalIdFinalDecisionFixtureProvider(SearchFixtureProvider):
         return invalid_payload
 
 
+class PreseededInitialLedgerFixtureProvider(SearchFixtureProvider):
+    def _handle_frame_search_space(
+        self,
+        problem_spec: ProblemSpec,
+        input_payload: dict[str, object],
+    ):
+        plan = super()._handle_frame_search_space(problem_spec, input_payload)
+        seeded_cells = []
+        for cell in plan.coverage_ledger.cells:
+            seeded_cells.append(
+                type(cell)(
+                    cell_id=cell.cell_id,
+                    label=cell.label,
+                    axis_assignments=cell.axis_assignments,
+                    hypothesis=cell.hypothesis,
+                    coverage_status=CoverageStatus.SEEDED,
+                    uncertainty=cell.uncertainty,
+                    hard_gate_risk=cell.hard_gate_risk,
+                    evidence_strength=cell.evidence_strength,
+                    incumbent_proposal_ids=[f"ghost-{cell.cell_id}"],
+                    notes=list(cell.notes),
+                )
+            )
+        return type(plan)(
+            search_space_frame=plan.search_space_frame,
+            coverage_ledger=type(plan.coverage_ledger)(
+                ledger_id=plan.coverage_ledger.ledger_id,
+                frame_id=plan.coverage_ledger.frame_id,
+                cells=seeded_cells,
+                coverage_summary=plan.coverage_ledger.coverage_summary,
+                next_questions=list(plan.coverage_ledger.next_questions),
+                updated_at=plan.coverage_ledger.updated_at,
+            ),
+        )
+
+
 class SearchRuntimeTests(unittest.TestCase):
     def test_hybrid_candidate_decision_requires_candidate_only_for_pursued_hybrids(self) -> None:
         with self.assertRaises(ArgusValidationError):
@@ -802,6 +838,41 @@ class SearchRuntimeTests(unittest.TestCase):
                 "proposal-ledger",
                 [row.proposal_id for row in loaded.research_bundle.comparison_matrices[0].rows],
             )
+
+    def test_research_runtime_normalizes_preseeded_initial_ledger_before_scheduling(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = PreseededInitialLedgerFixtureProvider(
+                root / "artifacts" / "provider_invocations"
+            )
+            runtime = ResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            result = runtime.run(
+                request="Choose the default research runtime to ship next.",
+                budget=7,
+                run_id="run-research-normalize-preseeded-ledger",
+            )
+            loaded = store.load_run("run-research-normalize-preseeded-ledger")
+            action_names = [call["action_name"] for call in provider.calls]
+
+            self.assertEqual(result.manifest.status, RunStatus.COMPLETED)
+            self.assertIn("seed_cell_proposals", action_names)
+            self.assertIn("triage_proposals", action_names)
+            self.assertTrue(loaded.research_bundle.proposal_briefs)
+            self.assertEqual(
+                loaded.research_bundle.scheduler_decisions[0].action.value,
+                "expand",
+            )
+            for cell in loaded.research_bundle.coverage_ledger.cells:
+                self.assertNotIn(f"ghost-{cell.cell_id}", cell.incumbent_proposal_ids)
 
     def test_staged_runtime_runs_fixed_pipeline_without_redteam_or_hybrid(self) -> None:
         with TemporaryDirectory() as directory:
