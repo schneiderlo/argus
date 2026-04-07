@@ -1,0 +1,28 @@
+budget = 36
+cost_profile = "max"
+search_profile = "portfolio"
+progress = "auto"
+verbose = false
+observe = true
+observe_port = 8080
+# Optional request input. Set either `request` or `prompt_file`, not both.
+# request = """Find the best browser game concept to win the 2026 Cursor AI Vibe Coding Game Jam."""
+prompt_file = "vibejam.md"
+provider_pool = ["codex_54", "gemini_31_pro_preview", "gemini_flash", "gemini_25_pro"]
+
+[providers.gemini_31_pro_preview]
+type = "gemini"
+model = "gemini-3.1-pro-preview"
+
+[providers.gemini_flash]
+type = "gemini"
+model = "gemini-3-flash-preview"
+
+[providers.gemini_25_pro]
+type = "gemini"
+model = "gemini-2.5-pro"
+
+[providers.codex_54]
+type = "codex"
+model = "gpt-5.4"
+reasoning_effort = "xhigh"
