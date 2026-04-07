@@ -27,6 +27,19 @@ uv sync --group dev
 
 The repository targets Python 3.12 through `uv`. Do not rely on the system `python3` for normal development or verification.
 
+If you want the repo toolchain provisioned by Nix instead of by the host machine, an
+optional flake-based dev shell is available for Linux, including WSL:
+
+```bash
+nix develop
+uv sync --group dev
+npm --prefix src/argus/render/ui ci
+```
+
+That shell provides `python3.12`, `uv`, `node`, and `npm`, but the repo workflow remains the
+same after you enter it: keep using `uv run argus ...` and `./scripts/verify.sh`. In WSL, this
+means "run the Linux Nix toolchain inside your WSL distro," not the Windows host toolchain.
+
 Inspect the scaffolded CLI:
 
 ```bash
@@ -249,6 +262,12 @@ Run the deterministic verification gate directly:
 ./scripts/verify.sh
 ```
 
+Or do the same through the Nix shell without changing the actual repo commands:
+
+```bash
+nix develop -c bash -lc 'uv sync --group dev && npm --prefix src/argus/render/ui ci && ./scripts/verify.sh'
+```
+
 ## Development Loop
 
 The Ralph loop is a repo-maintenance path for using Codex to improve the project itself. It is not required for ordinary `argus run`, `argus benchmark`, or `argus feedback` usage.
@@ -317,6 +336,7 @@ Benchmarks intentionally keep shared learning memory disabled so stored output d
 Process guardrails:
 
 - `./scripts/verify.sh` uses `uv run --python 3.12 ...` to avoid silently validating against the wrong interpreter, and it also runs `npm --prefix src/argus/render/ui run check` plus `npm --prefix src/argus/render/ui run build` so observer UI type regressions and stale packaged bundles fail the Ralph loop.
+- `flake.nix` now provides an optional Linux/WSL dev shell with `python3.12`, `uv`, `node`, and `npm`; it is there to supply the toolchain, not to replace the repo's normal `uv run ...` workflow.
 - `uv.lock` is expected to stay committed and in sync with `pyproject.toml`; verification should fail rather than rewriting the lockfile during a normal loop iteration.
 - Python cache directories and bytecode files are ignored so loop runs do not dirty the tree with generated junk.
 - A successful iteration is expected to end in a clean, committed repository state.
