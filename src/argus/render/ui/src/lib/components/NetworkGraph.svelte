@@ -23,25 +23,26 @@
               hierarchical: {
                   direction: 'LR',
                   sortMethod: 'hubsize',
-                  nodeSpacing: 140,
-                  levelSeparation: 360
+                  nodeSpacing: 180,
+                  levelSeparation: 430
               }
           },
           physics: false,
           nodes: {
               shape: 'box',
-              margin: { top: 14, bottom: 14, left: 20, right: 20 },
+              margin: { top: 10, bottom: 10, left: 16, right: 16 },
               borderWidth: 1.5,
               shapeProperties: { borderRadius: 8 },
+              widthConstraint: { maximum: 250 },
               font: {
                   multi: 'html',
                   face: "'Geist Mono', monospace",
-                  size: 13,
+                  size: 12,
                   color: textColor,
                   align: 'center',
                   bold: {
                       color: textColor,
-                      size: 13,
+                      size: 12,
                       vadjust: 0
                   }
               },

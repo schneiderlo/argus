@@ -60,6 +60,7 @@ Argus is not done when it can print a plausible brainstorm. The initial target i
 - [x] Move the observer UI off full-state polling onto typed status/event updates with periodic snapshot reconciliation, and expose a lightweight run-status API so the graph/report views can show current action, active invocations, and live event history without reloading the full search state every second.
 - [x] Persist structured pairwise decision artifacts and surface them directly in the report view instead of relying on summary markdown alone.
 - [x] Upgrade the observer graph from action/id labels to idea-first labels plus island, migration, novelty, and winner-lineage overlays.
+- [x] Tighten observer graph node labels and vis-network sizing so thesis-first nodes stay readable instead of overlapping in dense runs.
 - [x] Replace the memory ledger's provider-only aggregation with a provider x action matrix and reusable-learning filters that distinguish outcome-backed priors from search-only priors.
 
 - [x] **Phase 1: Setup Svelte 5 & API Expansion**

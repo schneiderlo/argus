@@ -129,15 +129,16 @@ test('winnerLineageNodeIds returns winners and their ancestors only', () => {
     assert.deepEqual(lineage, ['node-0001', 'node-0003']);
 });
 
-test('buildNodeLabel prioritizes the idea thesis and overlays winner, island, migration, and novelty context', () => {
+test('buildNodeLabel prioritizes the idea thesis and keeps visible metadata compact', () => {
     const label = buildNodeLabel(sampleState.nodes['node-0003'], {
         isWinner: true,
         inWinnerLineage: true
     });
 
-    assert.match(label, /^<b>Launch an upside ritual that turns weekly reviews into\.\.\.<\/b>/);
-    assert.match(label, /migrate \| node-0003 \| score 0.92/);
-    assert.match(label, /winner \| island upside \| migrated balanced -&gt; upside \| novelty 82 novel/);
+    assert.match(label, /^<b>Launch an upside ritual that turns\.\.\.<\/b>/);
+    assert.match(label, /\nwinner \/ migrate \/ upside \/ 0\.92 \/ novel 82$/);
+    assert.doesNotMatch(label, /node-0003/);
+    assert.doesNotMatch(label, /balanced -&gt; upside/);
 });
 
 test('deriveGraphPresentation adds migration overlays and highlights winner lineage', () => {

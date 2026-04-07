@@ -33,6 +33,22 @@ const DEFAULT_STYLE = {
 };
 
 const DEFAULT_GET_STYLE = () => DEFAULT_STYLE;
+const LABEL_PRIMARY_MAX_LENGTH = 38;
+const LABEL_META_MAX_LENGTH = 52;
+/** @type {Record<string, string>} */
+const COMPACT_ACTION_LABELS = {
+    frame_problem: 'frame',
+    frame_search_space: 'frame',
+    generate_seed: 'seed',
+    seed_cell_proposals: 'seed',
+    stress_test: 'stress',
+    compress_learning: 'compress',
+    triage_proposals: 'triage',
+    deepen_family: 'deepen',
+    redteam_family: 'red-team',
+    assess_hybrid: 'hybrid',
+    write_final_decision: 'decision'
+};
 
 /**
  * @param {SearchStatePayload | null | undefined} state
@@ -72,36 +88,32 @@ export function winnerLineageNodeIds(state) {
  * @returns {string}
  */
 export function buildNodeLabel(node, context = {}) {
-    const primary = truncateText(normalizeText(node?.candidate?.thesis || humanizeAction(node?.action_type || 'node')), 58);
-    const totalScore = hasFiniteNumber(node?.score?.total_score) ? Number(node.score?.total_score) : null;
-    const secondary = [
-        humanizeAction(node?.action_type || 'node'),
-        node?.node_id || 'unknown',
-        totalScore !== null ? `score ${totalScore.toFixed(2)}` : null
-    ]
-        .filter(Boolean)
-        .join(' | ');
+    const primary = truncateText(
+        normalizeText(node?.candidate?.thesis || humanizeAction(node?.action_type || 'node')),
+        LABEL_PRIMARY_MAX_LENGTH
+    );
 
     /** @type {string[]} */
-    const overlays = [];
+    const meta = [];
     if (context.isWinner) {
-        overlays.push('winner');
+        meta.push('winner');
     } else if (context.inWinnerLineage) {
-        overlays.push('winner path');
+        meta.push('path');
     }
+    meta.push(compactActionLabel(node?.action_type || 'node'));
     if (typeof node?.island_id === 'string' && node.island_id.trim()) {
-        overlays.push(`island ${normalizeText(node.island_id)}`);
+        meta.push(normalizeText(node.island_id));
     }
-    const migration = migrationMetadata(node);
-    if (migration) {
-        overlays.push(`migrated ${migration.sourceIslandId} -> ${migration.destinationIslandId}`);
+    const rawTotalScore = node?.score?.total_score;
+    const totalScore = hasFiniteNumber(rawTotalScore) ? Number(rawTotalScore) : null;
+    if (totalScore !== null) {
+        meta.push(totalScore.toFixed(2));
     }
-    overlays.push(noveltyOverlay(node?.novelty_score ?? 0));
+    meta.push(noveltyOverlay(node?.novelty_score ?? 0));
 
     return [
         `<b>${escapeHtml(primary)}</b>`,
-        escapeHtml(truncateText(secondary, 72)),
-        escapeHtml(overlays.join(' | '))
+        escapeHtml(truncateText(meta.join(' / '), LABEL_META_MAX_LENGTH))
     ].join('\n');
 }
 
@@ -429,7 +441,7 @@ function humanizeAction(value) {
  * @returns {string}
  */
 function noveltyOverlay(score) {
-    return `novelty ${formatPercent(score)} ${noveltyBand(score)}`;
+    return `${noveltyBand(score)} ${formatPercent(score)}`;
 }
 
 /**
@@ -494,7 +506,19 @@ function truncateText(value, maxLength) {
     if (normalized.length <= maxLength) {
         return normalized;
     }
-    return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+    const sliceLength = Math.max(0, maxLength - 3);
+    const boundaryIndex = normalized.lastIndexOf(' ', sliceLength);
+    const endIndex = boundaryIndex >= Math.floor(maxLength * 0.55) ? boundaryIndex : sliceLength;
+    return `${normalized.slice(0, endIndex).trimEnd()}...`;
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function compactActionLabel(value) {
+    const normalized = normalizeText(value);
+    return COMPACT_ACTION_LABELS[normalized] ?? humanizeAction(normalized);
 }
 
 /**
