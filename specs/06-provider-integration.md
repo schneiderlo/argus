@@ -17,6 +17,7 @@ codex exec --full-auto -C "$ROOT" - < prompt.md
 The real wrapper should add:
 
 - a model override when configured
+- a reasoning-effort override when configured for providers that support it
 - structured output capture
 - prompt materialization for audit
 - schema validation

@@ -53,6 +53,30 @@ class CliTests(unittest.TestCase):
             self.assertIsInstance(_build_provider(config, "gemini"), GeminiProvider)
             self.assertIsInstance(_build_provider(config, "opencode"), OpenCodeProvider)
 
+    def test_build_provider_passes_reasoning_effort_to_codex(self) -> None:
+        with TemporaryRepoRoot() as root:
+            config = ArgusConfig.discover(root)
+
+            provider = _build_provider(
+                config,
+                "codex",
+                model="gpt-5.4",
+                reasoning_effort="xhigh",
+            )
+
+        self.assertIsInstance(provider, CodexProvider)
+        self.assertEqual(provider.model, "gpt-5.4")
+        self.assertEqual(provider.reasoning_effort, "xhigh")
+
+    def test_build_provider_rejects_reasoning_effort_for_non_codex_provider(self) -> None:
+        with TemporaryRepoRoot() as root:
+            config = ArgusConfig.discover(root)
+
+            with self.assertRaises(ArgusUserError) as captured:
+                _build_provider(config, "gemini", reasoning_effort="high")
+
+        self.assertIn("reasoning_effort is currently supported only for codex", str(captured.exception))
+
     def test_build_provider_rejects_unknown_provider_with_supported_list(self) -> None:
         with TemporaryRepoRoot() as root:
             config = ArgusConfig.discover(root)
@@ -392,6 +416,32 @@ class CliTests(unittest.TestCase):
         self.assertIn("request_source=inline", stdout)
         self.assertIn("request_chars=62", stdout)
 
+    def test_dry_run_command_reports_provider_reasoning_effort_from_run_config(self) -> None:
+        with TemporaryRepoRoot() as root:
+            run_config_path = root / "run-config.toml"
+            _write_run_config_fixture(
+                run_config_path,
+                provider_pool=["codex"],
+                provider_models={"codex": "gpt-5.4"},
+                provider_reasoning_efforts={"codex": "xhigh"},
+            )
+            with patch("argus.cli._validate_provider_binaries", return_value=None):
+                exit_code, stdout, stderr = _run_cli(
+                    [
+                        "--root",
+                        str(root),
+                        "dry-run",
+                        "Find the best retention strategy.",
+                        "--run-config",
+                        str(run_config_path),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("provider_model[codex]=gpt-5.4", stdout)
+        self.assertIn("provider_reasoning_effort[codex]=xhigh", stdout)
+
     def test_dry_run_command_uses_prompt_file_from_run_config_when_cli_request_missing(self) -> None:
         with TemporaryRepoRoot() as root:
             prompt_path = root / "request.txt"
@@ -679,8 +729,9 @@ class CliTests(unittest.TestCase):
                     "codex": "codex-test-model",
                     "gemini": "gemini-test-model",
                 },
+                provider_reasoning_efforts={"codex": "high"},
             )
-            built: list[tuple[str, str | None, str | None]] = []
+            built: list[tuple[str, str | None, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
@@ -688,8 +739,9 @@ class CliTests(unittest.TestCase):
                 *,
                 provider_type: str | None = None,
                 model: str | None = None,
+                reasoning_effort: str | None = None,
             ):
-                built.append((provider_name, provider_type, model))
+                built.append((provider_name, provider_type, model, reasoning_effort))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -721,8 +773,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             built,
             [
-                ("codex", "codex", "codex-test-model"),
-                ("gemini", "gemini", "gemini-test-model"),
+                ("codex", "codex", "codex-test-model", "high"),
+                ("gemini", "gemini", "gemini-test-model", None),
             ],
         )
 
@@ -742,7 +794,7 @@ class CliTests(unittest.TestCase):
                 },
                 budget=6,
             )
-            built: list[tuple[str, str | None, str | None]] = []
+            built: list[tuple[str, str | None, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
@@ -750,8 +802,9 @@ class CliTests(unittest.TestCase):
                 *,
                 provider_type: str | None = None,
                 model: str | None = None,
+                reasoning_effort: str | None = None,
             ):
-                built.append((provider_name, provider_type, model))
+                built.append((provider_name, provider_type, model, reasoning_effort))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -779,8 +832,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             built,
             [
-                ("codex_fast", "codex", "gpt-5.3-codex-spark"),
-                ("gemini_flash_lite", "gemini", "gemini-3.1-flash-lite-preview"),
+                ("codex_fast", "codex", "gpt-5.3-codex-spark", None),
+                ("gemini_flash_lite", "gemini", "gemini-3.1-flash-lite-preview", None),
             ],
         )
 
@@ -922,7 +975,7 @@ class CliTests(unittest.TestCase):
                     "opencode": "opencode-test-model",
                 },
             )
-            built: list[tuple[str, str | None, str | None]] = []
+            built: list[tuple[str, str | None, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
@@ -930,8 +983,9 @@ class CliTests(unittest.TestCase):
                 *,
                 provider_type: str | None = None,
                 model: str | None = None,
+                reasoning_effort: str | None = None,
             ):
-                built.append((provider_name, provider_type, model))
+                built.append((provider_name, provider_type, model, reasoning_effort))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -962,7 +1016,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Completed in", stderr)
         self.assertEqual(
             built,
-            [("opencode", "opencode", "opencode-test-model")],
+            [("opencode", "opencode", "opencode-test-model", None)],
         )
 
     def test_run_command_passes_cost_profile_policy_to_runtime(self) -> None:
@@ -1386,7 +1440,7 @@ class CliTests(unittest.TestCase):
                     "gemini": "gemini-test-model",
                 },
             )
-            built: list[tuple[str, str | None, str | None]] = []
+            built: list[tuple[str, str | None, str | None, str | None]] = []
 
             def _build_provider_with_capture(
                 config: ArgusConfig,
@@ -1394,8 +1448,9 @@ class CliTests(unittest.TestCase):
                 *,
                 provider_type: str | None = None,
                 model: str | None = None,
+                reasoning_effort: str | None = None,
             ):
-                built.append((provider_name, provider_type, model))
+                built.append((provider_name, provider_type, model, reasoning_effort))
                 return SearchFixtureProvider(
                     root / "artifacts" / "provider_invocations" / provider_name,
                     name=provider_name,
@@ -1423,8 +1478,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             built,
             [
-                ("codex", "codex", "codex-test-model"),
-                ("gemini", "gemini", "gemini-test-model"),
+                ("codex", "codex", "codex-test-model", None),
+                ("gemini", "gemini", "gemini-test-model", None),
             ],
         )
 
@@ -1915,6 +1970,7 @@ def _write_run_config_fixture(
     provider_pool: list[str],
     provider_models: dict[str, str],
     provider_types: dict[str, str] | None = None,
+    provider_reasoning_efforts: dict[str, str] | None = None,
     budget: int | None = None,
     request: str | None = None,
     prompt_file: str | None = None,
@@ -1953,11 +2009,21 @@ def _write_run_config_fixture(
     )
     for provider_name, model in provider_models.items():
         provider_type = None if provider_types is None else provider_types.get(provider_name)
+        reasoning_effort = (
+            None
+            if provider_reasoning_efforts is None
+            else provider_reasoning_efforts.get(provider_name)
+        )
         lines.extend(
             [
                 f"[providers.{provider_name}]",
                 *([] if provider_type is None else [f'type = "{provider_type}"']),
                 f'model = "{model}"',
+                *(
+                    []
+                    if reasoning_effort is None
+                    else [f'reasoning_effort = "{reasoning_effort}"']
+                ),
                 "",
             ]
         )

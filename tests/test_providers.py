@@ -102,6 +102,38 @@ class CodexProviderTests(unittest.TestCase):
             self.assertIn("--output-schema", command)
             self.assertIn("-o", command)
 
+    def test_run_action_passes_reasoning_effort_override_to_codex(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                model="gpt-5.4",
+                reasoning_effort="xhigh",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 1},
+                output_schema=_candidate_schema(),
+            )
+
+            metadata = json.loads(response.artifacts.metadata_path.read_text(encoding="utf-8"))
+            command = runner.calls[0]["command"]
+
+        self.assertEqual(response.reasoning_effort, "xhigh")
+        self.assertEqual(metadata["reasoning_effort"], "xhigh")
+        self.assertIn("-c", command)
+        self.assertIn('model_reasoning_effort="xhigh"', command)
+
     def test_run_action_serializes_nonzero_exit_failures(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(

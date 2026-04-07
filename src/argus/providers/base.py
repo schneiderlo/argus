@@ -83,6 +83,7 @@ class ProviderFailure:
     prompt_path: Path
     artifacts: ProviderArtifacts
     model: str | None = None
+    reasoning_effort: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -99,6 +100,8 @@ class ProviderFailure:
         }
         if self.model is not None:
             payload["model"] = self.model
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
         return payload
 
 
@@ -119,6 +122,7 @@ class ProviderResponse(Generic[T]):
     exit_status: int
     timestamp: datetime
     model: str | None = None
+    reasoning_effort: str | None = None
 
     def metadata_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -131,6 +135,8 @@ class ProviderResponse(Generic[T]):
         }
         if self.model is not None:
             payload["model"] = self.model
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
         return payload
 
 

@@ -123,6 +123,7 @@ provider_pool = ["codex", "gemini", "opencode"]
 
 [providers.codex]
 model = "gpt-5-codex"
+reasoning_effort = "high"
 
 [providers.gemini]
 model = "gemini-2.5-pro"
@@ -216,6 +217,7 @@ Run-config rules:
 - Every provider listed in `provider_pool` must have a matching `[providers.<name>]` table.
 - `type` is optional when the provider table name is already `codex`, `gemini`, or `opencode`. Use `type` for aliases such as `codex_fast` or `gemini_flash_lite`.
 - `model` is optional per provider; if omitted, the provider default/env behavior is used.
+- `reasoning_effort` is optional per provider. Argus currently applies it only to `codex` providers, where it maps to Codex's `model_reasoning_effort` override.
 - If `--provider` is passed, that value is used instead of `provider_pool` from the file.
 - If a positional request or `--prompt-file` is passed, that value is used instead of `request` or `prompt_file` from the file.
 - If `--budget` is passed, that value is used instead of `budget` from the file.
@@ -323,3 +325,4 @@ Process guardrails:
 # Current tests
 
 uv run argus run --cost-profile max --run-config run-config.codex-gemini-trio.toml --prompt-file workspace.md
+uv run argus run --run-config new_paradigm.toml

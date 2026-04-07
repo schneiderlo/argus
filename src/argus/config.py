@@ -12,6 +12,7 @@ class ProviderRunConfig:
     name: str
     provider_type: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _normalize_non_empty_string(self.name, "name"))
@@ -26,6 +27,12 @@ class ProviderRunConfig:
                 self,
                 "model",
                 _normalize_non_empty_string(self.model, "model"),
+            )
+        if self.reasoning_effort is not None:
+            object.__setattr__(
+                self,
+                "reasoning_effort",
+                _normalize_non_empty_string(self.reasoning_effort, "reasoning_effort"),
             )
 
 
@@ -182,7 +189,7 @@ class RunConfig:
                 raise ArgusValidationError(
                     f"[providers.{normalized_name}] must be a TOML table."
                 )
-            allowed_keys = {"model", "type"}
+            allowed_keys = {"model", "reasoning_effort", "type"}
             extra_keys = sorted(set(raw_provider_config) - allowed_keys)
             if extra_keys:
                 raise ArgusValidationError(
@@ -202,6 +209,12 @@ class RunConfig:
                 else _normalize_non_empty_string(
                     raw_provider_config["model"],
                     f"providers.{normalized_name}.model",
+                ),
+                reasoning_effort=None
+                if "reasoning_effort" not in raw_provider_config
+                else _normalize_non_empty_string(
+                    raw_provider_config["reasoning_effort"],
+                    f"providers.{normalized_name}.reasoning_effort",
                 ),
             )
 
@@ -247,6 +260,13 @@ class RunConfig:
         if provider.provider_type is not None:
             return provider.provider_type
         return normalized_name
+
+    def provider_reasoning_effort(self, provider_name: str) -> str | None:
+        normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
+        provider = self.providers.get(normalized_name)
+        if provider is None:
+            return None
+        return provider.reasoning_effort
 
 
 @dataclass(frozen=True, slots=True)

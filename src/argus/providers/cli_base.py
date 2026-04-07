@@ -70,6 +70,7 @@ class CliProviderBase(ABC):
         artifacts_root: Path,
         binary: str | None = None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
         timeout_seconds: float = 300.0,
         runner: Any = subprocess.run,
     ) -> None:
@@ -85,6 +86,10 @@ class CliProviderBase(ABC):
         self.artifacts_root = artifacts_root.expanduser().resolve()
         self.binary = resolved_binary
         self.model = _resolve_model(model, env_var=self.model_env_var)
+        self.reasoning_effort = _resolve_optional_string(
+            reasoning_effort,
+            field_name="reasoning_effort",
+        )
         self.timeout_seconds = timeout_seconds
         self.runner = runner
 
@@ -281,6 +286,7 @@ class CliProviderBase(ABC):
             exit_status=completed.returncode,
             timestamp=timestamp,
             model=self.model,
+            reasoning_effort=self.reasoning_effort,
         )
         metadata = response.metadata_dict()
         metadata["duration_ms"] = _duration_ms(started_at)
@@ -396,6 +402,7 @@ class CliProviderBase(ABC):
             prompt_path=artifacts.prompt_path,
             artifacts=artifacts,
             model=self.model,
+            reasoning_effort=self.reasoning_effort,
         )
         artifacts.failure_path.write_text(
             json.dumps(failure.to_dict(), indent=2, sort_keys=True) + "\n",
@@ -470,6 +477,14 @@ def _resolve_model(value: str | None, *, env_var: str | None) -> str | None:
     if isinstance(env_value, str) and env_value.strip():
         return env_value.strip()
     return None
+
+
+def _resolve_optional_string(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ArgusValidationError(f"{field_name} must be a non-empty string.")
+    return value.strip()
 
 
 def _strip_accidental_schema_metadata(

@@ -760,6 +760,9 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
             provider_name,
             provider_type=None if run_config is None else run_config.provider_type_name(provider_name),
             model=None if run_config is None else run_config.provider_model(provider_name),
+            reasoning_effort=None
+            if run_config is None
+            else run_config.provider_reasoning_effort(provider_name),
         )
         for provider_name in provider_names
     ]
@@ -842,6 +845,9 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
             provider_name,
             provider_type=None if run_config is None else run_config.provider_type_name(provider_name),
             model=None if run_config is None else run_config.provider_model(provider_name),
+            reasoning_effort=None
+            if run_config is None
+            else run_config.provider_reasoning_effort(provider_name),
         )
         for provider_name in provider_names
     ]
@@ -858,6 +864,10 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         "provider_pool": provider_names,
         "provider_models": {
             provider.name: getattr(provider, "model", None)
+            for provider in providers
+        },
+        "provider_reasoning_efforts": {
+            provider.name: getattr(provider, "reasoning_effort", None)
             for provider in providers
         },
     }
@@ -880,6 +890,10 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     print("provider_pool=" + ",".join(provider_names))
     for provider in providers:
         print(f"provider_model[{provider.name}]={getattr(provider, 'model', None)}")
+        print(
+            "provider_reasoning_effort"
+            f"[{provider.name}]={getattr(provider, 'reasoning_effort', None)}"
+        )
     if "run_config_path" in payload:
         print(f"run_config_path={payload['run_config_path']}")
     if "prompt_file" in payload:
@@ -906,6 +920,9 @@ def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
             provider_name,
             provider_type=None if run_config is None else run_config.provider_type_name(provider_name),
             model=None if run_config is None else run_config.provider_model(provider_name),
+            reasoning_effort=None
+            if run_config is None
+            else run_config.provider_reasoning_effort(provider_name),
         )
         for provider_name in provider_names
     ]
@@ -1172,6 +1189,7 @@ def _build_provider(
     *,
     provider_type: str | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> Provider:
     logical_name = provider_name.strip().lower()
     if not logical_name:
@@ -1185,9 +1203,14 @@ def _build_provider(
         raise ArgusUserError(
             f"Unknown provider type {normalized_provider_type!r}. Supported providers: {supported}."
         )
+    if reasoning_effort is not None and normalized_provider_type != "codex":
+        raise ArgusUserError(
+            "reasoning_effort is currently supported only for codex providers."
+        )
     provider = provider_class(
         artifacts_root=config.provider_invocations_dir,
         model=model,
+        reasoning_effort=reasoning_effort,
     )
     provider.name = logical_name
     return provider

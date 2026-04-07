@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -22,6 +23,7 @@ class CodexProvider(CliProviderBase):
         artifacts_root: Path,
         binary: str = "codex",
         model: str | None = None,
+        reasoning_effort: str | None = None,
         timeout_seconds: float = 300.0,
         runner: Any = subprocess.run,
         sandbox_mode: str = "read-only",
@@ -33,6 +35,7 @@ class CodexProvider(CliProviderBase):
             artifacts_root=artifacts_root,
             binary=binary,
             model=model,
+            reasoning_effort=reasoning_effort,
             timeout_seconds=timeout_seconds,
             runner=runner,
         )
@@ -48,6 +51,18 @@ class CodexProvider(CliProviderBase):
         command = [
             self.binary,
             "exec",
+        ]
+        if self.model is not None:
+            command.extend(["--model", self.model])
+        if self.reasoning_effort is not None:
+            command.extend(
+                [
+                    "-c",
+                    f"model_reasoning_effort={json.dumps(self.reasoning_effort)}",
+                ]
+            )
+        command.extend(
+            [
             "--skip-git-repo-check",
             "--ephemeral",
             "--sandbox",
@@ -62,9 +77,8 @@ class CodexProvider(CliProviderBase):
             "-o",
             str(artifacts.last_message_path),
             "-",
-        ]
-        if self.model is not None:
-            command[2:2] = ["--model", self.model]
+            ]
+        )
         return command
 
     def _build_runner_kwargs(
