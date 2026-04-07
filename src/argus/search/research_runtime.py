@@ -1399,6 +1399,26 @@ class ResearchRuntime(SearchRuntime):
         cells: list[SearchCell] = []
         for cell in ledger.cells:
             cell_proposal_ids = proposal_by_cell.get(cell.cell_id, [])
+            surviving_cell_ids = [proposal_id for proposal_id in cell_proposal_ids if proposal_id in survivor_ids]
+            if surviving_cell_ids:
+                notes = [*cell.notes, "Family survived triage."]
+                if cell.cell_id in unexplored_cell_ids:
+                    notes.append("Cell still warrants more expansion after triage.")
+                confidence_scores = [
+                    state.nodes[proposal_records[proposal_id].node_id].score.confidence_estimate
+                    for proposal_id in surviving_cell_ids
+                    if state.nodes[proposal_records[proposal_id].node_id].score is not None
+                ]
+                cells.append(
+                    replace(
+                        cell,
+                        coverage_status=CoverageStatus.TRIAGED,
+                        incumbent_proposal_ids=surviving_cell_ids,
+                        uncertainty=round(max(0.12, 1.0 - max(confidence_scores, default=0.5)), 6),
+                        notes=notes,
+                    )
+                )
+                continue
             if cell.cell_id in unexplored_cell_ids:
                 cells.append(
                     replace(
@@ -1412,27 +1432,11 @@ class ResearchRuntime(SearchRuntime):
             if not cell_proposal_ids:
                 cells.append(cell)
                 continue
-            surviving_cell_ids = [proposal_id for proposal_id in cell_proposal_ids if proposal_id in survivor_ids]
-            if surviving_cell_ids:
-                confidence_scores = [
-                    state.nodes[proposal_records[proposal_id].node_id].score.confidence_estimate
-                    for proposal_id in surviving_cell_ids
-                    if state.nodes[proposal_records[proposal_id].node_id].score is not None
-                ]
-                cells.append(
-                    replace(
-                        cell,
-                        coverage_status=CoverageStatus.TRIAGED,
-                        incumbent_proposal_ids=surviving_cell_ids,
-                        uncertainty=round(max(0.12, 1.0 - max(confidence_scores, default=0.5)), 6),
-                        notes=[*cell.notes, "Family survived triage."],
-                    )
-                )
-                continue
             cells.append(
                 replace(
                     cell,
                     coverage_status=CoverageStatus.DOMINATED,
+                    incumbent_proposal_ids=[],
                     notes=[*cell.notes, "Family closed during triage."],
                 )
             )

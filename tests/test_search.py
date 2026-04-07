@@ -3,12 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 
 from argus.errors import ArgusValidationError
 from argus.models import (
     ActionType,
     Candidate,
+    CoverageLedger,
+    CoverageStatus,
     HybridVerdict,
     LearningNote,
     LearningNoteType,
@@ -19,6 +22,7 @@ from argus.models import (
     ProposalTriageDecision,
     ProviderRoutingStats,
     ProviderRoutingStatsEntry,
+    SearchCell,
     TriageReport,
 )
 from argus.search.contracts import HybridCandidateBatch, HybridCandidateDecision
@@ -520,6 +524,165 @@ class SearchRuntimeTests(unittest.TestCase):
                 ["cell-control"],
             )
             self.assertNotIn("redteam_family", major_actions[:6])
+
+    def test_research_runtime_keeps_survivor_incumbents_for_cells_marked_for_more_expansion(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = FileSystemStateStore(root / "artifacts" / "runs")
+            provider = SearchFixtureProvider(root / "artifacts" / "provider_invocations")
+            runtime = ResearchRuntime(
+                provider=provider,
+                state_store=store,
+                policy=SearchPolicy(
+                    frontier_limit=4,
+                    provider_max_concurrency=2,
+                ),
+            )
+
+            control_brief = ProposalBrief(
+                proposal_id="proposal-control",
+                cell_id="cell-control",
+                title="Adaptive control path",
+                summary="Keep the lighter control family alive while still expanding the same cell.",
+                candidate=Candidate(
+                    thesis="Adaptive control path",
+                    mechanism="Use a lighter control path as the benchmark family.",
+                    assumptions=["The control family is still worth comparing."],
+                    strengths=["Low migration cost."],
+                    failure_modes=["Can remain too lossy without more evidence."],
+                    unknowns=["Whether a sharper control variant is still needed."],
+                    implementation_shape="Adaptive runtime with lighter coverage checks.",
+                    evidence=["Useful as a benchmark control."],
+                ),
+                seed_rationale="Keeps the control family represented in the ledger.",
+                open_questions=["Should the same cell get another representative?"],
+                evidence=["The control family still matters strategically."],
+                parent_node_ids=["node-0001"],
+            )
+            ledger_brief = ProposalBrief(
+                proposal_id="proposal-ledger",
+                cell_id="cell-ledger",
+                title="Coverage-led runtime",
+                summary="Keep the ledger-driven family alive as the main survivor.",
+                candidate=Candidate(
+                    thesis="Coverage-led runtime",
+                    mechanism="Frame search space explicitly and deepen survivors.",
+                    assumptions=["Coverage-led planning remains the stronger default."],
+                    strengths=["Best audit trail."],
+                    failure_modes=["Could cost more latency."],
+                    unknowns=["How much more evidence is still needed?"],
+                    implementation_shape="Typed research bundle with explicit coverage ledger.",
+                    evidence=["Matches the main product gap."],
+                ),
+                seed_rationale="Represents the leading family.",
+                open_questions=["How much more depth is still required?"],
+                evidence=["Current leader for decision quality."],
+                parent_node_ids=["node-0001"],
+            )
+            ledger = CoverageLedger(
+                ledger_id="ledger-mixed-001",
+                frame_id="frame-001",
+                cells=[
+                    SearchCell(
+                        cell_id="cell-control",
+                        label="Control family",
+                        axis_assignments={"coverage": "implicit frontier"},
+                        hypothesis="A stronger control representative is still worth comparing.",
+                        coverage_status=CoverageStatus.SEEDED,
+                        uncertainty=0.48,
+                        hard_gate_risk=0.34,
+                        evidence_strength=0.52,
+                        incumbent_proposal_ids=["proposal-control"],
+                        notes=["Representative proposals seeded."],
+                    ),
+                    SearchCell(
+                        cell_id="cell-ledger",
+                        label="Ledger family",
+                        axis_assignments={"coverage": "explicit ledger"},
+                        hypothesis="The ledger-driven family is still the main leader.",
+                        coverage_status=CoverageStatus.SEEDED,
+                        uncertainty=0.31,
+                        hard_gate_risk=0.22,
+                        evidence_strength=0.79,
+                        incumbent_proposal_ids=["proposal-ledger"],
+                        notes=["Representative proposals seeded."],
+                    ),
+                ],
+                coverage_summary="Two families have seeded representatives.",
+            )
+            triage_report = TriageReport(
+                report_id="triage-mixed-001",
+                frame_id="frame-001",
+                decisions=[
+                    ProposalTriageDecision(
+                        proposal_id="proposal-control",
+                        disposition=ProposalDisposition.SURVIVE,
+                        rationale="Keep the control family alive, but expand the same cell again.",
+                        follow_up="Reseed the control cell with one sharper representative.",
+                    ),
+                    ProposalTriageDecision(
+                        proposal_id="proposal-ledger",
+                        disposition=ProposalDisposition.SURVIVE,
+                        rationale="Still the overall leader.",
+                        follow_up="Deepen the ledger family once the comparison set is complete.",
+                    ),
+                ],
+                survivor_ids=["proposal-control", "proposal-ledger"],
+                unexplored_cell_ids=["cell-control"],
+                summary="Keep the control family alive while still expanding that cell.",
+                next_actions=["Reseed the control cell before final comparison."],
+            )
+            proposal_records = {
+                "proposal-control": SimpleNamespace(brief=control_brief, node_id="node-control"),
+                "proposal-ledger": SimpleNamespace(brief=ledger_brief, node_id="node-ledger"),
+            }
+            state = SimpleNamespace(
+                nodes={
+                    "node-control": SimpleNamespace(
+                        score=SimpleNamespace(confidence_estimate=0.61),
+                    ),
+                    "node-ledger": SimpleNamespace(
+                        score=SimpleNamespace(confidence_estimate=0.84),
+                    ),
+                }
+            )
+
+            updated_ledger = runtime._update_triaged_ledger(
+                ledger=ledger,
+                triage_report=triage_report,
+                proposal_records=proposal_records,
+                state=state,
+            )
+            cells_by_id = {cell.cell_id: cell for cell in updated_ledger.cells}
+
+            self.assertEqual(
+                cells_by_id["cell-control"].incumbent_proposal_ids,
+                ["proposal-control"],
+            )
+            self.assertEqual(
+                cells_by_id["cell-control"].coverage_status,
+                CoverageStatus.TRIAGED,
+            )
+            self.assertIn(
+                "Cell still warrants more expansion after triage.",
+                cells_by_id["cell-control"].notes,
+            )
+            self.assertEqual(
+                [cell.cell_id for cell in runtime._expandable_cells(
+                    updated_ledger,
+                    latest_triage_report=triage_report,
+                    require_value_gate=False,
+                )],
+                ["cell-control"],
+            )
+            self.assertIn(
+                "proposal-control",
+                runtime._pending_deepen_ids(
+                    ledger=updated_ledger,
+                    survivor_ids=triage_report.survivor_ids,
+                    bundle=SimpleNamespace(deep_dive_docs=[]),
+                ),
+            )
 
     def test_staged_runtime_runs_fixed_pipeline_without_redteam_or_hybrid(self) -> None:
         with TemporaryDirectory() as directory:
