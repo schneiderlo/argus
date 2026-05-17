@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { fetchRunStatus, fetchState } from '$lib/api';
+  import ArtifactExplorer from '$lib/components/ArtifactExplorer.svelte';
   import { renderRichMarkdown } from '$lib/markdown';
   import { uiState } from '$lib/stores.svelte';
   import type {
@@ -268,6 +269,10 @@
           {@const researchDecision = finalDecision()}
           {@const pairwiseGroups = pairwiseDecisionGroups()}
           {#if winnerNode}
+              {#if hasResearchArtifacts()}
+                  <ArtifactExplorer state={uiState.searchState} />
+              {/if}
+
               <div class="report-card winner-card">
                   <div class="card-header">
                       <div class="winner-trophy">🏆</div>

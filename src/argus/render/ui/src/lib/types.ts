@@ -192,6 +192,7 @@ export interface DeepDiveDoc {
     key_unknowns: string[];
     supporting_evidence: string[];
     assumptions: string[];
+    technical_dossier_markdown?: string | null;
 }
 
 export interface AdversarialReview {

@@ -87,6 +87,7 @@ uv run --locked --no-sync --python 3.12 python -m compileall src tests
 uv run --locked --no-sync --python 3.12 python -m unittest discover -s tests -t .
 uv run --locked --no-sync --python 3.12 ruff check .
 node --test \
+  "$UI_DIR/src/lib/components/artifactExplorerModel.test.js" \
   "$UI_DIR/src/lib/components/networkGraphModel.test.js" \
   "$UI_DIR/src/lib/components/researchBoardModel.test.js"
 npm --prefix "$UI_DIR" run check

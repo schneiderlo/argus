@@ -78,3 +78,23 @@ The operator should be able to inspect the repository and understand:
 - what the last few loop iterations attempted
 
 That means the docs, fix plan, and artifact layout must remain readable and current.
+
+## Research Artifact Explorer
+
+Research-mode runs should be inspectable through a file-explorer style tree in
+the observer report. The tree should organize by durable decision artifacts
+rather than by runtime nodes first:
+
+- search frame and coverage ledger
+- proposal families, with child items for brief, deep dive, technical dossier,
+  and red-team review
+- comparison matrices and hybrid assessments
+- final decision summary, final memo, and typed decision object
+- runtime evidence such as scheduler decisions
+
+Selecting a tree item should keep the operator in the report and open a details
+pane for that artifact. The details pane should render structured fields for
+typed objects and markdown for authored memo or technical-dossier artifacts.
+The node DAG remains useful as execution/debug evidence, but the primary
+research report should be artifact-first so an operator can see what work
+exists before reading it.

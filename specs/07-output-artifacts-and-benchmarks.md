@@ -36,6 +36,15 @@ The repository should also persist:
 - a root-level reusable learning-memory ledger so future non-benchmark runs can reuse compressed patterns with provenance
 - a root-level outcome-feedback ledger so shipped experiment results remain auditable and reusable across runs
 
+Observer reports should expose these persisted artifacts through a tree-style
+Research Artifact Explorer. The explorer should not re-interpret prose as state;
+it should build its folders and details from the typed run payload:
+
+- folders for search frame, proposals, comparisons, final decision, and runtime evidence
+- proposal child items for brief, deep dive, standalone technical dossier, and adversarial review
+- click-to-inspect details for every item without leaving the report page
+- markdown rendering for authored summary, memo, and technical-dossier artifacts
+
 ## Final Recommendation Requirements
 
 The final recommendation object must include:
