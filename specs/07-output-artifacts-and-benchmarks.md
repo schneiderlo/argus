@@ -23,6 +23,9 @@ human-readable forms of:
 - proposal briefs
 - triage outcomes
 - deep-dive artifacts for surviving families
+- standalone technical-dossier markdown for deepened families, preserving
+  formulas, source-domain mechanism translation, implementation hooks, ablation
+  design, prior-art collision, and verification-needed caveats
 - adversarial reviews
 - the comparison matrix
 - hybrid assessments

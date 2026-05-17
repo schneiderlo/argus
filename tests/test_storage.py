@@ -726,6 +726,17 @@ def _sample_research_bundle() -> ResearchArtifactBundle:
                 key_unknowns=["Latency under the standard cost profile."],
                 supporting_evidence=["The specs require typed artifacts."],
                 assumptions=["Provider-backed evaluation remains the main judge layer."],
+                technical_dossier_markdown=(
+                    "# Technical Dossier\n\n"
+                    "## Mechanism Translation\n"
+                    "Use the coverage ledger as the durable scheduler state and use deep "
+                    "dives as implementation-ready evidence files.\n\n"
+                    "## Mathematical Rule or Formula\n"
+                    "Cell priority is proportional to uncertainty and hard-gate risk, and "
+                    "inversely proportional to evidence strength.\n\n"
+                    "## Implementation Sketch\n"
+                    "Persist the bundle and render the technical dossier beside the summary."
+                ),
             )
         ],
         adversarial_reviews=[

@@ -30,7 +30,7 @@ from argus.models import (
     ProblemSpec,
     SearchState,
 )
-from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider
+from argus.providers import ClaudeProvider, CodexProvider, GeminiProvider, OpenCodeProvider
 from argus.search import SearchPolicy
 from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import SearchFixtureProvider
@@ -45,10 +45,11 @@ class CliTests(unittest.TestCase):
             {"run", "dry-run", "benchmark", "feedback", "status", "inspect", "observe"},
         )
 
-    def test_build_provider_supports_codex_gemini_and_opencode(self) -> None:
+    def test_build_provider_supports_codex_claude_gemini_and_opencode(self) -> None:
         with TemporaryRepoRoot() as root:
             config = ArgusConfig.discover(root)
 
+            self.assertIsInstance(_build_provider(config, "claude"), ClaudeProvider)
             self.assertIsInstance(_build_provider(config, "codex"), CodexProvider)
             self.assertIsInstance(_build_provider(config, "gemini"), GeminiProvider)
             self.assertIsInstance(_build_provider(config, "opencode"), OpenCodeProvider)
@@ -67,6 +68,21 @@ class CliTests(unittest.TestCase):
         self.assertIsInstance(provider, CodexProvider)
         self.assertEqual(provider.model, "gpt-5.4")
         self.assertEqual(provider.reasoning_effort, "xhigh")
+
+    def test_build_provider_passes_reasoning_effort_to_claude(self) -> None:
+        with TemporaryRepoRoot() as root:
+            config = ArgusConfig.discover(root)
+
+            provider = _build_provider(
+                config,
+                "claude",
+                model="claude-sonnet-4-5",
+                reasoning_effort="high",
+            )
+
+        self.assertIsInstance(provider, ClaudeProvider)
+        self.assertEqual(provider.model, "claude-sonnet-4-5")
+        self.assertEqual(provider.reasoning_effort, "high")
 
     def test_build_provider_passes_service_tier_to_codex(self) -> None:
         with TemporaryRepoRoot() as root:
@@ -101,7 +117,10 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(ArgusUserError) as captured:
                 _build_provider(config, "gemini", reasoning_effort="high")
 
-        self.assertIn("reasoning_effort is currently supported only for codex", str(captured.exception))
+        self.assertIn(
+            "reasoning_effort is currently supported only for codex and claude",
+            str(captured.exception),
+        )
 
     def test_build_provider_rejects_service_tier_for_non_codex_provider(self) -> None:
         with TemporaryRepoRoot() as root:

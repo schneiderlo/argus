@@ -158,6 +158,17 @@ class ResearchModelTests(unittest.TestCase):
             key_unknowns=["Whether family-level triage is enough without cell-level hybrids."],
             supporting_evidence=["The specs require explicit coverage planning and typed artifacts."],
             assumptions=["Provider-backed judging remains the main evaluator path."],
+            technical_dossier_markdown=(
+                "# Technical Dossier\n\n"
+                "## Mechanism Translation\n"
+                "Separate scheduler state from provider-authored artifacts so every decision "
+                "has a traceable reason.\n\n"
+                "## Mathematical Rule or Formula\n"
+                "Prioritize cells by uncertainty plus hard-gate risk minus evidence strength.\n\n"
+                "## Implementation Sketch\n"
+                "Persist the typed bundle, render each deep dive, and keep final authoring "
+                "grounded in the bundle."
+            ),
         )
         review = AdversarialReview(
             review_id="review-001",

@@ -540,6 +540,7 @@ def _deep_dive_doc_schema() -> dict[str, JSONValue]:
             "key_unknowns",
             "supporting_evidence",
             "assumptions",
+            "technical_dossier_markdown",
         ],
         "properties": {
             "doc_id": {"type": "string", "minLength": 1},
@@ -551,6 +552,7 @@ def _deep_dive_doc_schema() -> dict[str, JSONValue]:
             "key_unknowns": _string_array_schema(),
             "supporting_evidence": _string_array_schema(),
             "assumptions": _string_array_schema(),
+            "technical_dossier_markdown": {"type": "string", "minLength": 800},
         },
     }
 

@@ -589,6 +589,18 @@ def _sample_research_bundle() -> ResearchArtifactBundle:
                 detailed_mechanism="Expose search-space framing, coverage cells, comparison output, and final decision details from the persisted bundle.",
                 implementation_plan=["Add backend payload field.", "Render typed Svelte sections."],
                 key_unknowns=["Whether the page stays readable on smaller screens."],
+                technical_dossier_markdown=(
+                    "# Technical Dossier\n\n"
+                    "## Mechanism Translation\n"
+                    "Render the typed research bundle directly so the observer can expose "
+                    "mechanism, evidence, and decision provenance without reparsing prose.\n\n"
+                    "## Mathematical Rule or Formula\n"
+                    "Preserve proposal ids as stable joins between briefs, deep dives, "
+                    "reviews, comparison rows, and final decision references.\n\n"
+                    "## Implementation Sketch\n"
+                    "Pass the dossier through the payload and render it in a dedicated "
+                    "research artifact section."
+                ),
             )
         ],
         adversarial_reviews=[

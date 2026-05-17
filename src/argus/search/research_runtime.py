@@ -1862,6 +1862,10 @@ def _render_research_bundle_markdown(
         markdown[f"triage/{report.report_id}.md"] = _render_triage_markdown(report)
     for doc in bundle.deep_dive_docs:
         markdown[f"deep-dives/{doc.doc_id}.md"] = _render_deep_dive_markdown(doc)
+        if doc.technical_dossier_markdown is not None:
+            markdown[f"deep-dives/technical/{doc.doc_id}.md"] = (
+                doc.technical_dossier_markdown.rstrip() + "\n"
+            )
     for review in bundle.adversarial_reviews:
         markdown[f"reviews/{review.review_id}.md"] = _render_review_markdown(review)
     for matrix in bundle.comparison_matrices:
@@ -1965,8 +1969,36 @@ def _render_triage_markdown(report: TriageReport) -> str:
 
 
 def _render_deep_dive_markdown(doc) -> str:
-    lines = [f"# {doc.title}", "", doc.executive_summary, "", "## Implementation Plan"]
+    lines = [
+        f"# {doc.title}",
+        "",
+        f"Proposal ID: `{doc.proposal_id}`",
+        "",
+        doc.executive_summary,
+        "",
+        "## Detailed Mechanism",
+        doc.detailed_mechanism,
+        "",
+        "## Implementation Plan",
+    ]
     lines.extend(f"- {step}" for step in doc.implementation_plan)
+    if doc.assumptions:
+        lines.extend(["", "## Assumptions"])
+        lines.extend(f"- {item}" for item in doc.assumptions)
+    if doc.key_unknowns:
+        lines.extend(["", "## Key Unknowns"])
+        lines.extend(f"- {item}" for item in doc.key_unknowns)
+    if doc.supporting_evidence:
+        lines.extend(["", "## Supporting Evidence"])
+        lines.extend(f"- {item}" for item in doc.supporting_evidence)
+    if doc.technical_dossier_markdown is not None:
+        lines.extend(
+            [
+                "",
+                "## Technical Dossier",
+                f"See `technical/{doc.doc_id}.md`.",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 

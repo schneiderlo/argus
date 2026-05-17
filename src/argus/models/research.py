@@ -592,6 +592,7 @@ class DeepDiveDoc:
     key_unknowns: list[str]
     supporting_evidence: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
+    technical_dossier_markdown: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "doc_id", _normalize_non_empty_string(self.doc_id, "doc_id"))
@@ -627,9 +628,17 @@ class DeepDiveDoc:
             _normalize_string_list(self.supporting_evidence, "supporting_evidence"),
         )
         object.__setattr__(self, "assumptions", _normalize_string_list(self.assumptions, "assumptions"))
+        object.__setattr__(
+            self,
+            "technical_dossier_markdown",
+            _normalize_optional_string(
+                self.technical_dossier_markdown,
+                "technical_dossier_markdown",
+            ),
+        )
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "doc_id": self.doc_id,
             "proposal_id": self.proposal_id,
             "title": self.title,
@@ -640,6 +649,9 @@ class DeepDiveDoc:
             "supporting_evidence": list(self.supporting_evidence),
             "assumptions": list(self.assumptions),
         }
+        if self.technical_dossier_markdown is not None:
+            payload["technical_dossier_markdown"] = self.technical_dossier_markdown
+        return payload
 
     @classmethod
     def from_dict(cls, payload: object) -> "DeepDiveDoc":
@@ -657,6 +669,7 @@ class DeepDiveDoc:
                 "supporting_evidence",
                 "assumptions",
             },
+            optional={"technical_dossier_markdown"},
         )
         return cls(
             doc_id=data["doc_id"],
@@ -668,6 +681,7 @@ class DeepDiveDoc:
             key_unknowns=data["key_unknowns"],
             supporting_evidence=data["supporting_evidence"],
             assumptions=data["assumptions"],
+            technical_dossier_markdown=data.get("technical_dossier_markdown"),
         )
 
 

@@ -112,6 +112,9 @@ At minimum the runtime must be able to persist:
 - `TriageReport` objects describing eliminations, collapses, survivors, and
   unexplored regions
 - `DeepDiveDoc` artifacts for surviving families
+- a standalone technical dossier for each deepened family when the decision
+  requires mathematical mechanism, implementation-hook, prior-art, or ablation
+  detail that would be flattened by a proposal summary
 - `AdversarialReview` artifacts for surviving families
 - `ComparisonMatrix`, `HybridAssessment`, and `FinalDecisionDoc` artifacts for
   the final decision stage
@@ -180,6 +183,9 @@ The richer default runtime should not rely on fixed proposal counts such as
 4. seed one or more representatives for the highest-value uncovered cells
 5. triage at the family level, not only at the individual-proposal level
 6. deepen incumbents for the most promising surviving families
+   into implementation-ready dossiers that include the underlying mechanism,
+   formulas or transferable rules, code hooks, ablation design, prior-art
+   collision notes, and verification-needed caveats where relevant
 7. red-team incumbents whose value is high but whose uncertainty or fragility is
    still material
 8. consider hybridization only when a typed seam hypothesis and repaired

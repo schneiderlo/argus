@@ -106,6 +106,7 @@ Run the same search through a non-default provider:
 
 ```bash
 uv run argus run --provider gemini "Find the best retention strategy for a workflow-heavy product."
+uv run argus run --provider claude "Find the best retention strategy for a workflow-heavy product."
 uv run argus run --provider opencode "Find the best retention strategy for a workflow-heavy product."
 ```
 
@@ -114,7 +115,7 @@ provider-routing stats with deterministic UCB-style exploration while falling ba
 first provider in the list when no action history exists:
 
 ```bash
-uv run argus run --provider codex,gemini,opencode \
+uv run argus run --provider codex,claude,gemini,opencode \
   "Find the best retention strategy for a workflow-heavy product."
 ```
 
@@ -133,13 +134,17 @@ observe_port = 8080
 # Set either `request` or `prompt_file`, not both.
 # request = """Find the best retention strategy for a workflow-heavy product."""
 # prompt_file = "request.txt"
-provider_pool = ["codex", "gemini", "opencode"]
+provider_pool = ["codex", "claude", "gemini", "opencode"]
 
 [providers.codex]
 model = "gpt-5-codex"
 reasoning_effort = "high"
 service_tier = "fast"
 web_search = true
+
+[providers.claude]
+model = "claude-sonnet-4-5"
+reasoning_effort = "high"
 
 [providers.gemini]
 model = "gemini-2.5-pro"
@@ -190,11 +195,16 @@ routed and tracked independently:
 
 ```toml
 budget = 12
-provider_pool = ["codex_fast", "gemini_flash", "gemini_flash_lite"]
+provider_pool = ["codex_fast", "claude_sonnet", "gemini_flash", "gemini_flash_lite"]
 
 [providers.codex_fast]
 type = "codex"
 model = "gpt-5.3-codex-spark"
+
+[providers.claude_sonnet]
+type = "claude"
+model = "claude-sonnet-4-5"
+reasoning_effort = "high"
 
 [providers.gemini_flash]
 type = "gemini"
@@ -232,9 +242,9 @@ Run-config rules:
 - `observe` and `observe_port` are optional and apply to `argus run`.
 - `provider_pool` is the ordered provider fallback/routing pool for the run.
 - Every provider listed in `provider_pool` must have a matching `[providers.<name>]` table.
-- `type` is optional when the provider table name is already `codex`, `gemini`, or `opencode`. Use `type` for aliases such as `codex_fast` or `gemini_flash_lite`.
+- `type` is optional when the provider table name is already `codex`, `claude`, `gemini`, or `opencode`. Use `type` for aliases such as `codex_fast`, `claude_sonnet`, or `gemini_flash_lite`.
 - `model` is optional per provider; if omitted, the provider default/env behavior is used.
-- `reasoning_effort` is optional per provider. Argus currently applies it only to `codex` providers, where it maps to Codex's `model_reasoning_effort` override.
+- `reasoning_effort` is optional per provider. Argus currently applies it to `codex` providers, where it maps to Codex's `model_reasoning_effort` override, and to `claude` providers, where it maps to Claude Code's `--effort` flag.
 - `service_tier` is optional per provider. Argus currently applies it only to `codex` providers, where `service_tier = "fast"` maps to Codex's `service_tier` config override.
 - `web_search` is optional per provider. Argus currently applies it only to `codex` providers, where `web_search = true` passes `--search` to `codex exec` and permits web-grounded evidence in provider prompts.
 - If `--provider` is passed, that value is used instead of `provider_pool` from the file.
@@ -319,7 +329,7 @@ Current implementation status:
 - The core typed domain models now exist in `src/argus/models/` with explicit validation and deterministic `to_dict`/`from_dict` round-tripping.
 - A filesystem-backed state store now exists in `src/argus/storage/` and persists problem specs, nodes, scores, critiques, learning notes, and final recommendations under `artifacts/runs/<run_id>/`.
 - A production Codex provider adapter now exists in `src/argus/providers/`; it runs `codex exec` in an isolated read-only workspace, captures audited prompt/schema/log artifacts, and validates structured outputs before returning typed data to the runtime.
-- The provider layer now also supports `gemini` and `opencode` behind the same typed contract and `--provider` CLI flag. Codex remains the default and the best-supported path; the additional adapters reuse the same audited prompt, artifact, and validation flow while speaking each CLI's native headless JSON surface.
+- The provider layer now also supports `claude`, `gemini`, and `opencode` behind the same typed contract and `--provider` CLI flag. Codex remains the default and the best-supported path; the additional adapters reuse the same audited prompt, artifact, and validation flow while speaking each CLI's native headless JSON surface.
 - `argus run` and `argus benchmark` now also accept a comma-separated provider pool such as `--provider codex,gemini,opencode`. When a pool is present, Argus consults persisted provider-routing stats to choose which configured provider should handle each routed action, including `generate_seed`, `assess_novelty`, `evaluate_candidate`, and pairwise `rank`, using a deterministic UCB-style score over average historical reward plus an exploration bonus while still falling back to the first provider when the action has no prior signal yet.
 - If a routed provider fails or times out during a multi-provider run, Argus retries the same action against the remaining configured providers in deterministic fallback order and still records the failed attempt in routing telemetry.
 - `argus run`, `argus dry-run`, and `argus benchmark` now also accept `--cost-profile lean|standard|max`, which maps to concrete `SearchPolicy` presets so operators can trade search breadth against provider spend without manually editing runtime knobs.
@@ -330,6 +340,7 @@ Current implementation status:
 - Those adaptive-runtime head-to-head decisions now persist as structured `pairwise_decisions` inside each run's `final-recommendation.json`, and the observer report renders that tournament evidence directly instead of only summarizing it in markdown.
 - The runtime now dispatches bounded concurrent provider-backed work for archive novelty checks, candidate evaluation, stress tests, deepens, and mutations. Commits remain deterministic, node ids stay stable, and final same-batch novelty admission is serialized so near-duplicates cannot race into the archive together.
 - Candidate-admission batches now also use provider-backed batch novelty and batch evaluation, so multi-candidate generate/mutate/combine outputs can be judged with the same structured rubrics while collapsing dozens of per-candidate judge invocations into a much smaller number of batch calls.
+- Research-mode deep dives now also carry a standalone `technical_dossier_markdown` artifact rendered under `research/markdown/deep-dives/technical/`, so math-heavy or source-domain-transfer proposals can preserve formulas, implementation hooks, ablation design, prior-art collision, and verification-needed caveats instead of collapsing into a one-phrase proposition.
 - The search runtime now also supports configurable multi-island search through `SearchPolicy.island_policies`, with per-island archive/frontier/pruned state persisted in each run, conservative cross-island migration that adapts strong source-island candidates into plateaued destination islands without breaking same-island parent invariants, and final summaries that label which island produced or adopted each selected bet.
 - Provider-routing summaries now persist per run at `artifacts/runs/<run_id>/routing-summary.json`, and the runtime maintains an aggregate cross-run ledger at `artifacts/runs/provider-routing-stats.json` so future routing can learn not just from source-generation actions but also from routed novelty checks, candidate scoring, useful critiques, and winner contributions.
 - Cross-run learning memory now persists at `artifacts/runs/learning-memory.json`, and each `argus run` snapshots the imported reusable subset it used at `artifacts/runs/<run_id>/reusable-learning-context.json` before feeding those priors back into later framing, generation, evaluation, ranking, and critique steps.

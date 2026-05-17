@@ -423,6 +423,7 @@ class SearchFixtureProvider:
             key_unknowns=["Whether the richer authoring flow can stay inside the standard latency budget."],
             supporting_evidence=["The specs require explicit coverage planning and decision-grade artifacts."],
             assumptions=["Provider-backed evaluation remains the main judge layer."],
+            technical_dossier_markdown=_fixture_technical_dossier_markdown(proposal_id),
         )
 
     def _handle_redteam_family(
@@ -1339,6 +1340,43 @@ def _chat_wrapper_candidate() -> Candidate:
         unknowns=["Would users come back after the first novelty spike?"], 
         implementation_shape="Ship chat first and hope workflow value emerges later.",
         evidence=["This is the kind of style-first idea the specs reject."],
+    )
+
+
+def _fixture_technical_dossier_markdown(proposal_id: str) -> str:
+    return (
+        f"# Technical Dossier: {proposal_id}\n\n"
+        "## Mechanism Translation\n"
+        "The proposal converts a surviving research family into a concrete control loop: "
+        "coverage state selects the next information-gathering action, while authoring "
+        "actions produce typed artifacts that become the durable evidence base.\n\n"
+        "## Mathematical Rule or Formula\n"
+        "Let each cell have priority p = uncertainty + hard_gate_risk - evidence_strength. "
+        "The scheduler spends the next unit of budget where p is high, unless a survivor "
+        "already has enough evidence and needs adversarial review before final selection.\n\n"
+        "## Nanochat Integration Points\n"
+        "This fixture is not a nanochat experiment, but it preserves the same artifact shape "
+        "expected from real nanochat runs: exact file targets, concrete hooks, and falsifiable "
+        "measurement points belong in this section.\n\n"
+        "## Minimal Implementation Sketch\n"
+        "Read the typed proposal, identify the local runtime hook, implement the smallest "
+        "delta behind a flag, and write the resulting metric trace into the run artifact "
+        "directory so it can be compared against the baseline.\n\n"
+        "## Ablation Design\n"
+        "Compare baseline, minimal delta, and one strengthened variant. Stop if the metric "
+        "does not improve or if artifact generation becomes too slow for the configured "
+        "budget.\n\n"
+        "## Expected Signals\n"
+        "The expected signal is a clearer final decision with stronger reversal conditions, "
+        "not merely a longer markdown report.\n\n"
+        "## Failure Modes\n"
+        "The main failure mode is prose expansion without additional mechanism. The dossier "
+        "must carry formulas, hooks, and tests instead of elaborating the same proposition.\n\n"
+        "## Prior-Art Collision\n"
+        "The fixture has no external prior-art claim. Mark real source-dependent claims as "
+        "verification_needed unless the provider can identify a concrete source.\n\n"
+        "## Verification Needed\n"
+        "Verify that the persisted technical file is present and that the summary links to it.\n"
     )
 
 

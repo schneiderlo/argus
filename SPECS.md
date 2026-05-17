@@ -32,7 +32,7 @@ Argus is not meant to be a generic chatbot. It is meant to be a search-and-evalu
 
 ## Implementation Principle
 
-The first implementation target is a Python application that can run locally from the command line and persist all search state to disk. Argus must start with Codex as its main provider, but its internal architecture must make later addition of Gemini CLI and OpenCode straightforward.
+The first implementation target is a Python application that can run locally from the command line and persist all search state to disk. Argus must start with Codex as its main provider, but its internal architecture must make additional CLI providers straightforward. The current provider layer supports Codex, Claude Code, Gemini CLI, and OpenCode behind the same structured action contract.
 
 ## Acceptance Condition For A Real First Milestone
 

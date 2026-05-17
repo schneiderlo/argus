@@ -25,7 +25,7 @@ from argus.inspection import (
     resolve_inspection_target,
 )
 from argus.models import LearningNote, LearningNoteType, OutcomeFeedback, OutcomeFeedbackStatus
-from argus.providers import CodexProvider, GeminiProvider, OpenCodeProvider, Provider
+from argus.providers import ClaudeProvider, CodexProvider, GeminiProvider, OpenCodeProvider, Provider
 from argus.search import (
     SearchPolicy,
     ResearchRuntime,
@@ -40,6 +40,7 @@ from argus.storage import FileSystemStateStore
 from argus.progress import FileProgressSink, ProgressEvent, ProgressSink
 
 _PROVIDER_TYPES = {
+    "claude": ClaudeProvider,
     "codex": CodexProvider,
     "gemini": GeminiProvider,
     "opencode": OpenCodeProvider,
@@ -1237,9 +1238,9 @@ def _build_provider(
         raise ArgusUserError(
             f"Unknown provider type {normalized_provider_type!r}. Supported providers: {supported}."
         )
-    if reasoning_effort is not None and normalized_provider_type != "codex":
+    if reasoning_effort is not None and normalized_provider_type not in {"codex", "claude"}:
         raise ArgusUserError(
-            "reasoning_effort is currently supported only for codex providers."
+            "reasoning_effort is currently supported only for codex and claude providers."
         )
     if service_tier is not None and normalized_provider_type != "codex":
         raise ArgusUserError("service_tier is currently supported only for codex providers.")

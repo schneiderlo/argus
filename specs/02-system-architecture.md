@@ -106,6 +106,9 @@ should support:
 - proposal briefs
 - triage outcomes
 - deep-dive dossiers
+- standalone technical dossiers for each deepened proposal when the mechanism
+  depends on math, source-domain transfer, implementation hooks, or ablation
+  design that would be too lossy as a one-paragraph proposition
 - adversarial reviews
 - comparison matrices
 - hybrid assessments

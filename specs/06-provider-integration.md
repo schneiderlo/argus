@@ -45,9 +45,9 @@ When the operator configures more than one provider for a run, the orchestrator 
 
 If a routed provider attempt fails, the orchestrator should retry the same action against the remaining configured providers in a deterministic order before failing the run. Provider-failure telemetry must still be recorded for the failed attempts.
 
-## Initial Provider Scope
+## Provider Scope
 
-The first implementation only needs a production-quality Codex adapter. Gemini CLI and OpenCode can arrive later, but the interface must not make their addition awkward.
+The first implementation started with a production-quality Codex adapter. The provider interface now also supports Claude Code, Gemini CLI, and OpenCode adapters behind the same structured action contract. Codex remains the default and best-supported path, while the additional adapters must keep the same prompt audit, artifact capture, schema validation, timeout handling, and failure serialization guarantees.
 
 ## Failure Handling
 

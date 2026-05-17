@@ -540,6 +540,25 @@ class SearchRuntimeTests(unittest.TestCase):
             self.assertTrue(
                 (loaded.path / "research" / "markdown" / "scheduler" / "schedule-001.md").is_file()
             )
+            self.assertTrue(
+                (
+                    loaded.path
+                    / "research"
+                    / "markdown"
+                    / "deep-dives"
+                    / "technical"
+                    / "deep-proposal-ledger.md"
+                ).is_file()
+            )
+            deep_dive_summary = (
+                loaded.path
+                / "research"
+                / "markdown"
+                / "deep-dives"
+                / "deep-proposal-ledger.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("## Detailed Mechanism", deep_dive_summary)
+            self.assertIn("See `technical/deep-proposal-ledger.md`.", deep_dive_summary)
             self.assertIn("Research Decision", result.summary_markdown)
             self.assertEqual(result.final_recommendation.best_bet_node_id, "node-0003")
 

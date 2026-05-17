@@ -15,6 +15,7 @@ from argus.eval.evaluator import evaluation_assessment_schema, pairwise_ranking_
 from argus.eval.novelty import novelty_assessment_schema
 from argus.models import ActionType, Candidate, ProblemSpec
 from argus.providers import (
+    ClaudeProvider,
     CodexProvider,
     GeminiProvider,
     OpenCodeProvider,
@@ -31,6 +32,97 @@ from argus.search.research_contracts import (
     search_space_plan_schema,
     triage_report_schema,
 )
+
+
+class ClaudeProviderTests(unittest.TestCase):
+    def test_run_action_uses_headless_structured_output_mode_with_stdin_prompt(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "structured_output": _candidate_payload(),
+                        }
+                    ),
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = ClaudeProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                model="claude-sonnet-4-5",
+                reasoning_effort="high",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 2},
+                output_schema=_candidate_schema(),
+            )
+
+            prompt_text = response.artifacts.prompt_path.read_text(encoding="utf-8")
+            last_message_text = response.artifacts.last_message_path.read_text(encoding="utf-8")
+
+            self.assertEqual(response.provider_name, "claude")
+            self.assertEqual(response.payload, Candidate.from_dict(_candidate_payload()))
+            self.assertIn("# Argus Claude Code Worker", prompt_text)
+            self.assertEqual(json.loads(last_message_text), _candidate_payload())
+
+            command = runner.calls[0]["command"]
+            self.assertEqual(command[:2], ["claude", "-p"])
+            self.assertIn("--output-format", command)
+            self.assertIn("json", command)
+            self.assertIn("--input-format", command)
+            self.assertIn("text", command)
+            self.assertIn("--json-schema", command)
+            self.assertEqual(
+                json.loads(command[command.index("--json-schema") + 1]),
+                _candidate_schema().json_schema,
+            )
+            self.assertIn("--tools", command)
+            self.assertEqual(command[command.index("--tools") + 1], "")
+            self.assertIn("--no-session-persistence", command)
+            self.assertIn("--permission-mode", command)
+            self.assertIn("default", command)
+            self.assertIn("--model", command)
+            self.assertIn("claude-sonnet-4-5", command)
+            self.assertIn("--effort", command)
+            self.assertIn("high", command)
+            self.assertEqual(runner.calls[0]["cwd"], response.artifacts.sandbox_dir)
+            self.assertEqual(runner.calls[0]["input"], prompt_text)
+            self.assertNotIn(prompt_text, command)
+
+    def test_run_action_fails_when_json_envelope_has_no_structured_output_field(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout=json.dumps({"type": "result", "subtype": "success"}),
+                    stderr="",
+                    last_message=None,
+                )
+            )
+            provider = ClaudeProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                runner=runner,
+            )
+
+            with self.assertRaises(ProviderInvocationError) as captured:
+                provider.run_action(
+                    action_name=ActionType.GENERATE_SEED,
+                    problem_spec=_problem_spec(),
+                    input_payload={"target_count": 2},
+                    output_schema=_candidate_schema(),
+                )
+
+        failure = captured.exception.failure
+        self.assertEqual(failure.error_type, "missing_output")
+        self.assertIn("structured_output", failure.message)
 
 
 class CodexProviderTests(unittest.TestCase):
@@ -935,6 +1027,14 @@ class CodexProviderTests(unittest.TestCase):
                     last_message=json.dumps(_final_decision_package_payload()),
                 )
             )
+            deepen_runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_deep_dive_doc_payload()),
+                )
+            )
             frame_provider = CodexProvider(
                 artifacts_root=Path(directory) / "artifacts" / "provider_invocations" / "frame",
                 runner=frame_runner,
@@ -942,6 +1042,10 @@ class CodexProviderTests(unittest.TestCase):
             decision_provider = CodexProvider(
                 artifacts_root=Path(directory) / "artifacts" / "provider_invocations" / "decision",
                 runner=decision_runner,
+            )
+            deepen_provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations" / "deepen",
+                runner=deepen_runner,
             )
 
             frame_response = frame_provider.run_action(
@@ -971,18 +1075,41 @@ class CodexProviderTests(unittest.TestCase):
                 },
                 output_schema=final_decision_package_schema(),
             )
+            deepen_response = deepen_provider.run_action(
+                action_name="deepen_family",
+                problem_spec=_problem_spec(),
+                input_payload={
+                    "proposal": {
+                        "proposal_id": "proposal-ledger",
+                        "cell_id": "cell-ledger",
+                        "title": "Coverage-led runtime",
+                        "summary": "Use an explicit coverage ledger.",
+                        "candidate": _candidate_payload(),
+                        "seed_rationale": "Closes the main product gap.",
+                        "open_questions": ["Latency?"],
+                        "evidence": ["Spec-aligned."],
+                        "parent_node_ids": ["node-0002"],
+                    }
+                },
+                output_schema=deep_dive_doc_schema(),
+            )
 
             frame_prompt = frame_response.artifacts.prompt_path.read_text(encoding="utf-8")
             decision_prompt = decision_response.artifacts.prompt_path.read_text(encoding="utf-8")
+            deepen_prompt = deepen_response.artifacts.prompt_path.read_text(encoding="utf-8")
 
         self.assertIn("Role: search-space framer for Argus research mode.", frame_prompt)
         self.assertIn("Ledger rule: return an initial coverage_ledger", frame_prompt)
+        self.assertIn("Role: deep-dive author for Argus research mode.", deepen_prompt)
+        self.assertIn("Technical dossier rule: technical_dossier_markdown", deepen_prompt)
+        self.assertIn("Mathematical Rule or Formula", deepen_prompt)
         self.assertIn("Role: final decision author for Argus research mode.", decision_prompt)
         self.assertIn(
             "Artifact-id fidelity rule: reuse the exact proposal_id strings from the proposals payload.",
             decision_prompt,
         )
         self.assertIn("Comparison rule: produce a comparison_matrix", decision_prompt)
+        self.assertIn("Technical-depth rule: when deep_dive_docs include technical_dossier_markdown", decision_prompt)
         self.assertIn(
             "Row-completeness rule: every proposal_id referenced anywhere in final_decision_doc must appear exactly once in comparison_matrix.rows.",
             decision_prompt,
@@ -1621,6 +1748,44 @@ def _hybrid_candidate_batch_payload() -> dict[str, object]:
             }
         ],
         "batch_summary": "Evaluated one hybrid seam and approved the strongest version.",
+    }
+
+
+def _deep_dive_doc_payload() -> dict[str, object]:
+    return {
+        "doc_id": "deep-proposal-ledger",
+        "proposal_id": "proposal-ledger",
+        "title": "Coverage-led runtime",
+        "executive_summary": "Use explicit coverage state to decide where research budget goes.",
+        "detailed_mechanism": "Maintain typed cells with uncertainty, hard-gate risk, and evidence strength, then deepen the highest-value survivors.",
+        "implementation_plan": ["Persist the bundle.", "Render technical dossiers beside summaries."],
+        "key_unknowns": ["Whether richer artifacts stay within latency budget."],
+        "supporting_evidence": ["The specs require decision-grade artifacts."],
+        "assumptions": ["Provider-backed authoring remains schema-valid."],
+        "technical_dossier_markdown": (
+            "# Technical Dossier\n\n"
+            "## Mechanism Translation\n"
+            "Coverage state is the scheduler's mathematical object, while deep-dive files are "
+            "the durable evidence objects used by the final authoring stage.\n\n"
+            "## Mathematical Rule or Formula\n"
+            "Priority = uncertainty + hard_gate_risk - evidence_strength, with survivor "
+            "families gated by adversarial review before final selection.\n\n"
+            "## Nanochat Integration Points\n"
+            "A real nanochat dossier would name exact hooks such as scripts/base_train.py, "
+            "nanochat/gpt.py, val_bpb, and benchmark fixture outputs.\n\n"
+            "## Minimal Implementation Sketch\n"
+            "Render a separate markdown dossier per deep dive and link it from the summary.\n\n"
+            "## Ablation Design\n"
+            "Compare baseline artifact quality against technical-dossier artifact quality.\n\n"
+            "## Expected Signals\n"
+            "Operators should see formulas, hooks, ablation metrics, and failure tests.\n\n"
+            "## Failure Modes\n"
+            "A shallow proposition with no underlying mechanism fails this artifact contract.\n\n"
+            "## Prior-Art Collision\n"
+            "No external prior-art claim is made in this fixture.\n\n"
+            "## Verification Needed\n"
+            "Verify generated provider outputs meet the richer schema during real runs.\n"
+        ),
     }
 
 
