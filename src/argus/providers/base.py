@@ -84,6 +84,8 @@ class ProviderFailure:
     artifacts: ProviderArtifacts
     model: str | None = None
     reasoning_effort: str | None = None
+    service_tier: str | None = None
+    web_search: bool = False
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -102,6 +104,10 @@ class ProviderFailure:
             payload["model"] = self.model
         if self.reasoning_effort is not None:
             payload["reasoning_effort"] = self.reasoning_effort
+        if self.service_tier is not None:
+            payload["service_tier"] = self.service_tier
+        if self.web_search:
+            payload["web_search"] = self.web_search
         return payload
 
 
@@ -123,6 +129,8 @@ class ProviderResponse(Generic[T]):
     timestamp: datetime
     model: str | None = None
     reasoning_effort: str | None = None
+    service_tier: str | None = None
+    web_search: bool = False
 
     def metadata_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -137,6 +145,10 @@ class ProviderResponse(Generic[T]):
             payload["model"] = self.model
         if self.reasoning_effort is not None:
             payload["reasoning_effort"] = self.reasoning_effort
+        if self.service_tier is not None:
+            payload["service_tier"] = self.service_tier
+        if self.web_search:
+            payload["web_search"] = self.web_search
         return payload
 
 

@@ -13,6 +13,8 @@ class ProviderRunConfig:
     provider_type: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    service_tier: str | None = None
+    web_search: bool | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _normalize_non_empty_string(self.name, "name"))
@@ -34,6 +36,18 @@ class ProviderRunConfig:
                 "reasoning_effort",
                 _normalize_non_empty_string(self.reasoning_effort, "reasoning_effort"),
             )
+        if self.service_tier is not None:
+            object.__setattr__(
+                self,
+                "service_tier",
+                _normalize_non_empty_string(self.service_tier, "service_tier"),
+            )
+        if self.web_search is not None:
+            object.__setattr__(
+                self,
+                "web_search",
+                _normalize_bool(self.web_search, "web_search"),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +58,7 @@ class RunConfig:
     prompt_file: Path | None = None
     cost_profile: str | None = None
     search_profile: str | None = None
+    runtime_mode: str | None = None
     progress: str | None = None
     verbose: bool | None = None
     observe: bool | None = None
@@ -96,6 +111,12 @@ class RunConfig:
                 self,
                 "search_profile",
                 _normalize_non_empty_string(self.search_profile, "search_profile"),
+            )
+        if self.runtime_mode is not None:
+            object.__setattr__(
+                self,
+                "runtime_mode",
+                _normalize_non_empty_string(self.runtime_mode, "runtime_mode"),
             )
         if self.progress is not None:
             object.__setattr__(
@@ -166,6 +187,7 @@ class RunConfig:
             "prompt_file",
             "cost_profile",
             "search_profile",
+            "runtime_mode",
             "progress",
             "verbose",
             "observe",
@@ -189,7 +211,7 @@ class RunConfig:
                 raise ArgusValidationError(
                     f"[providers.{normalized_name}] must be a TOML table."
                 )
-            allowed_keys = {"model", "reasoning_effort", "type"}
+            allowed_keys = {"model", "reasoning_effort", "service_tier", "type", "web_search"}
             extra_keys = sorted(set(raw_provider_config) - allowed_keys)
             if extra_keys:
                 raise ArgusValidationError(
@@ -216,6 +238,18 @@ class RunConfig:
                     raw_provider_config["reasoning_effort"],
                     f"providers.{normalized_name}.reasoning_effort",
                 ),
+                service_tier=None
+                if "service_tier" not in raw_provider_config
+                else _normalize_non_empty_string(
+                    raw_provider_config["service_tier"],
+                    f"providers.{normalized_name}.service_tier",
+                ),
+                web_search=None
+                if "web_search" not in raw_provider_config
+                else _normalize_bool(
+                    raw_provider_config["web_search"],
+                    f"providers.{normalized_name}.web_search",
+                ),
             )
 
         provider_pool = _load_provider_pool(payload, providers)
@@ -238,6 +272,7 @@ class RunConfig:
             search_profile=None
             if "search_profile" not in payload
             else payload["search_profile"],
+            runtime_mode=None if "runtime_mode" not in payload else payload["runtime_mode"],
             progress=None if "progress" not in payload else payload["progress"],
             verbose=None if "verbose" not in payload else payload["verbose"],
             observe=None if "observe" not in payload else payload["observe"],
@@ -267,6 +302,20 @@ class RunConfig:
         if provider is None:
             return None
         return provider.reasoning_effort
+
+    def provider_service_tier(self, provider_name: str) -> str | None:
+        normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
+        provider = self.providers.get(normalized_name)
+        if provider is None:
+            return None
+        return provider.service_tier
+
+    def provider_web_search(self, provider_name: str) -> bool | None:
+        normalized_name = _normalize_non_empty_string(provider_name, "provider_name")
+        provider = self.providers.get(normalized_name)
+        if provider is None:
+            return None
+        return provider.web_search
 
 
 @dataclass(frozen=True, slots=True)

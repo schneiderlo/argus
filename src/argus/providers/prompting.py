@@ -15,7 +15,15 @@ def render_provider_prompt(
     problem_spec: ProblemSpec,
     input_payload: Mapping[str, JSONValue],
     output_schema: StructuredOutputSchema[Any],
+    allow_web_search: bool = False,
 ) -> str:
+    evidence_rule = (
+        "3. Web search is enabled for this provider call. You may use web-grounded evidence "
+        "when it is directly relevant, and you must cite source URLs or stable identifiers in "
+        "the returned JSON fields where the schema allows evidence, rationale, notes, or markdown."
+        if allow_web_search
+        else "3. Use only the problem spec, action instructions, and input payload as evidence."
+    )
     sections = [
         f"# Argus {provider_name} Worker",
         f"You are the {provider_name} worker behind the Argus provider layer.",
@@ -24,7 +32,7 @@ def render_provider_prompt(
         "## Global Rules",
         "1. Return only JSON. Do not wrap it in markdown fences.",
         "2. Do not run shell commands or write files.",
-        "3. Use only the problem spec, action instructions, and input payload as evidence.",
+        evidence_rule,
         "4. When evidence is missing, lower confidence or scores instead of inventing support.",
         "5. Prefer substance, mechanism quality, and explicit tradeoffs over writing polish.",
         "",
@@ -241,6 +249,7 @@ def _seed_cell_proposals_instructions(
         "Authoritative evidence, in order: the search_space_frame; the selected ledger cells; the problem spec; reusable learning notes only as priors.",
         "Coverage rule: each proposal must clearly belong to one target cell and embody that cell's hypothesis. Do not collapse multiple cells into one vague average.",
         "Distinctness rule: proposals for different cells must differ in mechanism, dependency shape, or tradeoff profile, not just in wording.",
+        "Proposal-id rule: choose proposal_id values that are unique across this run. Do not reuse any id already listed in coverage_ledger incumbent_proposal_ids.",
         "Proposal rule: every ProposalBrief needs a title, summary, seed_rationale, open_questions, evidence, and a candidate with enough mechanism detail to survive evaluation and triage.",
         "Parentage rule: preserve parent_node_ids from the payload when provided so the runtime can audit which earlier nodes or baselines informed the seed.",
         "Output contract: return one coherent ProposalBrief per seeded representative and use batch_summary to explain the strategic spread of the seeded cells.",
@@ -265,7 +274,9 @@ def _triage_proposals_instructions(
         "Authoritative evidence, in order: the search_space_frame; coverage_ledger state; proposal briefs; each proposal's evaluator score and novelty evidence; reusable learning notes only as supporting priors.",
         "Disposition rule: mark survive only when the proposal is decision-relevant and materially stronger than the local alternatives. Mark eliminate for dominated or invalid directions. Mark collapse only when two proposals are substantively the same family and one should absorb the other.",
         "Family rule: triage at the proposal-family level. Avoid keeping two survivors that differ only cosmetically.",
+        "Report-id rule: choose a report_id that is specific to this triage batch. Do not reuse a generic report_id across repeated triage calls.",
         "Coverage rule: use unexplored_cell_ids to explicitly preserve important uncovered regions rather than letting the runtime forget them.",
+        "Cell-id fidelity rule: every value in unexplored_cell_ids must be an exact cell_id from coverage_ledger.cells. Do not invent new cell ids or use axis labels as ids.",
         "Rationale rule: every decision rationale must name the decisive mechanism, hard-gate issue, or dominance relation that drove the choice.",
         "Output contract: the survivor_ids must exactly match the proposals marked survive, and next_actions should tell the runtime where to deepen, red-team, or reseed next.",
     ]

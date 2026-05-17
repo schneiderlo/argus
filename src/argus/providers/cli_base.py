@@ -71,6 +71,8 @@ class CliProviderBase(ABC):
         binary: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        service_tier: str | None = None,
+        web_search: bool = False,
         timeout_seconds: float = 300.0,
         runner: Any = subprocess.run,
     ) -> None:
@@ -90,6 +92,11 @@ class CliProviderBase(ABC):
             reasoning_effort,
             field_name="reasoning_effort",
         )
+        self.service_tier = _resolve_optional_string(
+            service_tier,
+            field_name="service_tier",
+        )
+        self.web_search = _resolve_bool(web_search, "web_search")
         self.timeout_seconds = timeout_seconds
         self.runner = runner
 
@@ -287,6 +294,8 @@ class CliProviderBase(ABC):
             timestamp=timestamp,
             model=self.model,
             reasoning_effort=self.reasoning_effort,
+            service_tier=self.service_tier,
+            web_search=self.web_search,
         )
         metadata = response.metadata_dict()
         metadata["duration_ms"] = _duration_ms(started_at)
@@ -338,6 +347,7 @@ class CliProviderBase(ABC):
             problem_spec=problem_spec,
             input_payload=input_payload,
             output_schema=output_schema,
+            allow_web_search=self.web_search,
         )
 
     @abstractmethod
@@ -403,6 +413,8 @@ class CliProviderBase(ABC):
             artifacts=artifacts,
             model=self.model,
             reasoning_effort=self.reasoning_effort,
+            service_tier=self.service_tier,
+            web_search=self.web_search,
         )
         artifacts.failure_path.write_text(
             json.dumps(failure.to_dict(), indent=2, sort_keys=True) + "\n",
@@ -485,6 +497,14 @@ def _resolve_optional_string(value: str | None, *, field_name: str) -> str | Non
     if not isinstance(value, str) or not value.strip():
         raise ArgusValidationError(f"{field_name} must be a non-empty string.")
     return value.strip()
+
+
+def _resolve_bool(value: bool, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ArgusValidationError(
+            f"{field_name} must be a boolean, got {type(value).__name__}."
+        )
+    return value
 
 
 def _strip_accidental_schema_metadata(

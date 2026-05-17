@@ -18,6 +18,8 @@ The real wrapper should add:
 
 - a model override when configured
 - a reasoning-effort override when configured for providers that support it
+- a service-tier override when configured for providers that support it
+- a web-search override when configured for providers that support it
 - structured output capture
 - prompt materialization for audit
 - schema validation

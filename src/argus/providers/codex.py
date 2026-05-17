@@ -24,6 +24,8 @@ class CodexProvider(CliProviderBase):
         binary: str = "codex",
         model: str | None = None,
         reasoning_effort: str | None = None,
+        service_tier: str | None = None,
+        web_search: bool = False,
         timeout_seconds: float = 300.0,
         runner: Any = subprocess.run,
         sandbox_mode: str = "read-only",
@@ -36,6 +38,8 @@ class CodexProvider(CliProviderBase):
             binary=binary,
             model=model,
             reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+            web_search=web_search,
             timeout_seconds=timeout_seconds,
             runner=runner,
         )
@@ -61,6 +65,15 @@ class CodexProvider(CliProviderBase):
                     f"model_reasoning_effort={json.dumps(self.reasoning_effort)}",
                 ]
             )
+        if self.service_tier is not None:
+            command.extend(
+                [
+                    "-c",
+                    f"service_tier={json.dumps(self.service_tier)}",
+                ]
+            )
+        if self.web_search:
+            command.append("--search")
         command.extend(
             [
             "--skip-git-repo-check",

@@ -370,10 +370,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--runtime-mode",
         choices=_RUNTIME_MODE_CHOICES,
-        default="adaptive",
+        default=None,
         help=(
             "Execution path for `argus run`. `adaptive` uses the existing node-search runtime, "
-            "while `research` runs the coverage-led artifact pipeline."
+            "while `research` runs the coverage-led artifact pipeline. Overrides "
+            "`runtime_mode` from --run-config when both are provided."
         ),
     )
     run_parser.add_argument(
@@ -495,8 +496,11 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run_parser.add_argument(
         "--runtime-mode",
         choices=_RUNTIME_MODE_CHOICES,
-        default="adaptive",
-        help="Execution path to validate for a future run.",
+        default=None,
+        help=(
+            "Execution path to validate for a future run. Overrides `runtime_mode` "
+            "from --run-config when both are provided."
+        ),
     )
     dry_run_parser.add_argument(
         "--provider",
@@ -734,7 +738,7 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     run_config = _load_run_config(args.run_config_path)
     resolved_request = _resolve_run_request(args, run_config=run_config)
     request = resolved_request.text
-    runtime_mode = _resolve_runtime_mode(args=args)
+    runtime_mode = _resolve_runtime_mode(args=args, run_config=run_config)
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
     search_profile = _resolve_search_profile(
         args=args,
@@ -763,6 +767,12 @@ def _handle_run(args: argparse.Namespace, config: ArgusConfig) -> int:
             reasoning_effort=None
             if run_config is None
             else run_config.provider_reasoning_effort(provider_name),
+            service_tier=None
+            if run_config is None
+            else run_config.provider_service_tier(provider_name),
+            web_search=False
+            if run_config is None
+            else bool(run_config.provider_web_search(provider_name)),
         )
         for provider_name in provider_names
     ]
@@ -824,7 +834,7 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
     run_config = _load_run_config(args.run_config_path)
     resolved_request = _resolve_run_request(args, run_config=run_config)
     request = resolved_request.text
-    runtime_mode = _resolve_runtime_mode(args=args)
+    runtime_mode = _resolve_runtime_mode(args=args, run_config=run_config)
     cost_profile = _resolve_cost_profile(args=args, run_config=run_config)
     search_profile = _resolve_search_profile(
         args=args,
@@ -848,6 +858,12 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
             reasoning_effort=None
             if run_config is None
             else run_config.provider_reasoning_effort(provider_name),
+            service_tier=None
+            if run_config is None
+            else run_config.provider_service_tier(provider_name),
+            web_search=False
+            if run_config is None
+            else bool(run_config.provider_web_search(provider_name)),
         )
         for provider_name in provider_names
     ]
@@ -868,6 +884,14 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
         },
         "provider_reasoning_efforts": {
             provider.name: getattr(provider, "reasoning_effort", None)
+            for provider in providers
+        },
+        "provider_service_tiers": {
+            provider.name: getattr(provider, "service_tier", None)
+            for provider in providers
+        },
+        "provider_web_search": {
+            provider.name: getattr(provider, "web_search", False)
             for provider in providers
         },
     }
@@ -894,6 +918,8 @@ def _handle_dry_run(args: argparse.Namespace, config: ArgusConfig) -> int:
             "provider_reasoning_effort"
             f"[{provider.name}]={getattr(provider, 'reasoning_effort', None)}"
         )
+        print(f"provider_service_tier[{provider.name}]={getattr(provider, 'service_tier', None)}")
+        print(f"provider_web_search[{provider.name}]={getattr(provider, 'web_search', False)}")
     if "run_config_path" in payload:
         print(f"run_config_path={payload['run_config_path']}")
     if "prompt_file" in payload:
@@ -923,6 +949,12 @@ def _handle_benchmark(args: argparse.Namespace, config: ArgusConfig) -> int:
             reasoning_effort=None
             if run_config is None
             else run_config.provider_reasoning_effort(provider_name),
+            service_tier=None
+            if run_config is None
+            else run_config.provider_service_tier(provider_name),
+            web_search=False
+            if run_config is None
+            else bool(run_config.provider_web_search(provider_name)),
         )
         for provider_name in provider_names
     ]
@@ -1190,6 +1222,8 @@ def _build_provider(
     provider_type: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    service_tier: str | None = None,
+    web_search: bool = False,
 ) -> Provider:
     logical_name = provider_name.strip().lower()
     if not logical_name:
@@ -1207,10 +1241,16 @@ def _build_provider(
         raise ArgusUserError(
             "reasoning_effort is currently supported only for codex providers."
         )
+    if service_tier is not None and normalized_provider_type != "codex":
+        raise ArgusUserError("service_tier is currently supported only for codex providers.")
+    if web_search and normalized_provider_type != "codex":
+        raise ArgusUserError("web_search is currently supported only for codex providers.")
     provider = provider_class(
         artifacts_root=config.provider_invocations_dir,
         model=model,
         reasoning_effort=reasoning_effort,
+        service_tier=service_tier,
+        web_search=web_search,
     )
     provider.name = logical_name
     return provider
@@ -1243,8 +1283,16 @@ def _resolve_budget(
     return budget
 
 
-def _resolve_runtime_mode(*, args: argparse.Namespace) -> str:
+def _resolve_runtime_mode(
+    *,
+    args: argparse.Namespace,
+    run_config: RunConfig | None = None,
+) -> str:
     runtime_mode = getattr(args, "runtime_mode", "adaptive")
+    if runtime_mode is None and run_config is not None:
+        runtime_mode = run_config.runtime_mode
+    if runtime_mode is None:
+        runtime_mode = "adaptive"
     if runtime_mode not in _RUNTIME_MODE_CHOICES:
         supported = ", ".join(_RUNTIME_MODE_CHOICES)
         raise ArgusUserError(

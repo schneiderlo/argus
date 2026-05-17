@@ -192,6 +192,69 @@ class CodexProviderTests(unittest.TestCase):
         self.assertIn("-c", command)
         self.assertIn('model_reasoning_effort="xhigh"', command)
 
+    def test_run_action_passes_service_tier_override_to_codex(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                model="gpt-5.5",
+                reasoning_effort="xhigh",
+                service_tier="fast",
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 1},
+                output_schema=_candidate_schema(),
+            )
+
+            metadata = json.loads(response.artifacts.metadata_path.read_text(encoding="utf-8"))
+            command = runner.calls[0]["command"]
+
+        self.assertEqual(response.service_tier, "fast")
+        self.assertEqual(metadata["service_tier"], "fast")
+        self.assertIn("-c", command)
+        self.assertIn('service_tier="fast"', command)
+
+    def test_run_action_passes_web_search_to_codex(self) -> None:
+        with TemporaryDirectory() as directory:
+            runner = FakeCliRunner(
+                outcome=CompletedRunnerResult(
+                    returncode=0,
+                    stdout='{"event":"completed"}\n',
+                    stderr="",
+                    last_message=json.dumps(_candidate_payload()),
+                )
+            )
+            provider = CodexProvider(
+                artifacts_root=Path(directory) / "artifacts" / "provider_invocations",
+                web_search=True,
+                runner=runner,
+            )
+
+            response = provider.run_action(
+                action_name=ActionType.GENERATE_SEED,
+                problem_spec=_problem_spec(),
+                input_payload={"target_count": 1},
+                output_schema=_candidate_schema(),
+            )
+
+            metadata = json.loads(response.artifacts.metadata_path.read_text(encoding="utf-8"))
+            command = runner.calls[0]["command"]
+
+        self.assertTrue(response.web_search)
+        self.assertTrue(metadata["web_search"])
+        self.assertIn("--search", command)
+
     def test_run_action_serializes_nonzero_exit_failures(self) -> None:
         with TemporaryDirectory() as directory:
             runner = FakeCliRunner(

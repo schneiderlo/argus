@@ -40,6 +40,12 @@ from argus.search import (
     upside_island_policy,
 )
 from argus.search.runtime import _ActionRouter
+from argus.search.research_runtime import (
+    _normalize_seed_batch_proposal_ids,
+    _normalize_triage_report_id,
+    _normalize_triage_report_references,
+)
+from argus.search.research_contracts import ProposalSeedBatch
 from argus.storage import FileSystemStateStore, RunStatus
 from tests.search_fixtures import (
     SearchFixtureProvider,
@@ -753,6 +759,107 @@ class SearchRuntimeTests(unittest.TestCase):
                     bundle=SimpleNamespace(deep_dive_docs=[]),
                 ),
             )
+
+    def test_research_runtime_filters_unknown_unexplored_cell_ids_from_triage(self) -> None:
+        ledger = CoverageLedger(
+            ledger_id="ledger-001",
+            frame_id="frame-001",
+            cells=[
+                SearchCell(
+                    cell_id="cell-known",
+                    label="Known cell",
+                    axis_assignments={"mechanism": "known"},
+                    hypothesis="Only known cell ids should survive normalization.",
+                )
+            ],
+            coverage_summary="One known cell.",
+        )
+        report = TriageReport(
+            report_id="triage-001",
+            frame_id="frame-001",
+            decisions=[
+                ProposalTriageDecision(
+                    proposal_id="proposal-known",
+                    disposition=ProposalDisposition.SURVIVE,
+                    rationale="Keep the known proposal.",
+                )
+            ],
+            survivor_ids=["proposal-known"],
+            unexplored_cell_ids=["cell-known", "cell-invented"],
+            summary="Provider included one invented unexplored cell id.",
+            next_actions=["Continue with valid cells only."],
+        )
+
+        normalized = _normalize_triage_report_references(report, ledger=ledger)
+
+        self.assertEqual(normalized.unexplored_cell_ids, ["cell-known"])
+
+    def test_research_runtime_renames_duplicate_triage_report_ids(self) -> None:
+        first = TriageReport(
+            report_id="triage-001",
+            frame_id="frame-001",
+            decisions=[
+                ProposalTriageDecision(
+                    proposal_id="proposal-a",
+                    disposition=ProposalDisposition.SURVIVE,
+                    rationale="Keep proposal A.",
+                )
+            ],
+            survivor_ids=["proposal-a"],
+            unexplored_cell_ids=[],
+            summary="First report.",
+            next_actions=[],
+        )
+        duplicate = TriageReport(
+            report_id="triage-001",
+            frame_id="frame-001",
+            decisions=[
+                ProposalTriageDecision(
+                    proposal_id="proposal-b",
+                    disposition=ProposalDisposition.SURVIVE,
+                    rationale="Keep proposal B.",
+                )
+            ],
+            survivor_ids=["proposal-b"],
+            unexplored_cell_ids=[],
+            summary="Second report with reused provider id.",
+            next_actions=[],
+        )
+
+        normalized = _normalize_triage_report_id(duplicate, existing_reports=[first])
+
+        self.assertEqual(normalized.report_id, "triage-001-002")
+        self.assertEqual(normalized.summary, duplicate.summary)
+
+    def test_research_runtime_renames_duplicate_seed_proposal_ids(self) -> None:
+        proposal = ProposalBrief(
+            proposal_id="proposal-001",
+            cell_id="cell-known",
+            title="Known proposal",
+            summary="Provider reused an existing proposal id.",
+            candidate=Candidate(
+                thesis="Known proposal",
+                mechanism="Keep the proposal content while assigning a unique id.",
+                assumptions=["The id is bookkeeping, not semantic content."],
+                strengths=["Prevents bundle persistence failure."],
+                failure_modes=["Could make provider-authored ids less pretty."],
+                unknowns=["None for this normalization test."],
+                implementation_shape="Rename only the proposal_id field before admission.",
+            ),
+            seed_rationale="Exercise duplicate proposal-id repair.",
+            open_questions=[],
+            evidence=[],
+            parent_node_ids=["node-0001"],
+        )
+        batch = ProposalSeedBatch(proposals=[proposal], batch_summary="One duplicate proposal.")
+
+        normalized = _normalize_seed_batch_proposal_ids(
+            batch,
+            existing_proposal_ids=["proposal-001"],
+        )
+
+        self.assertEqual(normalized.proposals[0].proposal_id, "proposal-001-002")
+        self.assertEqual(normalized.proposals[0].title, proposal.title)
 
     def test_research_runtime_repairs_final_decision_schema_mismatch(self) -> None:
         with TemporaryDirectory() as directory:

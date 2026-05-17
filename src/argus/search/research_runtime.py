@@ -298,6 +298,10 @@ class ResearchRuntime(SearchRuntime):
                     )
                     session.consume_budget()
                     seeded_batch = _validate_seed_batch(seed_response.payload)
+                    seeded_batch = _normalize_seed_batch_proposal_ids(
+                        seeded_batch,
+                        existing_proposal_ids=proposal_records.keys(),
+                    )
                     admitted_nodes = self._admit_candidate_batch(
                         session,
                         island_id="balanced",
@@ -368,7 +372,14 @@ class ResearchRuntime(SearchRuntime):
                         output_schema=triage_report_schema(),
                     )
                     session.consume_budget()
-                    triage_report = _validate_triage_report(triage_response.payload)
+                    triage_report = _normalize_triage_report_references(
+                        _validate_triage_report(triage_response.payload),
+                        ledger=bundle.coverage_ledger,
+                    )
+                    triage_report = _normalize_triage_report_id(
+                        triage_report,
+                        existing_reports=bundle.triage_reports,
+                    )
                     bundle = replace(
                         bundle,
                         triage_reports=[*bundle.triage_reports, triage_report],
@@ -1732,12 +1743,73 @@ def _validate_seed_batch(payload: object) -> ProposalSeedBatch:
     return payload
 
 
+def _normalize_seed_batch_proposal_ids(
+    batch: ProposalSeedBatch,
+    *,
+    existing_proposal_ids: Sequence[str],
+) -> ProposalSeedBatch:
+    used_ids = set(existing_proposal_ids)
+    proposals: list[ProposalBrief] = []
+    changed = False
+    for proposal in batch.proposals:
+        proposal_id = proposal.proposal_id
+        if proposal_id in used_ids:
+            suffix = len(used_ids) + 1
+            while True:
+                candidate_id = f"{proposal_id}-{suffix:03d}"
+                if candidate_id not in used_ids:
+                    proposal = replace(proposal, proposal_id=candidate_id)
+                    proposal_id = candidate_id
+                    changed = True
+                    break
+                suffix += 1
+        used_ids.add(proposal_id)
+        proposals.append(proposal)
+    if not changed:
+        return batch
+    return replace(batch, proposals=proposals)
+
+
 def _validate_triage_report(payload: object) -> TriageReport:
     if not isinstance(payload, TriageReport):
         raise ArgusValidationError(
             "triage_proposals must return a TriageReport payload."
         )
     return payload
+
+
+def _normalize_triage_report_references(
+    report: TriageReport,
+    *,
+    ledger: CoverageLedger | None,
+) -> TriageReport:
+    if ledger is None:
+        return report
+    known_cell_ids = {cell.cell_id for cell in ledger.cells}
+    if not known_cell_ids:
+        return report
+    filtered_unexplored_ids = [
+        cell_id for cell_id in report.unexplored_cell_ids if cell_id in known_cell_ids
+    ]
+    if filtered_unexplored_ids == list(report.unexplored_cell_ids):
+        return report
+    return replace(report, unexplored_cell_ids=filtered_unexplored_ids)
+
+
+def _normalize_triage_report_id(
+    report: TriageReport,
+    *,
+    existing_reports: Sequence[TriageReport],
+) -> TriageReport:
+    existing_ids = {existing.report_id for existing in existing_reports}
+    if report.report_id not in existing_ids:
+        return report
+    suffix = len(existing_reports) + 1
+    while True:
+        candidate_id = f"{report.report_id}-{suffix:03d}"
+        if candidate_id not in existing_ids:
+            return replace(report, report_id=candidate_id)
+        suffix += 1
 
 
 def _validate_final_package(payload: object) -> FinalDecisionPackage:

@@ -1,0 +1,21 @@
+budget = 60
+cost_profile = "max"
+search_profile = "portfolio"
+runtime_mode = "research"
+progress = "auto"
+verbose = false
+observe = true
+observe_port = 8080
+prompt_file = "nanochat-llm-training-scout.md"
+provider_pool = ["codex_55_fast", "gemini_31_pro"]
+
+[providers.codex_55_fast]
+type = "codex"
+model = "gpt-5.5"
+reasoning_effort = "xhigh"
+service_tier = "fast"
+web_search = true
+
+[providers.gemini_31_pro]
+type = "gemini"
+model = "gemini-3.1-pro-preview"

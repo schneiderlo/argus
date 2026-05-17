@@ -125,6 +125,7 @@ Run through a TOML run-config that defines the provider pool plus common executi
 budget = 12
 cost_profile = "standard"
 search_profile = "portfolio"
+runtime_mode = "research"
 progress = "quiet"
 observe = true
 observe_port = 8080
@@ -137,6 +138,8 @@ provider_pool = ["codex", "gemini", "opencode"]
 [providers.codex]
 model = "gpt-5-codex"
 reasoning_effort = "high"
+service_tier = "fast"
+web_search = true
 
 [providers.gemini]
 model = "gemini-2.5-pro"
@@ -151,7 +154,7 @@ uv run argus run --run-config run-config.toml \
 uv run argus benchmark --run-config run-config.toml
 ```
 
-`--provider`, `--budget`, `--cost-profile`, `--search-profile`, `--progress`, `--observe`, `--no-observe`, and `--observe-port` still work and override the corresponding run-config values for that command.
+`--provider`, `--budget`, `--cost-profile`, `--search-profile`, `--runtime-mode`, `--progress`, `--observe`, `--no-observe`, and `--observe-port` still work and override the corresponding run-config values for that command.
 
 You can also let the run-config carry the request input:
 
@@ -221,6 +224,7 @@ Run-config rules:
 - `prompt_file` is resolved relative to the run-config file when it is not absolute.
 - `cost_profile` is optional and applies to `argus run`, `argus dry-run`, and `argus benchmark`.
 - `search_profile` is optional and applies to `argus run`, `argus dry-run`, and `argus benchmark`.
+- `runtime_mode` is optional and applies to `argus run` and `argus dry-run`.
 - When `search_profile` is omitted, Argus chooses adaptively from the cost profile: `lean` defaults to `balanced`, while `standard` and `max` default to `portfolio`.
 - `balanced` uses one general-purpose island; `portfolio` enables balanced, conservative, and high-upside islands.
 - `progress` is optional and applies to `argus run`.
@@ -231,6 +235,8 @@ Run-config rules:
 - `type` is optional when the provider table name is already `codex`, `gemini`, or `opencode`. Use `type` for aliases such as `codex_fast` or `gemini_flash_lite`.
 - `model` is optional per provider; if omitted, the provider default/env behavior is used.
 - `reasoning_effort` is optional per provider. Argus currently applies it only to `codex` providers, where it maps to Codex's `model_reasoning_effort` override.
+- `service_tier` is optional per provider. Argus currently applies it only to `codex` providers, where `service_tier = "fast"` maps to Codex's `service_tier` config override.
+- `web_search` is optional per provider. Argus currently applies it only to `codex` providers, where `web_search = true` passes `--search` to `codex exec` and permits web-grounded evidence in provider prompts.
 - If `--provider` is passed, that value is used instead of `provider_pool` from the file.
 - If a positional request or `--prompt-file` is passed, that value is used instead of `request` or `prompt_file` from the file.
 - If `--budget` is passed, that value is used instead of `budget` from the file.
