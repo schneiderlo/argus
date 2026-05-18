@@ -488,13 +488,21 @@ def _hybrid_candidate_decision_schema() -> dict[str, JSONValue]:
                 ],
             },
             "summary": {"type": "string", "minLength": 1},
-            "candidate": {
-                "oneOf": [
-                    {"type": "null"},
-                    _candidate_schema(),
-                ]
-            },
+            "candidate": _nullable_object_schema(_candidate_schema()),
         },
+    }
+
+
+def _nullable_object_schema(schema: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
+    schema_type = schema.get("type")
+    if schema_type != "object":
+        raise ArgusValidationError(
+            "_nullable_object_schema requires an object schema, "
+            f"got {schema_type!r}."
+        )
+    return {
+        **dict(schema),
+        "type": ["object", "null"],
     }
 
 

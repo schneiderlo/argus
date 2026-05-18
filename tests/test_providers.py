@@ -144,6 +144,14 @@ class CodexProviderTests(unittest.TestCase):
             },
         )
 
+    def test_hybrid_candidate_batch_schema_uses_codex_supported_nullable_candidate(self) -> None:
+        schema = hybrid_candidate_batch_schema().json_schema
+        decision_schema = schema["properties"]["decisions"]["items"]
+        candidate_schema = decision_schema["properties"]["candidate"]
+        self.assertEqual(candidate_schema["type"], ["object", "null"])
+        self.assertIn("thesis", candidate_schema["required"])
+        self.assertNotIn("oneOf", json.dumps(schema))
+
     def test_search_space_plan_schema_uses_structured_axis_assignment_entries(self) -> None:
         schema = search_space_plan_schema().json_schema
         axis_assignments = (
